@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import 'crypto_service.dart';
@@ -51,27 +50,34 @@ class MessageManager {
     required Uint8List recipientPublicKey,
     required String content,
     required MessagePriority priority,
+    String? messageId,
   }) async {
     // Validate message size
     if (content.length > maxMessageSize) {
       throw Exception('Message exceeds maximum size of $maxMessageSize bytes');
     }
 
-    final messageId = _uuid.v4();
+    final id = messageId ?? _uuid.v4();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     
     // Random TTL between 8-16 hops
     final ttl = 8 + _random.nextInt(9);
 
+    // Get recipient's encryption public key
+    final recipientEncryptionKey = await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
+    if (recipientEncryptionKey == null) {
+      throw Exception('Encryption key not found for peer $recipientPeerId. Handshake may be incomplete.');
+    }
+
     // Encrypt content
     final encryptedContent = _cryptoService.encryptContent(
       content,
-      recipientPublicKey,
+      recipientEncryptionKey,
     );
 
     // Create message without signature first
     final unsignedMessage = MeshMessage(
-      messageId: messageId,
+      messageId: id,
       type: MessageType.data,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: recipientPeerId,
@@ -87,7 +93,7 @@ class MessageManager {
     final signature = _cryptoService.signMessage(unsignedMessage.toBytesForSigning());
 
     return MeshMessage(
-      messageId: messageId,
+      messageId: id,
       type: MessageType.data,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: recipientPeerId,
@@ -107,9 +113,10 @@ class MessageManager {
       return ProcessResult.invalid;
     }
 
-    // Verify signature
+    // Verify signature (uses signing key)
     final isValidSignature = await _signatureVerifier.verifyMessageSignature(message);
     if (!isValidSignature) {
+      debugPrint('Invalid signature from ${message.senderPeerId}');
       await _signatureVerifier.recordInvalidSignature(message.senderPeerId);
       return ProcessResult.invalid;
     }
@@ -118,6 +125,7 @@ class MessageManager {
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
     if (age > 300000 || age < -60000) {
+      debugPrint('Message expired or from future: $age ms');
       return ProcessResult.invalid;
     }
 
@@ -143,6 +151,8 @@ class MessageManager {
         await forwardMessage(ack);
       } else if (message.type == MessageType.acknowledgment) {
         await _deliveryAckHandler.handleAcknowledgment(message);
+      } else if (message.type == MessageType.readReceipt) {
+        // No special direct logic here, just mark as delivered to pass to router
       }
       return ProcessResult.delivered;
     }
@@ -203,16 +213,19 @@ class MessageManager {
     }
 
     try {
-      final senderPublicKey = await _signatureVerifier.getPeerPublicKey(message.senderPeerId);
-      if (senderPublicKey == null) {
+      // Use encryption public key for decryption
+      final senderEncryptionKey = await _signatureVerifier.getPeerEncryptionKey(message.senderPeerId);
+      if (senderEncryptionKey == null) {
+        debugPrint('Encryption key not found for sender ${message.senderPeerId}');
         return null;
       }
 
       return _cryptoService.decryptContent(
         message.encryptedContent!,
-        senderPublicKey,
+        senderEncryptionKey,
       );
     } catch (e) {
+      debugPrint('Decryption error: $e');
       return null;
     }
   }

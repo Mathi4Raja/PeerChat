@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:flutter_blue_classic/flutter_blue_classic.dart';
 import 'package:nsd/nsd.dart';
@@ -12,6 +14,8 @@ class DiscoveryService {
   bool _bluetoothScanning = false;
   StreamSubscription? _scanSubscription;
   Registration? _nsdRegistration;
+  String? _localId;
+  String? _localName;
   
   // Track discovered peers to avoid duplicates
   final Set<String> _discoveredPeerIds = {};
@@ -19,6 +23,8 @@ class DiscoveryService {
   Stream<Peer> get onPeerFound => _foundController.stream;
 
   Future<void> start(String myId, int port, {String name = 'PeerChat'}) async {
+    _localId = myId;
+    _localName = name;
     // Start mDNS discovery (for WiFi)
     await _startMdnsDiscovery(myId, port, name);
     
@@ -28,7 +34,6 @@ class DiscoveryService {
 
   Future<void> _startMdnsDiscovery(String myId, int port, String name) async {
     try {
-      await _mdns.start();
       await _mdns.start();
       
       // Advertise our service using NSD (Network Service Discovery)
@@ -42,14 +47,14 @@ class DiscoveryService {
               type: '_peerchat._tcp',
               port: 9000, // We listen on port 9000
               txt: {
-                'id': myId,
-                'name': name,
+                'id': Uint8List.fromList(utf8.encode(myId)),
+                'name': Uint8List.fromList(utf8.encode(name)),
               },
             ),
           );
-          print('mDNS service registered: ${_nsdRegistration?.service.name}');
+          debugPrint('mDNS service registered: ${_nsdRegistration?.service.name}');
         } catch (e) {
-          print('Error registering mDNS service: $e');
+          debugPrint('Error registering mDNS service: $e');
           _advertising = false;
         }
       }
@@ -67,10 +72,19 @@ class DiscoveryService {
             await for (final TxtResourceRecord txt in _mdns.lookup<TxtResourceRecord>(ResourceRecordQuery.text(domainName))) {
               final map = <String, String>{};
               for (var s in txt.text.split('\n')) {
-                final split = s.split('=');
-                if (split.length == 2) map[split[0]] = split[1];
+                // Fix: base64 IDs often contain '=', so only split on the FIRST '='
+                final index = s.indexOf('=');
+                if (index != -1) {
+                  final key = s.substring(0, index);
+                  final value = s.substring(index + 1);
+                  map[key] = value;
+                }
               }
               final id = map['id'] ?? 'unknown';
+              
+              // CRITICAL: Robust self-filter
+              if (id == _localId || id == 'unknown') continue;
+
               final peerName = map['name'] ?? target;
               final peer = Peer(
                 id: id,
@@ -78,6 +92,8 @@ class DiscoveryService {
                 address: '$addr:$srvPort',
                 lastSeen: DateTime.now().millisecondsSinceEpoch,
                 hasApp: true, // mDNS discovery means they have the app
+                isWiFi: true,
+                isBluetooth: false,
               );
               _foundController.add(peer);
             }
@@ -151,18 +167,25 @@ class DiscoveryService {
     }
     
     // Filter: Only add devices that can act as mesh nodes
-    // Exclude audio devices (headphones, speakers), wearables, etc.
-    // Only include: phones, tablets, computers
     if (device.name != null && device.name!.isNotEmpty && _isValidMeshNode(device)) {
+      // CRITICAL: Filter out self by name if possible
+      if (device.name == _localName) return;
+
       _discoveredPeerIds.add(peerId);
+      
+      // Emit unverified Bluetooth peer so it shows up in "Unconnected" list
       final peer = Peer(
         id: peerId,
         displayName: peerName,
-        address: device.address,
+        address: peerId,
         lastSeen: DateTime.now().millisecondsSinceEpoch,
-        hasApp: false, // Bluetooth discovery alone can't confirm app installation
+        hasApp: false, // Don't know if they have the app yet
+        isWiFi: false,
+        isBluetooth: true,
       );
       _foundController.add(peer);
+      
+      debugPrint('BT device found and emitted: $peerName ($peerId)');
     }
   }
   
@@ -174,21 +197,23 @@ class DiscoveryService {
     }
     
     _discoveredPeerIds.add(endpointId);
+    
+    // NOTE: WiFi Direct peers ARE emitted because they were discovered
+    // via PeerChat's nearby_connections advertising — they DO have the app.
     final peer = Peer(
       id: endpointId,
       displayName: endpointName,
       address: endpointId,
       lastSeen: DateTime.now().millisecondsSinceEpoch,
-      hasApp: true, // WiFi Direct discovery means they have the app
+      hasApp: true,
+      isWiFi: true,
+      isBluetooth: false,
     );
     _foundController.add(peer);
   }
 
   bool _isValidMeshNode(BluetoothDevice device) {
     // Check device type/class to filter out non-mesh-capable devices
-    final deviceType = device.type;
-    
-    // Exclude known non-mesh device types
     // BluetoothDeviceType: unknown, classic, le, dual
     // We want classic or dual mode devices (phones, tablets, computers)
     

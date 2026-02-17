@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 
 // Abstract transport interface
@@ -86,10 +85,12 @@ class MultiTransportService extends ChangeNotifier {
     return connectedIds.toList();
   }
 
+  @override
   Future<void> dispose() async {
     for (final transport in _transports) {
       await transport.dispose();
     }
     await _messageController.close();
+    super.dispose();
   }
 }

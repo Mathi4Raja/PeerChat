@@ -1,7 +1,6 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:io';
 import 'dart:typed_data';
 
 import '../models/peer.dart';
@@ -20,7 +19,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 5,
+      version: 7,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -37,6 +36,12 @@ class DBService {
         if (oldVersion < 5) {
           await _migrateTo5(db);
         }
+        if (oldVersion < 6) {
+          await _migrateTo6(db);
+        }
+        if (oldVersion < 7) {
+          await _migrateTo7(db);
+        }
       },
     );
     return _db!;
@@ -50,7 +55,9 @@ class DBService {
         displayName TEXT,
         address TEXT,
         lastSeen INTEGER,
-        hasApp INTEGER DEFAULT 0
+        hasApp INTEGER DEFAULT 0,
+        isWiFi INTEGER DEFAULT 0,
+        isBluetooth INTEGER DEFAULT 0
       )
     ''');
     
@@ -61,7 +68,8 @@ class DBService {
         content TEXT NOT NULL,
         timestamp INTEGER NOT NULL,
         isSentByMe INTEGER NOT NULL,
-        status INTEGER NOT NULL
+        status INTEGER NOT NULL,
+        isRead INTEGER DEFAULT 1
       )
     ''');
     
@@ -121,14 +129,35 @@ class DBService {
     await db.execute('CREATE INDEX idx_routes_next_hop ON routes(next_hop_peer_id)');
     await db.execute('CREATE INDEX idx_dedup_timestamp ON deduplication_cache(seen_timestamp)');
     
-    // Peer public keys table
+    // Peer public keys table - version 6 has encryption_key
     await db.execute('''
       CREATE TABLE peer_keys (
         peer_id TEXT PRIMARY KEY,
         public_key BLOB NOT NULL,
+        encryption_key BLOB,
         added_timestamp INTEGER NOT NULL
       )
     ''');
+  }
+
+  Future<void> _migrateTo6(Database db) async {
+    // Add encryption_key column to peer_keys table
+    await db.execute('ALTER TABLE peer_keys ADD COLUMN encryption_key BLOB');
+  }
+
+  Future<void> _migrateTo7(Database db) async {
+    // Add isRead column to chat_messages table
+    // Default to 1 (read) for existing messages
+    await db.execute('ALTER TABLE chat_messages ADD COLUMN isRead INTEGER DEFAULT 1');
+    
+    // Add isWiFi and isBluetooth columns to peers table (from user's previous manual setup)
+    // We check if they exist or just try to add them if they were supposed to be in v7
+    try {
+      await db.execute('ALTER TABLE peers ADD COLUMN isWiFi INTEGER DEFAULT 0');
+    } catch (_) {}
+    try {
+      await db.execute('ALTER TABLE peers ADD COLUMN isBluetooth INTEGER DEFAULT 0');
+    } catch (_) {}
   }
 
   Future<void> _migrateTo2(Database db) async {
@@ -220,7 +249,30 @@ class DBService {
 
   Future<void> upsertPeer(Peer p) async {
     final d = await db;
-    await d.insert('peers', p.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    
+    // Check if peer already exists to merge discovery flags
+    final List<Map<String, dynamic>> existing = await d.query(
+      'peers',
+      where: 'id = ?',
+      whereArgs: [p.id],
+    );
+
+    if (existing.isNotEmpty) {
+      final oldPeer = Peer.fromMap(existing.first);
+      // Merge flags: if either was true, it remains true
+      final mergedPeer = Peer(
+        id: p.id,
+        displayName: p.displayName != 'Unknown Device' ? p.displayName : oldPeer.displayName,
+        address: p.address,
+        lastSeen: p.lastSeen,
+        hasApp: p.hasApp || oldPeer.hasApp,
+        isWiFi: p.isWiFi || oldPeer.isWiFi,
+        isBluetooth: p.isBluetooth || oldPeer.isBluetooth,
+      );
+      await d.insert('peers', mergedPeer.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    } else {
+      await d.insert('peers', p.toMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
   }
   
   Future<void> deletePeer(String peerId) async {
@@ -262,6 +314,24 @@ class DBService {
   }
   
   // Peer public key operations
+  Future<void> savePeerKeys({
+    required String peerId,
+    required Uint8List signingKey,
+    required Uint8List encryptionKey,
+  }) async {
+    final d = await db;
+    await d.insert(
+      'peer_keys',
+      {
+        'peer_id': peerId,
+        'public_key': signingKey,
+        'encryption_key': encryptionKey,
+        'added_timestamp': DateTime.now().millisecondsSinceEpoch,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
   Future<void> savePeerPublicKey(String peerId, Uint8List publicKey) async {
     final d = await db;
     await d.insert(
@@ -274,7 +344,7 @@ class DBService {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
-  
+
   Future<Uint8List?> getPeerPublicKey(String peerId) async {
     final d = await db;
     final rows = await d.query(
@@ -284,5 +354,53 @@ class DBService {
     );
     if (rows.isEmpty) return null;
     return rows.first['public_key'] as Uint8List?;
+  }
+
+  Future<Uint8List?> getPeerEncryptionKey(String peerId) async {
+    final d = await db;
+    final rows = await d.query(
+      'peer_keys',
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+    );
+    if (rows.isEmpty) return null;
+    return rows.first['encryption_key'] as Uint8List?;
+  }
+
+  Future<Map<String, int>> getUnreadMessageCounts() async {
+    final d = await db;
+    final List<Map<String, dynamic>> results = await d.rawQuery('''
+      SELECT peerId, COUNT(*) as count 
+      FROM chat_messages 
+      WHERE isRead = 0 AND isSentByMe = 0
+      GROUP BY peerId
+    ''');
+    
+    final Map<String, int> counts = {};
+    for (final row in results) {
+      counts[row['peerId'] as String] = row['count'] as int;
+    }
+    return counts;
+  }
+
+  Future<List<String>> getUnreadMessageIds(String peerId) async {
+    final d = await db;
+    final List<Map<String, dynamic>> results = await d.query(
+      'chat_messages',
+      columns: ['id'],
+      where: 'peerId = ? AND isRead = 0 AND isSentByMe = 0',
+      whereArgs: [peerId],
+    );
+    return results.map((row) => row['id'] as String).toList();
+  }
+
+  Future<void> markMessagesAsRead(String peerId) async {
+    final d = await db;
+    await d.update(
+      'chat_messages',
+      {'isRead': 1},
+      where: 'peerId = ? AND isRead = 0',
+      whereArgs: [peerId],
+    );
   }
 }

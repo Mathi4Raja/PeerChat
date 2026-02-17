@@ -30,14 +30,30 @@ class MeshStatusCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
-                      children: const [
-                        Icon(Icons.router, color: Colors.blue),
-                        SizedBox(width: 8),
-                        Text(
+                      children: [
+                        const Icon(Icons.router, color: Colors.blue),
+                        const SizedBox(width: 8),
+                        const Text(
                           'Mesh Network Status',
                           style: TextStyle(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Spacer(),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.shade100,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            'P2P',
+                            style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade800,
+                            ),
                           ),
                         ),
                       ],

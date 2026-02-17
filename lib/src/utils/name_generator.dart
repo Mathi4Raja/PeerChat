@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 
 /// Generates deterministic human-readable names from cryptographic keys
 class NameGenerator {
@@ -31,7 +30,8 @@ class NameGenerator {
   static String generateName(String base64Key) {
     try {
       // Decode base64 to bytes
-      final bytes = base64Decode(base64Key);
+      final bytes = base64.decode(base64Key);
+      if (bytes.length < 10) return 'PeerChat User';
       
       // Use first 4 bytes for adjective selection
       final adjectiveIndex = _bytesToInt(bytes.sublist(0, 4)) % adjectives.length;
@@ -45,26 +45,28 @@ class NameGenerator {
       return '${adjectives[adjectiveIndex]} ${nouns[nounIndex]} $number';
     } catch (e) {
       // Fallback if key is invalid
-      return 'Unknown User';
+      return 'PeerChat User';
     }
   }
 
   /// Generate a short version (without number) for compact display
   static String generateShortName(String base64Key) {
     try {
-      final bytes = base64Decode(base64Key);
+      final bytes = base64.decode(base64Key);
+      if (bytes.length < 8) return 'User';
       final adjectiveIndex = _bytesToInt(bytes.sublist(0, 4)) % adjectives.length;
       final nounIndex = _bytesToInt(bytes.sublist(4, 8)) % nouns.length;
       return '${adjectives[adjectiveIndex]} ${nouns[nounIndex]}';
     } catch (e) {
-      return 'Unknown';
+      return 'User';
     }
   }
 
   /// Get initials from generated name (e.g., "Swift Phoenix" -> "SP")
   static String generateInitials(String base64Key) {
     try {
-      final bytes = base64Decode(base64Key);
+      final bytes = base64.decode(base64Key);
+      if (bytes.length < 8) return 'U';
       final adjectiveIndex = _bytesToInt(bytes.sublist(0, 4)) % adjectives.length;
       final nounIndex = _bytesToInt(bytes.sublist(4, 8)) % nouns.length;
       return '${adjectives[adjectiveIndex][0]}${nouns[nounIndex][0]}';
@@ -85,7 +87,8 @@ class NameGenerator {
   /// Get a color based on the key (for avatar backgrounds)
   static int getColorFromKey(String base64Key) {
     try {
-      final bytes = base64Decode(base64Key);
+      final bytes = base64.decode(base64Key);
+      if (bytes.length < 13) return 0xFF9E9E9E;
       final colorIndex = _bytesToInt(bytes.sublist(10, 13));
       
       // Generate a pleasant color palette

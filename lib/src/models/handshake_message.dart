@@ -6,12 +6,14 @@ import 'dart:convert';
 class HandshakeMessage {
   final String peerId; // Cryptographic peer ID (public key hash)
   final Uint8List publicKey; // Ed25519 public key for signing
+  final Uint8List encryptionPublicKey; // X25519 public key for encryption
   final String displayName; // Human-readable name
   final int timestamp;
 
   HandshakeMessage({
     required this.peerId,
     required this.publicKey,
+    required this.encryptionPublicKey,
     required this.displayName,
     required this.timestamp,
   });
@@ -22,6 +24,7 @@ class HandshakeMessage {
       'type': 'handshake',
       'peerId': peerId,
       'publicKey': base64Encode(publicKey),
+      'encryptionPublicKey': base64Encode(encryptionPublicKey),
       'displayName': displayName,
       'timestamp': timestamp,
     });
@@ -37,6 +40,7 @@ class HandshakeMessage {
       return HandshakeMessage(
         peerId: json['peerId'],
         publicKey: Uint8List.fromList(base64Decode(json['publicKey'])),
+        encryptionPublicKey: Uint8List.fromList(base64Decode(json['encryptionPublicKey'])),
         displayName: json['displayName'],
         timestamp: json['timestamp'],
       );

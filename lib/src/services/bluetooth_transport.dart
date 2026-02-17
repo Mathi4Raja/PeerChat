@@ -1,6 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
-import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_blue_classic/flutter_blue_classic.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -16,7 +14,6 @@ class BluetoothTransport implements TransportService {
   // Callback for when connection is established
   Function(String transportId)? onConnectionEstablished;
   
-  bool _isDiscovering = false;
   Timer? _reconnectTimer;
 
   @override

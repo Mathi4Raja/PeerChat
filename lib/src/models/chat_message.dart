@@ -5,6 +5,7 @@ class ChatMessage {
   final int timestamp;
   final bool isSentByMe;
   final MessageStatus status;
+  final bool isRead;
 
   ChatMessage({
     required this.id,
@@ -13,6 +14,7 @@ class ChatMessage {
     required this.timestamp,
     required this.isSentByMe,
     required this.status,
+    this.isRead = false,
   });
 
   Map<String, Object?> toMap() => {
@@ -22,6 +24,7 @@ class ChatMessage {
         'timestamp': timestamp,
         'isSentByMe': isSentByMe ? 1 : 0,
         'status': status.index,
+        'isRead': isRead ? 1 : 0,
       };
 
   static ChatMessage fromMap(Map<String, Object?> m) => ChatMessage(
@@ -31,12 +34,15 @@ class ChatMessage {
         timestamp: m['timestamp'] as int,
         isSentByMe: (m['isSentByMe'] as int) == 1,
         status: MessageStatus.values[m['status'] as int],
+        isRead: (m['isRead'] as int? ?? 1) == 1, // Default to read for old messages
       );
 }
 
 enum MessageStatus {
   sending,
+  routing,
   sent,
   delivered,
+  seen,
   failed,
 }

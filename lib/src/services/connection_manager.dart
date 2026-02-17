@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'db_service.dart';
 import 'crypto_service.dart';
@@ -27,6 +26,9 @@ class ConnectionManager extends ChangeNotifier {
   // Callback for sending handshake messages
   Function(String transportId, Uint8List data)? onSendHandshake;
 
+  // Callback for when handshake is complete and peer ID is known
+  Function(String peerId)? onHandshakeComplete;
+
   ConnectionManager(this._db, this._crypto);
   
   /// Update display name for handshakes
@@ -53,10 +55,11 @@ class ConnectionManager extends ChangeNotifier {
   Future<void> onConnectionEstablished(String transportId) async {
     debugPrint('Connection established with $transportId, sending handshake');
     
-    // Create handshake message with signing public key
+    // Create handshake message with both signing and encryption public keys
     final handshake = HandshakeMessage(
       peerId: _crypto.localPeerId,
       publicKey: _crypto.signingPublicKey,
+      encryptionPublicKey: _crypto.encryptionPublicKey,
       displayName: _displayName,
       timestamp: DateTime.now().millisecondsSinceEpoch,
     );
@@ -104,10 +107,15 @@ class ConnectionManager extends ChangeNotifier {
     
     await _db.upsertPeer(peer);
     
-    // Save public key
-    await _db.savePeerPublicKey(handshake.peerId, handshake.publicKey);
+    // Save both public keys
+    await _db.savePeerKeys(
+      peerId: handshake.peerId,
+      signingKey: handshake.publicKey,
+      encryptionKey: handshake.encryptionPublicKey,
+    );
     
     debugPrint('Handshake complete: ${handshake.peerId} <-> $transportId');
+    onHandshakeComplete?.call(handshake.peerId);
     notifyListeners();
   }
 

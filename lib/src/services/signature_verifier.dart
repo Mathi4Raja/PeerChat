@@ -67,12 +67,17 @@ class SignatureVerifier {
     final key = await _db.getPeerPublicKey(peerId);
     if (key != null) return key;
     
-    // Fallback: try to decode peer ID as public key (old format)
+    // Fallback: try to decode peer ID as public key (identity = signing key)
     try {
       return Uint8List.fromList(base64.decode(peerId));
     } catch (e) {
       return null;
     }
+  }
+
+  Future<Uint8List?> getPeerEncryptionKey(String peerId) async {
+    // Try to get from database
+    return await _db.getPeerEncryptionKey(peerId);
   }
 
   // Track invalid signature attempts

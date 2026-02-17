@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
@@ -22,6 +23,7 @@ class _ChatScreenState extends State<ChatScreen> {
   String? _selectedPeerId;
   List<ChatMessage> _messages = [];
   bool _isLoading = true;
+  StreamSubscription<ChatMessage>? _incomingMessageSubscription;
 
   @override
   void initState() {
@@ -30,6 +32,52 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_selectedPeerId != null) {
       _loadMessages();
     }
+    
+    // Listen for incoming messages in real-time
+    final appState = Provider.of<AppState>(context, listen: false);
+    
+    // Mark as read when opening
+    if (_selectedPeerId != null) {
+      appState.markChatAsRead(_selectedPeerId!);
+    }
+
+    _incomingMessageSubscription = appState.meshRouter.onMessageReceived.listen((chatMessage) {
+      // Only add if this message is from the currently selected peer
+      if (_selectedPeerId != null && chatMessage.peerId == _selectedPeerId) {
+        // Mark as read immediately since we are viewing it
+        appState.markChatAsRead(_selectedPeerId!);
+
+        setState(() {
+          _messages.add(chatMessage);
+        });
+        // Scroll to bottom
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (_scrollController.hasClients) {
+            _scrollController.animateTo(
+              _scrollController.position.maxScrollExtent,
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeOut,
+            );
+          }
+        });
+      }
+    });
+
+    // Listen for status updates (ACKs, read receipts)
+    appState.meshRouter.onMessageStatusChanged.listen((messageId) {
+      if (_selectedPeerId != null) {
+        // Reload all messages to update status icons
+        _loadMessages();
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _incomingMessageSubscription?.cancel();
+    _messageController.dispose();
+    _scrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadMessages() async {
@@ -72,6 +120,7 @@ class _ChatScreenState extends State<ChatScreen> {
       timestamp: DateTime.now().millisecondsSinceEpoch,
       isSentByMe: true,
       status: MessageStatus.sending,
+      isRead: true, // Sent messages are always read
     );
     
     // Save to database
@@ -99,14 +148,24 @@ class _ChatScreenState extends State<ChatScreen> {
       recipientPeerId: _selectedPeerId!,
       content: content,
       priority: MessagePriority.normal,
+      messageId: messageId,
     );
     
     // Update message status
-    final newStatus = result == SendResult.routeFound 
-        ? MessageStatus.sent 
-        : result == SendResult.queued
-            ? MessageStatus.sending
-            : MessageStatus.failed;
+    MessageStatus newStatus;
+    switch (result) {
+      case SendResult.direct:
+        newStatus = MessageStatus.sent;
+        break;
+      case SendResult.routed:
+        newStatus = MessageStatus.routing;
+        break;
+      case SendResult.queued:
+        newStatus = MessageStatus.sending;
+        break;
+      default:
+        newStatus = MessageStatus.failed;
+    }
     
     await appState.db.updateMessageStatus(messageId, newStatus);
     
@@ -128,12 +187,10 @@ class _ChatScreenState extends State<ChatScreen> {
           orElse: () => null as dynamic,
         ),
       );
-      if (peer != null) {
-        peerName = peer.id.length > 40 
-            ? NameGenerator.generateShortName(peer.id)
-            : peer.displayName;
-      }
-    }
+      peerName = peer.id.length > 40 
+          ? NameGenerator.generateShortName(peer.id)
+          : peer.displayName;
+        }
 
     return Scaffold(
       appBar: AppBar(
@@ -264,7 +321,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Icon(
                     _getStatusIcon(message.status),
                     size: 14,
-                    color: Colors.grey[600],
+                    color: message.status == MessageStatus.seen ? Colors.blue : Colors.grey[600],
                   ),
                 ],
               ],
@@ -279,9 +336,12 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (status) {
       case MessageStatus.sending:
         return Icons.access_time;
+      case MessageStatus.routing:
+        return Icons.alt_route;
       case MessageStatus.sent:
         return Icons.check;
       case MessageStatus.delivered:
+      case MessageStatus.seen:
         return Icons.done_all;
       case MessageStatus.failed:
         return Icons.error_outline;
@@ -306,7 +366,7 @@ class _ChatScreenState extends State<ChatScreen> {
         color: Colors.white,
         boxShadow: [
           BoxShadow(
-            color: Colors.grey.withOpacity(0.2),
+            color: Colors.grey.withValues(alpha: 0.2),
             spreadRadius: 1,
             blurRadius: 3,
             offset: const Offset(0, -1),
@@ -394,12 +454,5 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       },
     );
-  }
-
-  @override
-  void dispose() {
-    _messageController.dispose();
-    _scrollController.dispose();
-    super.dispose();
   }
 }

@@ -6,6 +6,7 @@ enum MessageType {
   acknowledgment,
   routeRequest,
   routeResponse,
+  readReceipt,
 }
 
 enum MessagePriority {

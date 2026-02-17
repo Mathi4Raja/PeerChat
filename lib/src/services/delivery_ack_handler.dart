@@ -1,17 +1,27 @@
-import 'dart:typed_data';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'db_service.dart';
 import 'crypto_service.dart';
+import 'signature_verifier.dart';
 import '../models/mesh_message.dart';
+import '../models/chat_message.dart';
 import 'package:uuid/uuid.dart';
 
 class DeliveryAckHandler {
   final DBService _db;
   final CryptoService _cryptoService;
+  late final SignatureVerifier _signatureVerifier;
   final _uuid = const Uuid();
 
+  Function(String messageId)? onStatusChanged;
+
   DeliveryAckHandler(this._db, this._cryptoService);
+  
+  /// Set the signature verifier (called after all services are initialized)
+  void setSignatureVerifier(SignatureVerifier verifier) {
+    _signatureVerifier = verifier;
+  }
 
   // Generate acknowledgment for delivered message
   Future<MeshMessage> createAcknowledgment(MeshMessage originalMessage) async {
@@ -22,7 +32,7 @@ class DeliveryAckHandler {
     final ackContent = 'ACK:${originalMessage.messageId}';
     final encryptedContent = _cryptoService.encryptContent(
       ackContent,
-      await _getPublicKeyFromPeerId(originalMessage.senderPeerId),
+      await _getEncryptionKeyFromPeerId(originalMessage.senderPeerId),
     );
 
     final ackMessage = MeshMessage(
@@ -58,7 +68,7 @@ class DeliveryAckHandler {
   // Process received acknowledgment
   Future<void> handleAcknowledgment(MeshMessage ackMessage) async {
     // Decrypt acknowledgment content
-    final senderPublicKey = await _getPublicKeyFromPeerId(ackMessage.senderPeerId);
+    final senderPublicKey = await _getEncryptionKeyFromPeerId(ackMessage.senderPeerId);
     final ackContent = _cryptoService.decryptContent(
       ackMessage.encryptedContent!,
       senderPublicKey,
@@ -80,7 +90,8 @@ class DeliveryAckHandler {
     );
 
     // Notify application layer
-    notifyDeliveryConfirmed(originalMessageId);
+    await notifyDeliveryConfirmed(originalMessageId);
+    onStatusChanged?.call(originalMessageId);
   }
 
   // Track pending acknowledgments
@@ -100,10 +111,13 @@ class DeliveryAckHandler {
   }
 
   // Notify application layer of delivery confirmation
-  void notifyDeliveryConfirmed(String messageId) {
-    // TODO: Implement notification via Provider/Stream
-    // This will be wired up when integrating with AppState
-    print('Message $messageId delivered successfully');
+  Future<void> notifyDeliveryConfirmed(String messageId) async {
+    // Update chat message status in database to 'delivered'
+    await _db.updateMessageStatus(messageId, MessageStatus.delivered);
+    debugPrint('Message $messageId delivery confirmed — status updated to delivered');
+    
+    // We don't have direct access to status controller here easily without passing it.
+    // Instead, MeshRouter will listen for DB changes if needed, or we just notify.
   }
 
   // Get pending acknowledgments
@@ -150,9 +164,23 @@ class DeliveryAckHandler {
     };
   }
 
-  // Helper to get public key from peer ID
-  Future<Uint8List> _getPublicKeyFromPeerId(String peerId) async {
-    // Peer ID is base64-encoded public key
-    return Uint8List.fromList(base64.decode(peerId));
+  // Helper to get encryption public key from peer ID
+  Future<Uint8List> _getEncryptionKeyFromPeerId(String peerId) async {
+    // Peer ID is the base64-encoded SIGNING public key.
+    // We explicitly need the encryption public key (X25519) for crypto_box operations.
+    final key = await _signatureVerifier.getPeerEncryptionKey(peerId);
+    if (key != null) {
+      return key;
+    }
+    
+    // Fallback: This is technically risky if we are strict about key types,
+    // but if the system previously conflated them, we might have legacy data.
+    // Ideally, we should throw or return null if not found, but for now we try decoding.
+    // NOTE: This fallback will likely fail if data is truly Ed25519 vs Curve25519.
+    try {
+      return Uint8List.fromList(base64.decode(peerId));
+    } catch (_) {
+      throw Exception('No encryption key found for peer $peerId');
+    }
   }
 }

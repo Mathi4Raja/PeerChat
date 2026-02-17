@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sodium/sodium.dart';
 import 'package:sodium_libs/sodium_libs.dart' hide SodiumInit;
 import 'package:sodium_libs/sodium_libs.dart' as sodium_libs show SodiumInit;
@@ -14,15 +13,14 @@ import 'services/mesh_router_service.dart';
 import 'utils/name_generator.dart';
 
 class AppState extends ChangeNotifier {
-  final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   late final Sodium _sodium;
-  KeyPair? _identityKeyPair;
   final DBService _db = DBService();
   final DiscoveryService _discovery = DiscoveryService();
   late final MeshRouterService meshRouter;
   Timer? _peerRefreshTimer;
 
   List<Peer> peers = [];
+  Map<String, int> unreadCounts = {};
   
   // Expose database service for manual peer addition
   DBService get db => _db;
@@ -32,8 +30,8 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now().millisecondsSinceEpoch;
     final fiveMinutesAgo = now - (5 * 60 * 1000); // 5 minutes
     
-    // Only show peers seen in the last 5 minutes
-    return peers.where((p) => p.hasApp && p.lastSeen > fiveMinutesAgo).toList();
+    // Only show peers seen in the last 5 minutes, excluding self
+    return peers.where((p) => p.hasApp && p.lastSeen > fiveMinutesAgo && p.id != publicKey).toList();
   }
   
   // Get peers without app (Bluetooth-only discovery)
@@ -41,15 +39,15 @@ class AppState extends ChangeNotifier {
     final now = DateTime.now().millisecondsSinceEpoch;
     final fiveMinutesAgo = now - (5 * 60 * 1000); // 5 minutes
     
-    // Only show peers seen in the last 5 minutes
-    return peers.where((p) => !p.hasApp && p.lastSeen > fiveMinutesAgo).toList();
+    // Only show peers seen in the last 5 minutes, excluding self
+    return peers.where((p) => !p.hasApp && p.lastSeen > fiveMinutesAgo && p.id != publicKey).toList();
   }
   
-  // Get all active peers (seen in last 5 minutes)
+  // Get all active peers (seen in last 5 minutes, excluding self)
   List<Peer> get activePeers {
     final now = DateTime.now().millisecondsSinceEpoch;
     final fiveMinutesAgo = now - (5 * 60 * 1000);
-    return peers.where((p) => p.lastSeen > fiveMinutesAgo).toList();
+    return peers.where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey).toList();
   }
   
   // Get connected peers (those we have active connections with)
@@ -64,9 +62,9 @@ class AppState extends ChangeNotifier {
     return activePeers.where((p) => !connectedIds.contains(p.id)).toList();
   }
 
-  String? get publicKey => _identityKeyPair == null ? null : base64Encode(_identityKeyPair!.publicKey);
+  String? get publicKey => meshRouter.localPeerId;
   
-  // Get human-readable name from public key
+  // Get human-readable name from public key (Signing Key)
   String get displayName {
     final key = publicKey;
     if (key == null) return 'Generating...';
@@ -88,38 +86,57 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> init() async {
-    _sodium = await sodium_libs.SodiumInit.init();
-    await _ensureKeypair();
-    peers = await _db.allPeers();
-    
-    // Initialize mesh router service
-    meshRouter = MeshRouterService(_sodium, _db, _discovery);
-    await meshRouter.init();
-    
-    // Update WiFi Direct advertising with generated name
-    meshRouter.updateLocalName(displayName);
-    
-    // Listen to mesh router changes and reload peers
-    meshRouter.addListener(() async {
-      // Reload peers from database when mesh router state changes
-      peers = await _db.allPeers();
-      notifyListeners();
-    });
-    
-    // start discovery (use default port 9000 for now)
-    _discovery.onPeerFound.listen((p) async {
-      await _db.upsertPeer(p);
-      peers = await _db.allPeers();
-      notifyListeners();
-    });
     try {
-      await _discovery.start(publicKey ?? 'unknown', 9000, name: displayName);
-    } catch (e) {
-      // ignore discovery errors for now
+      debugPrint('AppState.init: Initializing Sodium...');
+      _sodium = await sodium_libs.SodiumInit.init();
+      
+      debugPrint('AppState.init: Opening Database...');
+      peers = await _db.allPeers();
+      
+      debugPrint('AppState.init: Initializing MeshRouter...');
+      // Initialize mesh router service
+      meshRouter = MeshRouterService(_sodium, _db, _discovery);
+      await meshRouter.init();
+      
+      debugPrint('AppState.init: Setting local name...');
+      // Update WiFi Direct advertising with generated name
+      meshRouter.updateLocalName(displayName);
+      
+      // Listen to mesh router changes and reload peers
+      meshRouter.addListener(() async {
+        // Reload peers from database when mesh router state changes
+        peers = await _db.allPeers();
+        await refreshUnreadCounts();
+        notifyListeners();
+      });
+      
+      // Listen for new messages to update unread counts
+      meshRouter.onMessageReceived.listen((message) async {
+        await refreshUnreadCounts();
+      });
+      
+      // start discovery (use default port 9000 for now)
+      _discovery.onPeerFound.listen((p) async {
+        await _db.upsertPeer(p);
+        peers = await _db.allPeers();
+        notifyListeners();
+      });
+      
+      debugPrint('AppState.init: Starting Discovery...');
+      try {
+        await _discovery.start(publicKey ?? 'unknown', 9000, name: displayName);
+      } catch (e) {
+        debugPrint('AppState.init: Discovery failed (non-fatal): $e');
+      }
+      
+      // Start periodic peer list refresh (every 10 seconds)
+      _startPeerRefresh();
+      debugPrint('AppState.init: Complete!');
+    } catch (e, stack) {
+      debugPrint('AppState.init: CRITICAL FAILURE: $e');
+      debugPrint(stack.toString());
+      rethrow;
     }
-    
-    // Start periodic peer list refresh (every 10 seconds)
-    _startPeerRefresh();
   }
   
   void _startPeerRefresh() {
@@ -135,30 +152,6 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  Future<void> _ensureKeypair() async {
-    final stored = await _secureStorage.read(key: 'identity_keypair');
-    if (stored != null) {
-      final parts = stored.split('|');
-      if (parts.length == 2) {
-        final private = base64Decode(parts[0]);
-        final public = base64Decode(parts[1]);
-        _identityKeyPair = KeyPair(
-          publicKey: Uint8List.fromList(public), 
-          secretKey: SecureKey.fromList(_sodium, private),
-        );
-        return;
-      }
-    }
-
-    final keypair = _sodium.crypto.box.keyPair();
-    await _secureStorage.write(
-      key: 'identity_keypair',
-      value: '${base64Encode(keypair.secretKey.extractBytes())}|${base64Encode(keypair.publicKey)}',
-    );
-    _identityKeyPair = keypair;
-    notifyListeners();
-  }
-
   // Refresh peer discovery
   Future<void> refreshDiscovery() async {
     try {
@@ -171,6 +164,33 @@ class AppState extends ChangeNotifier {
       notifyListeners();
     } catch (e) {
       // Ignore errors, discovery might already be stopped
+    }
+  }
+  Future<void> reloadPeers() async {
+    peers = await _db.allPeers();
+    await refreshUnreadCounts();
+    notifyListeners();
+  }
+
+  Future<void> refreshUnreadCounts() async {
+    unreadCounts = await _db.getUnreadMessageCounts();
+    notifyListeners();
+  }
+
+  Future<void> markChatAsRead(String peerId) async {
+    // Get list of unread message IDs before marking them as read locally
+    final unreadIds = await _db.getUnreadMessageIds(peerId);
+    
+    // Mark as read in local database
+    await _db.markMessagesAsRead(peerId);
+    await refreshUnreadCounts();
+
+    // Send read receipts to the sender
+    if (unreadIds.isNotEmpty) {
+      await meshRouter.sendReadReceipt(
+        recipientPeerId: peerId,
+        messageIds: unreadIds,
+      );
     }
   }
 }

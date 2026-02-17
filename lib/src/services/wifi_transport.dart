@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -16,10 +15,9 @@ class WiFiTransport implements TransportService {
   
   // Keepalive mechanism
   Timer? _keepaliveTimer;
-  static const Duration KEEPALIVE_INTERVAL = Duration(seconds: 20);
-  static final Uint8List KEEPALIVE_PACKET = Uint8List.fromList([0xFF, 0xFF]); // Special keepalive marker
+  static const Duration keepAliveInterval = Duration(seconds: 20);
+  static final Uint8List keepAlivePacket = Uint8List.fromList([0xFF, 0xFF]); // Special keepalive marker
   
-  String? _localPeerId;
   String? _localName;
   bool _isAdvertising = false;
   bool _isDiscovering = false;
@@ -47,10 +45,10 @@ class WiFiTransport implements TransportService {
   }
   
   void _startKeepalive() {
-    _keepaliveTimer = Timer.periodic(KEEPALIVE_INTERVAL, (timer) {
+    _keepaliveTimer = Timer.periodic(keepAliveInterval, (timer) {
       _sendKeepalives();
     });
-    debugPrint('WiFi Direct keepalive started (every ${KEEPALIVE_INTERVAL.inSeconds}s)');
+    debugPrint('WiFi Direct keepalive started (every ${keepAliveInterval.inSeconds}s)');
   }
   
   void _sendKeepalives() {
@@ -59,7 +57,7 @@ class WiFiTransport implements TransportService {
     debugPrint('Sending keepalive to ${_connectedPeers.length} peers');
     for (final endpointId in _connectedPeers.keys) {
       try {
-        _nearby.sendBytesPayload(endpointId, KEEPALIVE_PACKET);
+        _nearby.sendBytesPayload(endpointId, keepAlivePacket);
       } catch (e) {
         debugPrint('Error sending keepalive to $endpointId: $e');
       }
@@ -67,7 +65,6 @@ class WiFiTransport implements TransportService {
   }
   
   void setLocalIdentity(String peerId, String name) {
-    _localPeerId = peerId;
     _localName = name;
     
     // Restart advertising with new name if already advertising
@@ -250,7 +247,7 @@ class WiFiTransport implements TransportService {
 
     if (endpointId == null) {
       debugPrint('  No endpoint found for $peerId');
-      debugPrint('  Connected peers: ${_connectedPeers}');
+      debugPrint('  Connected peers: $_connectedPeers');
       return false;
     }
 

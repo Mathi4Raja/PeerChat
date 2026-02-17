@@ -18,7 +18,23 @@ class IdentityCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Your Identity', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Row(
+              children: [
+                const Text('Your Identity', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade100,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                  child: Text(
+                    'LOCAL-ONLY',
+                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: Colors.green.shade800),
+                  ),
+                ),
+              ],
+            ),
             const SizedBox(height: 8),
             Text(
               displayName,

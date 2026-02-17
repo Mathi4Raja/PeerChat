@@ -1,9 +1,7 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'db_service.dart';
-import 'discovery_service.dart';
 import 'signature_verifier.dart';
 import 'crypto_service.dart';
 import '../models/route.dart';
@@ -14,7 +12,6 @@ import 'package:uuid/uuid.dart';
 
 class RouteManager {
   final DBService _db;
-  final DiscoveryService _discovery;
   final SignatureVerifier _signatureVerifier;
   final CryptoService _cryptoService;
   final Future<bool> Function(String peerId, Uint8List data) sendTransportMessage;
@@ -23,9 +20,11 @@ class RouteManager {
   final Map<String, int> _discoveryAttempts = {};
   final _uuid = const Uuid();
 
+  final StreamController<String> _routeUpdateController = StreamController<String>.broadcast();
+  Stream<String> get onRouteFound => _routeUpdateController.stream;
+
   RouteManager(
     this._db,
-    this._discovery,
     this._signatureVerifier,
     this._cryptoService,
     this.sendTransportMessage,
@@ -73,6 +72,53 @@ class RouteManager {
     return routes.first.nextHopPeerId;
   }
 
+  // Get all routes from routing table (for debug UI)
+  Future<List<Route>> getAllRoutes() async {
+    final database = await _db.db;
+    final results = await database.query('routes', orderBy: 'last_updated_timestamp DESC');
+    return results.map((map) => Route.fromMap(map)).toList();
+  }
+
+  // Add or update a route
+  Future<void> addRoute(Route route) async {
+    final database = await _db.db;
+    
+    // Check for existing route
+    final existing = await database.query(
+      'routes',
+      where: 'destination_peer_id = ?',
+      whereArgs: [route.destinationPeerId],
+    );
+
+    bool shouldUpdate = true;
+    if (existing.isNotEmpty) {
+      final existingRoute = Route.fromMap(existing.first);
+      // Only replace if new route is better or equally good (lower or equal hop count)
+      if (route.hopCount > existingRoute.hopCount) {
+        // New route is worse - just update timestamp of the existing one
+        await database.update(
+          'routes',
+          {
+            'last_updated_timestamp': DateTime.now().millisecondsSinceEpoch,
+          },
+          where: 'destination_peer_id = ?',
+          whereArgs: [route.destinationPeerId],
+        );
+        shouldUpdate = false;
+      }
+    }
+
+    if (shouldUpdate) {
+      await database.insert(
+        'routes',
+        route.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      debugPrint('Route added/updated: ${route.destinationPeerId} via ${route.nextHopPeerId} (${route.hopCount} hops)');
+      _routeUpdateController.add(route.destinationPeerId);
+    }
+  }
+
   // Initiate route discovery for a destination
   Future<bool> discoverRoute(String destinationPeerId) async {
     // Check if discovery already in progress
@@ -111,7 +157,6 @@ class RouteManager {
 
     // Broadcast to all connected peers
     final peers = await _db.allPeers();
-    final connectedPeers = peers.where((p) => true).toList(); // Filter for connected if we had that state here
     // Better to rely on TransportService for knowing who is connected, but iterating known peers is a start
     
     // Convert request to MeshMessage for transport
@@ -204,15 +249,6 @@ class RouteManager {
     await removeRoutesThrough(peerId);
   }
 
-  // Add or update a route
-  Future<void> addRoute(Route route) async {
-    final database = await _db.db;
-    await database.insert(
-      'routes',
-      route.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-  }
 
   // Remove routes through a specific peer
   Future<void> removeRoutesThrough(String peerId) async {

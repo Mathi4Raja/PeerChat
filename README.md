@@ -1,6 +1,6 @@
 # PeerChat Secure
 
-**Status: ✅ 100% COMPLETE - Production Ready**
+**Status: 🟡 Core Complete — Needs Real-Device Testing**
 
 A fully functional peer-to-peer encrypted messaging app with mesh routing capabilities, designed for disaster relief and offline communication scenarios.
 
@@ -232,8 +232,8 @@ Look for:
 
 ## Project Status
 
-**Completion:** 100% ✅
-**Status:** Production Ready
+**Completion:** ~90% 🟡
+**Status:** Core Complete — Needs Real-Device Testing
 **Last Updated:** February 17, 2026
 
 ### Completed Features

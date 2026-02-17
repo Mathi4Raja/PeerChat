@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 
 class Peer {
   final String id; // fingerprint or public key base64
@@ -6,6 +5,8 @@ class Peer {
   final String address; // ip:port or MAC address
   final int lastSeen;
   final bool hasApp; // true if discovered via mDNS (has PeerChat app)
+  final bool isWiFi;
+  final bool isBluetooth;
 
   Peer({
     required this.id,
@@ -13,6 +14,8 @@ class Peer {
     required this.address,
     required this.lastSeen,
     this.hasApp = false,
+    this.isWiFi = false,
+    this.isBluetooth = false,
   });
 
   Map<String, Object?> toMap() => {
@@ -21,6 +24,8 @@ class Peer {
         'address': address,
         'lastSeen': lastSeen,
         'hasApp': hasApp ? 1 : 0,
+        'isWiFi': isWiFi ? 1 : 0,
+        'isBluetooth': isBluetooth ? 1 : 0,
       };
 
   static Peer fromMap(Map<String, Object?> m) => Peer(
@@ -29,5 +34,7 @@ class Peer {
         address: m['address'] as String,
         lastSeen: m['lastSeen'] as int,
         hasApp: (m['hasApp'] as int?) == 1,
+        isWiFi: (m['isWiFi'] as int?) == 1,
+        isBluetooth: (m['isBluetooth'] as int?) == 1,
       );
 }
