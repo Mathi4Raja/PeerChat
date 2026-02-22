@@ -47,13 +47,18 @@ class AppState extends ChangeNotifier {
   List<Peer> get activePeers {
     final now = DateTime.now().millisecondsSinceEpoch;
     final fiveMinutesAgo = now - (5 * 60 * 1000);
-    return peers.where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey).toList();
+    final active = peers.where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey).toList();
+    debugPrint('AppState.activePeers: ${active.length} of ${peers.length} peers are active');
+    return active;
   }
   
   // Get connected peers (those we have active connections with)
   List<Peer> get connectedPeers {
     final connectedIds = meshRouter.getConnectedPeerIds();
-    return activePeers.where((p) => connectedIds.contains(p.id)).toList();
+    debugPrint('AppState.connectedPeers: ${connectedIds.length} connected IDs from MeshRouter');
+    final connected = activePeers.where((p) => connectedIds.contains(p.id)).toList();
+    debugPrint('AppState.connectedPeers: ${connected.length} peers match connected IDs');
+    return connected;
   }
   
   // Get discovered but not connected peers
@@ -104,10 +109,22 @@ class AppState extends ChangeNotifier {
       
       // Listen to mesh router changes and reload peers
       meshRouter.addListener(() async {
-        // Reload peers from database when mesh router state changes
+        debugPrint('AppState: MeshRouter changed, reloading peers...');
+        final oldCount = peers.length;
         peers = await _db.allPeers();
+        debugPrint('AppState: Reloaded ${peers.length} peers (was $oldCount)');
+        
+        // Log active peers with their lastSeen timestamps
+        final now = DateTime.now().millisecondsSinceEpoch;
+        for (final peer in peers) {
+          final ageSeconds = ((now - peer.lastSeen) / 1000).round();
+          final shortId = peer.id.length > 8 ? peer.id.substring(0, 8) : peer.id;
+          debugPrint('  - ${peer.displayName} ($shortId): ${ageSeconds}s ago');
+        }
+        
         await refreshUnreadCounts();
         notifyListeners();
+        debugPrint('AppState: notifyListeners() called');
       });
       
       // Listen for new messages to update unread counts
@@ -140,8 +157,18 @@ class AppState extends ChangeNotifier {
   }
   
   void _startPeerRefresh() {
-    _peerRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      // Trigger UI update to refresh active peer list
+    _peerRefreshTimer = Timer.periodic(const Duration(seconds: 10), (timer) async {
+      debugPrint('AppState: Periodic peer refresh (10s timer)');
+      final oldCount = peers.length;
+      peers = await _db.allPeers();
+      debugPrint('AppState: Timer reloaded ${peers.length} peers (was $oldCount)');
+      
+      // Log active peers count
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final fiveMinutesAgo = now - (5 * 60 * 1000);
+      final activeCount = peers.where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey).length;
+      debugPrint('AppState: $activeCount active peers (seen in last 5 min)');
+      
       notifyListeners();
     });
   }
@@ -152,17 +179,25 @@ class AppState extends ChangeNotifier {
     super.dispose();
   }
 
-  // Refresh peer discovery
+  // Refresh peer discovery (including WiFi Direct)
   Future<void> refreshDiscovery() async {
     try {
-      // Restart discovery service
+      debugPrint('Refreshing discovery services...');
+      
+      // Restart mDNS discovery service
       await _discovery.stop();
       await _discovery.start(publicKey ?? 'unknown', 9000, name: displayName);
+      
+      // Restart WiFi Direct advertising and discovery
+      await meshRouter.restartWiFiDirect();
       
       // Reload peers from database
       peers = await _db.allPeers();
       notifyListeners();
+      
+      debugPrint('Discovery services restarted successfully');
     } catch (e) {
+      debugPrint('Error refreshing discovery: $e');
       // Ignore errors, discovery might already be stopped
     }
   }

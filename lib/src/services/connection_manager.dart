@@ -132,6 +132,35 @@ class ConnectionManager extends ChangeNotifier {
     
     notifyListeners();
   }
+  
+  /// Update peer's lastSeen timestamp (call when receiving data/keepalives)
+  Future<void> updatePeerActivity(String transportId) async {
+    final cryptoId = _transportToCrypto[transportId];
+    if (cryptoId == null) {
+      debugPrint('⚠️ updatePeerActivity: No crypto ID for transport $transportId');
+      return;
+    }
+    
+    // Get all peers and find the one we need to update
+    final peers = await _db.allPeers();
+    final peer = peers.where((p) => p.id == cryptoId).firstOrNull;
+    
+    if (peer != null) {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final updatedPeer = Peer(
+        id: peer.id,
+        displayName: peer.displayName,
+        address: peer.address,
+        lastSeen: now,
+        hasApp: peer.hasApp,
+      );
+      await _db.upsertPeer(updatedPeer);
+      debugPrint('✓ Updated peer activity: ${peer.displayName} (${peer.id.substring(0, 8)}) lastSeen=$now');
+      notifyListeners(); // Notify listeners so AppState can react
+    } else {
+      debugPrint('⚠️ updatePeerActivity: Peer not found for crypto ID ${cryptoId.substring(0, 8)}');
+    }
+  }
 
   /// Get all connected crypto peer IDs
   List<String> getConnectedCryptoPeerIds() {

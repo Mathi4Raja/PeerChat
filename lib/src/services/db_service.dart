@@ -19,7 +19,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 7,
+      version: 8,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -41,6 +41,9 @@ class DBService {
         }
         if (oldVersion < 7) {
           await _migrateTo7(db);
+        }
+        if (oldVersion < 8) {
+          await _migrateTo8(db);
         }
       },
     );
@@ -138,6 +141,15 @@ class DBService {
         added_timestamp INTEGER NOT NULL
       )
     ''');
+    
+    // Known WiFi Direct endpoints for auto-reconnection - version 8
+    await db.execute('''
+      CREATE TABLE known_wifi_endpoints (
+        endpoint_id TEXT PRIMARY KEY,
+        last_connected_timestamp INTEGER NOT NULL,
+        reconnect_attempts INTEGER DEFAULT 0
+      )
+    ''');
   }
 
   Future<void> _migrateTo6(Database db) async {
@@ -158,6 +170,17 @@ class DBService {
     try {
       await db.execute('ALTER TABLE peers ADD COLUMN isBluetooth INTEGER DEFAULT 0');
     } catch (_) {}
+  }
+  
+  Future<void> _migrateTo8(Database db) async {
+    // Add known_wifi_endpoints table for auto-reconnection
+    await db.execute('''
+      CREATE TABLE known_wifi_endpoints (
+        endpoint_id TEXT PRIMARY KEY,
+        last_connected_timestamp INTEGER NOT NULL,
+        reconnect_attempts INTEGER DEFAULT 0
+      )
+    ''');
   }
 
   Future<void> _migrateTo2(Database db) async {
@@ -401,6 +424,64 @@ class DBService {
       {'isRead': 1},
       where: 'peerId = ? AND isRead = 0',
       whereArgs: [peerId],
+    );
+  }
+  
+  // Known WiFi Direct endpoints operations
+  Future<void> saveKnownWiFiEndpoint(String endpointId) async {
+    final d = await db;
+    await d.insert(
+      'known_wifi_endpoints',
+      {
+        'endpoint_id': endpointId,
+        'last_connected_timestamp': DateTime.now().millisecondsSinceEpoch,
+        'reconnect_attempts': 0,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+  
+  Future<Set<String>> getKnownWiFiEndpoints() async {
+    final d = await db;
+    final rows = await d.query('known_wifi_endpoints');
+    return rows.map((r) => r['endpoint_id'] as String).toSet();
+  }
+  
+  Future<int> getReconnectAttempts(String endpointId) async {
+    final d = await db;
+    final rows = await d.query(
+      'known_wifi_endpoints',
+      where: 'endpoint_id = ?',
+      whereArgs: [endpointId],
+    );
+    if (rows.isEmpty) return 0;
+    return rows.first['reconnect_attempts'] as int;
+  }
+  
+  Future<void> incrementReconnectAttempts(String endpointId) async {
+    final d = await db;
+    await d.rawUpdate(
+      'UPDATE known_wifi_endpoints SET reconnect_attempts = reconnect_attempts + 1 WHERE endpoint_id = ?',
+      [endpointId],
+    );
+  }
+  
+  Future<void> resetReconnectAttempts(String endpointId) async {
+    final d = await db;
+    await d.update(
+      'known_wifi_endpoints',
+      {'reconnect_attempts': 0, 'last_connected_timestamp': DateTime.now().millisecondsSinceEpoch},
+      where: 'endpoint_id = ?',
+      whereArgs: [endpointId],
+    );
+  }
+  
+  Future<void> removeKnownWiFiEndpoint(String endpointId) async {
+    final d = await db;
+    await d.delete(
+      'known_wifi_endpoints',
+      where: 'endpoint_id = ?',
+      whereArgs: [endpointId],
     );
   }
 }

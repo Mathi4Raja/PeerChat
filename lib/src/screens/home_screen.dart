@@ -24,19 +24,6 @@ class HomeScreen extends StatelessWidget {
         title: const Text('PeerChat Secure'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refresh peers',
-            onPressed: () async {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Refreshing peer discovery...'),
-                  duration: Duration(seconds: 1),
-                ),
-              );
-              await appState.refreshDiscovery();
-            },
-          ),
-          IconButton(
             icon: Stack(
               children: [
                 const Icon(Icons.chat),
@@ -76,129 +63,135 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: SafeArea(
-        child: SingleChildScrollView(
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const IdentityCard(),
-                const SizedBox(height: 16),
-                const MeshStatusCard(),
-                const SizedBox(height: 16),
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await appState.refreshDiscovery();
+        },
+        child: SafeArea(
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const IdentityCard(),
+                  const SizedBox(height: 16),
+                  const MeshStatusCard(),
+                  const SizedBox(height: 16),
 
-                // ─── Navigation to Peers Screen ───
-                Card(
-                  clipBehavior: Clip.antiAlias,
-                  child: InkWell(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(builder: (_) => const PeersScreen()),
-                      );
-                    },
+                  // ─── Navigation to Peers Screen ───
+                  Card(
+                    clipBehavior: Clip.antiAlias,
+                    child: InkWell(
+                      onTap: () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(builder: (_) => const PeersScreen()),
+                        );
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Row(
+                          children: [
+                            CircleAvatar(
+                              backgroundColor: Colors.blue.shade100,
+                              child: Icon(Icons.people, color: Colors.blue.shade700),
+                            ),
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Peers & Discovery',
+                                    style: TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '$connectedCount connected · ${discoveredCount - connectedCount} unconnected',
+                                    style: TextStyle(
+                                      fontSize: 13,
+                                      color: Colors.grey.shade600,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Icon(Icons.chevron_right, color: Colors.grey.shade400),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+
+                  // ─── Privacy & Persistence Info ───
+                  Card(
+                    color: Colors.blue.shade50,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      side: BorderSide(color: Colors.blue.shade200),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
                     child: Padding(
                       padding: const EdgeInsets.all(16.0),
-                      child: Row(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          CircleAvatar(
-                            backgroundColor: Colors.blue.shade100,
-                            child: Icon(Icons.people, color: Colors.blue.shade700),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Text(
-                                  'Peers & Discovery',
-                                  style: TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
+                          Row(
+                            children: [
+                              Icon(Icons.security, size: 20, color: Colors.blue.shade800),
+                              const SizedBox(width: 8),
+                              Text(
+                                'Privacy & Storage',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.blue.shade800,
                                 ),
-                                const SizedBox(height: 4),
-                                Text(
-                                  '$connectedCount connected · ${discoveredCount - connectedCount} unconnected',
-                                  style: TextStyle(
-                                    fontSize: 13,
-                                    color: Colors.grey.shade600,
-                                  ),
-                                ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          Icon(Icons.chevron_right, color: Colors.grey.shade400),
+                          const SizedBox(height: 8),
+                          const Text(
+                            'PeerChat Secure is fully decentralized. Your messages and identity keys are stored locally on this device.',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Icon(Icons.cloud_off, size: 16, color: Colors.grey.shade700),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'No central servers used.',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 4),
+                          Row(
+                            children: [
+                              Icon(Icons.delete_forever, size: 16, color: Colors.grey.shade700),
+                              const SizedBox(width: 8),
+                              const Expanded(
+                                child: Text(
+                                  'Data is wiped if you uninstall the app.',
+                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+                                ),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
                   ),
-                ),
-                const SizedBox(height: 16),
-
-                // ─── Privacy & Persistence Info ───
-                Card(
-                  color: Colors.blue.shade50,
-                  elevation: 0,
-                  shape: RoundedRectangleBorder(
-                    side: BorderSide(color: Colors.blue.shade200),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(16.0),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Icon(Icons.security, size: 20, color: Colors.blue.shade800),
-                            const SizedBox(width: 8),
-                            Text(
-                              'Privacy & Storage',
-                              style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.blue.shade800,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        const Text(
-                          'PeerChat Secure is fully decentralized. Your messages and identity keys are stored locally on this device.',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                        const SizedBox(height: 12),
-                        Row(
-                          children: [
-                            Icon(Icons.cloud_off, size: 16, color: Colors.grey.shade700),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                'No central servers used.',
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        Row(
-                          children: [
-                            Icon(Icons.delete_forever, size: 16, color: Colors.grey.shade700),
-                            const SizedBox(width: 8),
-                            const Expanded(
-                              child: Text(
-                                'Data is wiped if you uninstall the app.',
-                                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),

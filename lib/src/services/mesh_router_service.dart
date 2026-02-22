@@ -83,9 +83,26 @@ class MeshRouterService extends ChangeNotifier {
     _connectionManager.setDisplayName(name);
   }
   
+  // Restart WiFi Direct advertising and discovery
+  Future<void> restartWiFiDirect() async {
+    debugPrint('Restarting WiFi Direct...');
+    await _wifiTransport?.restartWiFiDirect();
+  }
+  
   // Handle incoming transport message (could be handshake or mesh message)
   Future<void> _handleTransportMessage(TransportMessage transportMsg) async {
     try {
+      // Update peer activity for any received data
+      await _connectionManager.updatePeerActivity(transportMsg.fromPeerId);
+      
+      // Check if it's a keepalive packet (2 bytes: 0xFF 0xFF)
+      if (transportMsg.data.length == 2 && 
+          transportMsg.data[0] == 0xFF && 
+          transportMsg.data[1] == 0xFF) {
+        // Keepalive - already processed by updatePeerActivity, nothing more to do
+        return;
+      }
+      
       // Try to parse as handshake first
       final handshake = HandshakeMessage.fromBytes(transportMsg.data);
       if (handshake != null) {
@@ -148,6 +165,12 @@ class MeshRouterService extends ChangeNotifier {
       await _processQueue();
       notifyListeners();
     };
+    
+    // Listen to connection manager changes (peer activity updates)
+    _connectionManager.addListener(() {
+      debugPrint('ConnectionManager changed - notifying UI');
+      notifyListeners();
+    });
 
     // Initialize transport layer
     _transportService = MultiTransportService();
@@ -157,6 +180,10 @@ class MeshRouterService extends ChangeNotifier {
     bluetoothTransport.onConnectionEstablished = (transportId) {
       debugPrint('Bluetooth connection established: $transportId');
       _connectionManager.onConnectionEstablished(transportId);
+    };
+    bluetoothTransport.onConnectionLost = (transportId) {
+      debugPrint('Bluetooth connection lost: $transportId');
+      _connectionManager.onConnectionLost(transportId);
     };
     _transportService.addTransport(bluetoothTransport);
     
@@ -169,6 +196,10 @@ class MeshRouterService extends ChangeNotifier {
     wifiTransport.onConnectionEstablished = (transportId) {
       debugPrint('WiFi Direct connection established: $transportId');
       _connectionManager.onConnectionEstablished(transportId);
+    };
+    wifiTransport.onConnectionLost = (transportId) {
+      debugPrint('WiFi Direct connection lost: $transportId');
+      _connectionManager.onConnectionLost(transportId);
     };
     // Note: Name will be set later via updateLocalName() after AppState generates it
     wifiTransport.setLocalIdentity(

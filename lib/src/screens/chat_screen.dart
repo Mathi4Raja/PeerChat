@@ -24,6 +24,7 @@ class _ChatScreenState extends State<ChatScreen> {
   List<ChatMessage> _messages = [];
   bool _isLoading = true;
   StreamSubscription<ChatMessage>? _incomingMessageSubscription;
+  StreamSubscription<String>? _statusChangeSubscription;
 
   @override
   void initState() {
@@ -64,8 +65,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Listen for status updates (ACKs, read receipts)
-    appState.meshRouter.onMessageStatusChanged.listen((messageId) {
-      if (_selectedPeerId != null) {
+    _statusChangeSubscription = appState.meshRouter.onMessageStatusChanged.listen((messageId) {
+      if (_selectedPeerId != null && mounted) {
         // Reload all messages to update status icons
         _loadMessages();
       }
@@ -75,13 +76,14 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   void dispose() {
     _incomingMessageSubscription?.cancel();
+    _statusChangeSubscription?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
   }
 
   Future<void> _loadMessages() async {
-    if (_selectedPeerId == null) return;
+    if (_selectedPeerId == null || !mounted) return;
     
     setState(() {
       _isLoading = true;
@@ -89,6 +91,8 @@ class _ChatScreenState extends State<ChatScreen> {
     
     final appState = Provider.of<AppState>(context, listen: false);
     final messages = await appState.db.getChatMessages(_selectedPeerId!);
+    
+    if (!mounted) return;
     
     setState(() {
       _messages = messages;

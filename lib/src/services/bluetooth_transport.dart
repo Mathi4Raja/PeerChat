@@ -14,6 +14,9 @@ class BluetoothTransport implements TransportService {
   // Callback for when connection is established
   Function(String transportId)? onConnectionEstablished;
   
+  // Callback for when connection is lost
+  Function(String transportId)? onConnectionLost;
+  
   Timer? _reconnectTimer;
 
   @override
@@ -162,6 +165,11 @@ class BluetoothTransport implements TransportService {
           _connections.remove(device.address);
           _subscriptions[device.address]?.cancel();
           _subscriptions.remove(device.address);
+          
+          // Notify connection lost
+          if (onConnectionLost != null) {
+            onConnectionLost!(device.address);
+          }
           
           // Try to reconnect after a delay
           Future.delayed(const Duration(seconds: 10), () {
