@@ -1,10 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'src/app_state.dart';
-import 'src/screens/home_screen.dart';
+import 'src/screens/main_shell.dart';
+import 'src/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Immersive dark status/nav bars
+  SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
+    statusBarColor: Colors.transparent,
+    statusBarIconBrightness: Brightness.light,
+    systemNavigationBarColor: AppTheme.bgDeep,
+    systemNavigationBarIconBrightness: Brightness.light,
+  ));
+
   debugPrint('APP_START: Initializing AppState...');
   final appState = AppState();
   try {
@@ -14,8 +25,9 @@ void main() async {
   } catch (e, stack) {
     debugPrint('FATAL_CRASH: $e');
     debugPrint('STACK_TRACE: $stack');
-    // Fallback UI or silent fail? For now, we want to see this in logs.
     runApp(MaterialApp(
+      themeMode: ThemeMode.dark,
+      darkTheme: AppTheme.darkTheme,
       home: Scaffold(
         body: Center(child: Text('Fatal Error: $e\nPlease restart the app.')),
       ),
@@ -33,10 +45,10 @@ class MyApp extends StatelessWidget {
       value: appState,
       child: MaterialApp(
         title: 'PeerChat Secure',
-        theme: ThemeData(
-          primarySwatch: Colors.blue,
-        ),
-        home: const HomeScreen(),
+        debugShowCheckedModeBanner: false,
+        themeMode: ThemeMode.dark,
+        darkTheme: AppTheme.darkTheme,
+        home: const MainShell(),
       ),
     );
   }

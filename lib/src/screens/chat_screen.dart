@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../app_state.dart';
 import '../services/mesh_router_service.dart';
 import '../models/mesh_message.dart';
 import '../models/chat_message.dart';
+import '../theme.dart';
 import '../utils/name_generator.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -183,6 +185,7 @@ class _ChatScreenState extends State<ChatScreen> {
     
     // Get peer name
     String peerName = 'Select a peer';
+    String peerInitials = '?';
     if (_selectedPeerId != null) {
       final peer = appState.activePeers.firstWhere(
         (p) => p.id == _selectedPeerId,
@@ -194,25 +197,89 @@ class _ChatScreenState extends State<ChatScreen> {
       peerName = peer.id.length > 40 
           ? NameGenerator.generateShortName(peer.id)
           : peer.displayName;
-        }
+      peerInitials = NameGenerator.generateInitials(peer.id);
+    }
+
+    final isConnected = _selectedPeerId != null &&
+        appState.meshRouter.getConnectedPeerIds().contains(_selectedPeerId);
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        title: Row(
           children: [
-            Text(peerName, style: const TextStyle(fontSize: 16)),
-            if (_selectedPeerId != null)
-              const Text(
-                'End-to-end encrypted',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.normal),
+            if (_selectedPeerId != null) ...[
+              // Peer avatar
+              Stack(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: AppTheme.accent.withValues(alpha: 0.15),
+                    child: Text(
+                      peerInitials,
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.accent,
+                      ),
+                    ),
+                  ),
+                  if (isConnected)
+                    Positioned(
+                      right: 0,
+                      bottom: 0,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: AppTheme.online,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: AppTheme.bgDeep, width: 2),
+                        ),
+                      ),
+                    ),
+                ],
               ),
+              const SizedBox(width: 10),
+            ],
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    peerName,
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  if (_selectedPeerId != null)
+                    Row(
+                      children: [
+                        Icon(
+                          Icons.lock_rounded,
+                          size: 10,
+                          color: AppTheme.primary.withValues(alpha: 0.7),
+                        ),
+                        const SizedBox(width: 3),
+                        Text(
+                          'End-to-end encrypted',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: AppTheme.primary.withValues(alpha: 0.7),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
           if (_selectedPeerId == null)
             IconButton(
-              icon: const Icon(Icons.person),
+              icon: const Icon(Icons.person_add_rounded),
               onPressed: () => _showPeerSelector(appState),
             ),
         ],
@@ -224,7 +291,9 @@ class _ChatScreenState extends State<ChatScreen> {
             child: _selectedPeerId == null
                 ? _buildNoPeerSelected(appState)
                 : _isLoading
-                    ? const Center(child: CircularProgressIndicator())
+                    ? const Center(
+                        child: CircularProgressIndicator(color: AppTheme.primary),
+                      )
                     : _buildMessagesList(),
           ),
           
@@ -240,16 +309,39 @@ class _ChatScreenState extends State<ChatScreen> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[400]),
-          const SizedBox(height: 16),
-          Text(
-            'Select a peer to start chatting',
-            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+          Container(
+            padding: const EdgeInsets.all(24),
+            decoration: BoxDecoration(
+              color: AppTheme.accent.withValues(alpha: 0.06),
+              shape: BoxShape.circle,
+            ),
+            child: Icon(
+              Icons.chat_bubble_outline_rounded,
+              size: 56,
+              color: AppTheme.accent.withValues(alpha: 0.4),
+            ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
+          Text(
+            'Select a peer to chat',
+            style: GoogleFonts.inter(
+              fontSize: 17,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Your messages are end-to-end encrypted',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              color: AppTheme.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 28),
           ElevatedButton.icon(
             onPressed: () => _showPeerSelector(appState),
-            icon: const Icon(Icons.person),
+            icon: const Icon(Icons.person_add_rounded, size: 18),
             label: const Text('Select Peer'),
           ),
         ],
@@ -263,16 +355,27 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.message_outlined, size: 64, color: Colors.grey[400]),
+            Icon(
+              Icons.lock_outline_rounded,
+              size: 48,
+              color: AppTheme.primary.withValues(alpha: 0.3),
+            ),
             const SizedBox(height: 16),
             Text(
               'No messages yet',
-              style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+              style: GoogleFonts.inter(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.textPrimary,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Text(
-              'Send a message to start the conversation',
-              style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+              'Send the first encrypted message',
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                color: AppTheme.textSecondary,
+              ),
             ),
           ],
         ),
@@ -281,7 +384,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     return ListView.builder(
       controller: _scrollController,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
@@ -296,21 +399,40 @@ class _ChatScreenState extends State<ChatScreen> {
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width * 0.75,
         ),
         decoration: BoxDecoration(
-          color: isMe ? Colors.blue[100] : Colors.grey[200],
-          borderRadius: BorderRadius.circular(16),
+          gradient: isMe
+              ? const LinearGradient(
+                  colors: [Color(0xFF00897B), Color(0xFF00ACC1)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : null,
+          color: isMe ? null : AppTheme.bgSurface,
+          borderRadius: BorderRadius.only(
+            topLeft: const Radius.circular(18),
+            topRight: const Radius.circular(18),
+            bottomLeft: isMe ? const Radius.circular(18) : const Radius.circular(4),
+            bottomRight: isMe ? const Radius.circular(4) : const Radius.circular(18),
+          ),
+          border: isMe
+              ? null
+              : Border.all(color: Colors.white.withValues(alpha: 0.06)),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
               message.content,
-              style: const TextStyle(fontSize: 15),
+              style: GoogleFonts.inter(
+                fontSize: 14,
+                color: isMe ? Colors.white : AppTheme.textPrimary,
+                height: 1.4,
+              ),
             ),
             const SizedBox(height: 4),
             Row(
@@ -318,14 +440,25 @@ class _ChatScreenState extends State<ChatScreen> {
               children: [
                 Text(
                   _formatTime(message.timestamp),
-                  style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: isMe
+                        ? Colors.white.withValues(alpha: 0.7)
+                        : AppTheme.textSecondary,
+                  ),
                 ),
                 if (isMe) ...[
                   const SizedBox(width: 4),
                   Icon(
                     _getStatusIcon(message.status),
-                    size: 14,
-                    color: message.status == MessageStatus.seen ? Colors.blue : Colors.grey[600],
+                    size: 15,
+                    color: message.status == MessageStatus.seen
+                        ? const Color(0xFFFFD54F) // gold — premium and visible on teal gradient
+                        : (message.status == MessageStatus.delivered
+                            ? Colors.white
+                            : (message.status == MessageStatus.failed
+                                ? AppTheme.danger
+                                : Colors.white.withValues(alpha: 0.55))),
                   ),
                 ],
               ],
@@ -339,16 +472,16 @@ class _ChatScreenState extends State<ChatScreen> {
   IconData _getStatusIcon(MessageStatus status) {
     switch (status) {
       case MessageStatus.sending:
-        return Icons.access_time;
+        return Icons.access_time_rounded;
       case MessageStatus.routing:
-        return Icons.alt_route;
+        return Icons.alt_route_rounded;
       case MessageStatus.sent:
-        return Icons.check;
+        return Icons.check_rounded;
       case MessageStatus.delivered:
       case MessageStatus.seen:
-        return Icons.done_all;
+        return Icons.done_all_rounded;
       case MessageStatus.failed:
-        return Icons.error_outline;
+        return Icons.error_outline_rounded;
     }
   }
 
@@ -365,49 +498,67 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildMessageInput() {
     return Container(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withValues(alpha: 0.2),
-            spreadRadius: 1,
-            blurRadius: 3,
-            offset: const Offset(0, -1),
-          ),
-        ],
+        color: AppTheme.bgCard,
+        border: Border(
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
       ),
-      child: Row(
-        children: [
-          Expanded(
-            child: TextField(
-              controller: _messageController,
-              decoration: InputDecoration(
-                hintText: 'Type a message...',
-                border: OutlineInputBorder(
+      child: SafeArea(
+        top: false,
+        child: Row(
+          children: [
+            Expanded(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: AppTheme.bgSurface,
                   borderRadius: BorderRadius.circular(24),
-                  borderSide: BorderSide.none,
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 ),
-                filled: true,
-                fillColor: Colors.grey[100],
-                contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 10,
+                child: TextField(
+                  controller: _messageController,
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    color: AppTheme.textPrimary,
+                  ),
+                  decoration: InputDecoration(
+                    hintText: 'Type a message...',
+                    hintStyle: GoogleFonts.inter(
+                      color: AppTheme.textSecondary,
+                      fontSize: 14,
+                    ),
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 18,
+                      vertical: 10,
+                    ),
+                  ),
+                  maxLines: null,
+                  textCapitalization: TextCapitalization.sentences,
                 ),
               ),
-              maxLines: null,
-              textCapitalization: TextCapitalization.sentences,
             ),
-          ),
-          const SizedBox(width: 8),
-          CircleAvatar(
-            backgroundColor: Colors.blue,
-            child: IconButton(
-              icon: const Icon(Icons.send, color: Colors.white, size: 20),
-              onPressed: _sendMessage,
+            const SizedBox(width: 8),
+            Container(
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                shape: BoxShape.circle,
+                boxShadow: [
+                  BoxShadow(
+                    color: AppTheme.primary.withValues(alpha: 0.3),
+                    blurRadius: 8,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: IconButton(
+                icon: const Icon(Icons.send_rounded, color: AppTheme.bgDeep, size: 20),
+                onPressed: _sendMessage,
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -415,42 +566,98 @@ class _ChatScreenState extends State<ChatScreen> {
   void _showPeerSelector(AppState appState) {
     showModalBottomSheet(
       context: context,
+      backgroundColor: AppTheme.bgCard,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
       builder: (context) {
         final peers = appState.peersWithApp;
         
-        return Container(
-          padding: const EdgeInsets.all(16),
+        return Padding(
+          padding: const EdgeInsets.all(20),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Select a peer to chat with',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 36,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: AppTheme.textSecondary.withValues(alpha: 0.3),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                'Select a peer',
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.textPrimary,
+                ),
               ),
               const SizedBox(height: 16),
               if (peers.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(16.0),
-                  child: Text('No peers available'),
+                Padding(
+                  padding: const EdgeInsets.all(20.0),
+                  child: Center(
+                    child: Text(
+                      'No peers available',
+                      style: GoogleFonts.inter(color: AppTheme.textSecondary),
+                    ),
+                  ),
                 )
               else
                 ...peers.map((peer) {
                   final name = peer.id.length > 40
                       ? NameGenerator.generateShortName(peer.id)
                       : peer.displayName;
+                  final peerInitials = NameGenerator.generateInitials(peer.id);
+                  final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
+                  final avatarColor = HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();
                   
-                  return ListTile(
-                    leading: const Icon(Icons.person),
-                    title: Text(name),
-                    subtitle: Text(peer.address),
-                    onTap: () {
-                      setState(() {
-                        _selectedPeerId = peer.id;
-                      });
-                      Navigator.pop(context);
-                      _loadMessages();
-                    },
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: ListTile(
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      leading: CircleAvatar(
+                        backgroundColor: avatarColor.withValues(alpha: 0.15),
+                        child: Text(
+                          peerInitials,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: avatarColor,
+                          ),
+                        ),
+                      ),
+                      title: Text(
+                        name,
+                        style: GoogleFonts.inter(
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.textPrimary,
+                        ),
+                      ),
+                      subtitle: Text(
+                        peer.address,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                      onTap: () {
+                        setState(() {
+                          _selectedPeerId = peer.id;
+                        });
+                        Navigator.pop(context);
+                        _loadMessages();
+                      },
+                    ),
                   );
                 }),
             ],

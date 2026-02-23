@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../models/peer.dart';
+import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'add_peer_screen.dart';
 import 'chat_screen.dart';
@@ -15,12 +17,17 @@ class PeersScreen extends StatelessWidget {
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Peers & Discovery'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.link), text: 'Connected'),
-              Tab(icon: Icon(Icons.radar), text: 'Unconnected'),
+          title: Text(
+            'Peers & Discovery',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+          ),
+          bottom: TabBar(
+            tabs: const [
+              Tab(icon: Icon(Icons.radar_rounded), text: 'Discovered'),
+              Tab(icon: Icon(Icons.link_rounded), text: 'Connected'),
             ],
+            indicatorWeight: 3,
+            dividerColor: Colors.white.withValues(alpha: 0.06),
           ),
         ),
         body: Consumer<AppState>(
@@ -28,22 +35,19 @@ class PeersScreen extends StatelessWidget {
             final connectedIds = appState.meshRouter.getConnectedPeerIds();
             final allActive = appState.activePeers;
 
-            // Connected = peers with completed handshake (in connectedIds)
             final connected = allActive.where((p) => connectedIds.contains(p.id)).toList();
-
-            // Unconnected = all active peers NOT in the connected set
             final unconnected = allActive.where((p) => !connectedIds.contains(p.id)).toList();
 
             return TabBarView(
               children: [
-                _ConnectedTab(peers: connected),
                 _UnconnectedTab(peers: unconnected),
+                _ConnectedTab(peers: connected),
               ],
             );
           },
         ),
         floatingActionButton: FloatingActionButton(
-          child: const Icon(Icons.person_add),
+          child: const Icon(Icons.person_add_rounded),
           onPressed: () {
             Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const AddPeerScreen()),
@@ -66,16 +70,39 @@ class _ConnectedTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (peers.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.link_off, size: 64, color: Colors.grey),
-            SizedBox(height: 12),
-            Text('No connected peers', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            SizedBox(height: 4),
-            Text('Peers appear here after a successful handshake',
-                style: TextStyle(color: Colors.grey, fontSize: 12)),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withValues(alpha: 0.06),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.link_off_rounded,
+                size: 48,
+                color: AppTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No connected peers',
+              style: GoogleFonts.inter(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Peers appear after a successful handshake',
+              style: GoogleFonts.inter(
+                color: AppTheme.textSecondary,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
       );
@@ -84,7 +111,7 @@ class _ConnectedTab extends StatelessWidget {
     return ListView.separated(
       padding: const EdgeInsets.all(12),
       itemCount: peers.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (_, __) => const SizedBox(height: 4),
       itemBuilder: (context, index) => _PeerTile(
         peer: peers[index],
         isConnected: true,
@@ -104,22 +131,44 @@ class _UnconnectedTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (peers.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.radar, size: 64, color: Colors.grey),
-            SizedBox(height: 12),
-            Text('No unconnected devices', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            SizedBox(height: 4),
-            Text('Connected peers are listed in the first tab',
-                style: TextStyle(color: Colors.grey, fontSize: 12)),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withValues(alpha: 0.06),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                Icons.radar_rounded,
+                size: 48,
+                color: AppTheme.textSecondary.withValues(alpha: 0.4),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'No discovered devices',
+              style: GoogleFonts.inter(
+                color: AppTheme.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Connected peers are in the first tab',
+              style: GoogleFonts.inter(
+                color: AppTheme.textSecondary,
+                fontSize: 13,
+              ),
+            ),
           ],
         ),
       );
     }
 
-    // Split into app vs no-app
     final withApp = peers.where((p) => p.hasApp).toList();
     final withoutApp = peers.where((p) => !p.hasApp).toList();
 
@@ -127,15 +176,21 @@ class _UnconnectedTab extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       children: [
         if (withApp.isNotEmpty) ...[
-          _sectionHeader('PEERCHAT DEVICES', Icons.verified_user, Colors.green.shade700, withApp.length),
-          const SizedBox(height: 4),
-          ...withApp.map((p) => _PeerTile(peer: p, isConnected: false)),
+          _sectionHeader('PEERCHAT DEVICES', Icons.verified_user_rounded, AppTheme.online, withApp.length),
+          const SizedBox(height: 8),
+          ...withApp.map((p) => Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: _PeerTile(peer: p, isConnected: false),
+          )),
           const SizedBox(height: 16),
         ],
         if (withoutApp.isNotEmpty) ...[
-          _sectionHeader('OTHER BLUETOOTH DEVICES', Icons.bluetooth_searching, Colors.orange.shade800, withoutApp.length),
-          const SizedBox(height: 4),
-          ...withoutApp.map((p) => _PeerTile(peer: p, isConnected: false)),
+          _sectionHeader('OTHER BLUETOOTH DEVICES', Icons.bluetooth_searching_rounded, AppTheme.warning, withoutApp.length),
+          const SizedBox(height: 8),
+          ...withoutApp.map((p) => Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: _PeerTile(peer: p, isConnected: false),
+          )),
         ],
       ],
     );
@@ -143,16 +198,25 @@ class _UnconnectedTab extends StatelessWidget {
 
   Widget _sectionHeader(String title, IconData icon, Color color, int count) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 4),
       child: Row(
         children: [
-          Icon(icon, size: 16, color: color),
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Icon(icon, size: 14, color: color),
+          ),
           const SizedBox(width: 8),
           Text(
             '$title ($count)',
-            style: TextStyle(
-              fontSize: 12, fontWeight: FontWeight.bold,
-              letterSpacing: 1.1, color: color,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 1.0,
+              color: color,
             ),
           ),
         ],
@@ -176,103 +240,151 @@ class _PeerTile extends StatelessWidget {
     final String displayName = peer.id.length > 40
         ? NameGenerator.generateShortName(peer.id)
         : peer.displayName;
+    final String initials = NameGenerator.generateInitials(peer.id);
 
     final bool isWiFi = peer.isWiFi || peer.address.contains('.') || peer.address == 'mDNS';
     final bool isBT = peer.isBluetooth || peer.address.contains(':') || peer.address.startsWith('00:');
 
-    // App Status Label
+    // Status
     String statusLabel = 'Not Installed';
-    Color statusColor = Colors.grey.shade600;
+    Color statusColor = AppTheme.textSecondary;
     if (isConnected) {
       statusLabel = 'Active';
-      statusColor = Colors.green.shade700;
+      statusColor = AppTheme.online;
     } else if (isVerified) {
       statusLabel = 'Installed';
-      statusColor = Colors.blue.shade700;
+      statusColor = AppTheme.accent;
     }
 
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-      leading: CircleAvatar(
-        radius: 18,
-        backgroundColor: isConnected
-            ? Colors.green.shade100
-            : (isVerified ? Colors.blue.shade100 : Colors.grey.shade200),
-        child: Icon(
-          isConnected ? Icons.link : (isVerified ? Icons.person : Icons.devices_other),
-          size: 20,
-          color: isConnected
-              ? Colors.green.shade700
-              : (isVerified ? Colors.blue.shade700 : Colors.grey.shade600),
+    // Avatar color from peer ID
+    final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
+    final avatarColor = isConnected
+        ? AppTheme.online
+        : (isVerified
+            ? HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor()
+            : AppTheme.textSecondary);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: isVerified
+            ? () {
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => ChatScreen(preselectedPeerId: peer.id)),
+                );
+              }
+            : null,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: isConnected
+                ? AppTheme.online.withValues(alpha: 0.04)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Row(
+            children: [
+              // Avatar
+              CircleAvatar(
+                radius: 20,
+                backgroundColor: avatarColor.withValues(alpha: 0.12),
+                child: isVerified
+                    ? Text(
+                        initials,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color: avatarColor,
+                        ),
+                      )
+                    : Icon(
+                        Icons.devices_other_rounded,
+                        size: 18,
+                        color: avatarColor,
+                      ),
+              ),
+              const SizedBox(width: 12),
+
+              // Name & address
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            displayName,
+                            style: GoogleFonts.inter(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textPrimary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (isWiFi) _badge(Icons.wifi_rounded, Colors.blue),
+                        if (isBT) _badge(Icons.bluetooth_rounded, Colors.indigo),
+                      ],
+                    ),
+                    const SizedBox(height: 3),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            peer.address,
+                            style: GoogleFonts.firaCode(
+                              fontSize: 10,
+                              color: AppTheme.textSecondary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: statusColor.withValues(alpha: 0.1),
+                            borderRadius: BorderRadius.circular(6),
+                          ),
+                          child: Text(
+                            statusLabel,
+                            style: GoogleFonts.inter(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(width: 8),
+              if (isConnected)
+                Icon(Icons.check_circle_rounded, color: AppTheme.online, size: 20)
+              else if (isVerified)
+                Icon(Icons.chevron_right_rounded, color: AppTheme.textSecondary.withValues(alpha: 0.4), size: 20)
+              else
+                Icon(Icons.help_outline_rounded, color: AppTheme.textSecondary.withValues(alpha: 0.3), size: 16),
+            ],
+          ),
         ),
       ),
-      title: Row(
-        children: [
-          Expanded(
-            child: Text(
-              displayName,
-              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          // Show both if discovered via both
-          if (isWiFi) _badge(Icons.wifi, 'WiFi', Colors.blue),
-          if (isBT) _badge(Icons.bluetooth, 'BT', Colors.indigo),
-        ],
-      ),
-      subtitle: Row(
-        children: [
-          Expanded(
-            child: Text(
-              peer.address,
-              style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
-          const SizedBox(width: 4),
-          Text(
-            statusLabel,
-            style: TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.bold,
-              color: statusColor,
-            ),
-          ),
-        ],
-      ),
-      trailing: isConnected
-          ? Icon(Icons.check_circle, color: Colors.green.shade700, size: 20)
-          : (isVerified
-              ? Icon(Icons.chevron_right, color: Colors.grey.shade400, size: 20)
-              : const Icon(Icons.help_outline, color: Colors.grey, size: 16)),
-      onTap: isVerified
-          ? () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => ChatScreen(preselectedPeerId: peer.id)),
-              );
-            }
-          : null,
     );
   }
 
-  Widget _badge(IconData icon, String label, Color color) {
+  Widget _badge(IconData icon, Color color) {
     return Container(
       margin: const EdgeInsets.only(left: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(4),
-        border: Border.all(color: color.withValues(alpha: 0.3)),
+        borderRadius: BorderRadius.circular(6),
       ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 10, color: color),
-          const SizedBox(width: 2),
-          Text(label, style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: color)),
-        ],
-      ),
+      child: Icon(icon, size: 11, color: color),
     );
   }
 }

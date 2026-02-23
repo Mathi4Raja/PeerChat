@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../models/route.dart' as mesh_route;
 import '../../models/queued_message.dart';
 import '../../services/message_queue.dart';
+import '../../theme.dart';
 
 class RoutingDebugScreen extends StatefulWidget {
   const RoutingDebugScreen({super.key});
@@ -56,24 +58,30 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
       length: 3,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Mesh Debug'),
+          title: Text(
+            'Mesh Debug',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+          ),
+          automaticallyImplyLeading: false,
           actions: [
             IconButton(
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded),
               tooltip: 'Refresh',
               onPressed: _loadDebugData,
             ),
           ],
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.alt_route), text: 'Routes'),
-              Tab(icon: Icon(Icons.queue), text: 'Queue'),
-              Tab(icon: Icon(Icons.wifi), text: 'Network'),
+          bottom: TabBar(
+            tabs: const [
+              Tab(icon: Icon(Icons.alt_route_rounded), text: 'Routes'),
+              Tab(icon: Icon(Icons.queue_rounded), text: 'Queue'),
+              Tab(icon: Icon(Icons.wifi_rounded), text: 'Network'),
             ],
+            indicatorWeight: 3,
+            dividerColor: Colors.white.withValues(alpha: 0.06),
           ),
         ),
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator())
+            ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
             : TabBarView(
                 children: [
                   _buildRoutesTab(),
@@ -89,15 +97,22 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
 
   Widget _buildRoutesTab() {
     if (_routes.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.alt_route, size: 64, color: Colors.grey),
-            SizedBox(height: 12),
-            Text('No routes discovered yet', style: TextStyle(color: Colors.grey, fontSize: 16)),
-            SizedBox(height: 4),
-            Text('Routes populate when peers communicate', style: TextStyle(color: Colors.grey, fontSize: 12)),
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: AppTheme.textSecondary.withValues(alpha: 0.06),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(Icons.alt_route_rounded, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.4)),
+            ),
+            const SizedBox(height: 16),
+            Text('No routes discovered', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Text('Routes populate when peers communicate', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
           ],
         ),
       );
@@ -106,33 +121,77 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
     return ListView.separated(
       padding: const EdgeInsets.all(12),
       itemCount: _routes.length,
-      separatorBuilder: (_, __) => const Divider(height: 1),
+      separatorBuilder: (_, __) => const SizedBox(height: 4),
       itemBuilder: (context, index) {
         final route = _routes[index];
-        return ListTile(
-          leading: CircleAvatar(
-            backgroundColor: route.isStale ? Colors.orange : Colors.green,
-            child: Text('${route.hopCount}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        return Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: route.isStale
+                ? AppTheme.warning.withValues(alpha: 0.04)
+                : AppTheme.online.withValues(alpha: 0.04),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: route.isStale
+                  ? AppTheme.warning.withValues(alpha: 0.15)
+                  : AppTheme.online.withValues(alpha: 0.15),
+            ),
           ),
-          title: Text(
-            'To: ${_shortenId(route.destinationPeerId)}',
-            style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-          ),
-          subtitle: Text(
-            'Via: ${_shortenId(route.nextHopPeerId)} · Score: ${route.preferenceScore.toStringAsFixed(3)}',
-            style: const TextStyle(fontSize: 12),
-          ),
-          trailing: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
+          child: Row(
             children: [
-              Text('✓${route.successCount}  ✗${route.failureCount}', style: const TextStyle(fontSize: 11)),
-              Text(route.isStale ? 'STALE' : 'ACTIVE',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.bold,
-                  color: route.isStale ? Colors.orange : Colors.green,
+              CircleAvatar(
+                radius: 18,
+                backgroundColor: (route.isStale ? AppTheme.warning : AppTheme.online).withValues(alpha: 0.15),
+                child: Text(
+                  '${route.hopCount}',
+                  style: GoogleFonts.inter(
+                    color: route.isStale ? AppTheme.warning : AppTheme.online,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14,
+                  ),
                 ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'To: ${_shortenId(route.destinationPeerId)}',
+                      style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Via: ${_shortenId(route.nextHopPeerId)} · Score: ${route.preferenceScore.toStringAsFixed(3)}',
+                      style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '✓${route.successCount}  ✗${route.failureCount}',
+                    style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                  ),
+                  const SizedBox(height: 2),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: (route.isStale ? AppTheme.warning : AppTheme.online).withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      route.isStale ? 'STALE' : 'ACTIVE',
+                      style: GoogleFonts.inter(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w700,
+                        color: route.isStale ? AppTheme.warning : AppTheme.online,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -151,58 +210,84 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.all(16),
-            color: Colors.blue.shade50,
+            color: AppTheme.bgSurface,
             child: Row(
               mainAxisAlignment: MainAxisAlignment.spaceAround,
               children: [
-                _statChip('Total', _queueStats!.totalMessages, Colors.blue),
-                _statChip('High', _queueStats!.highPriority, Colors.red),
-                _statChip('Normal', _queueStats!.normalPriority, Colors.orange),
-                _statChip('Low', _queueStats!.lowPriority, Colors.grey),
+                _statChip('Total', _queueStats!.totalMessages, AppTheme.accent),
+                _statChip('High', _queueStats!.highPriority, AppTheme.danger),
+                _statChip('Normal', _queueStats!.normalPriority, AppTheme.warning),
+                _statChip('Low', _queueStats!.lowPriority, AppTheme.textSecondary),
               ],
             ),
           ),
         // Message list
         Expanded(
           child: _queuedMessages.isEmpty
-              ? const Center(
+              ? Center(
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.check_circle_outline, size: 64, color: Colors.grey),
-                      SizedBox(height: 12),
-                      Text('Queue is empty', style: TextStyle(color: Colors.grey, fontSize: 16)),
-                      SizedBox(height: 4),
-                      Text('Messages queue when next hop is unreachable', style: TextStyle(color: Colors.grey, fontSize: 12)),
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppTheme.online.withValues(alpha: 0.06),
+                          shape: BoxShape.circle,
+                        ),
+                        child: Icon(Icons.check_circle_outline_rounded, size: 48, color: AppTheme.online.withValues(alpha: 0.4)),
+                      ),
+                      const SizedBox(height: 16),
+                      Text('Queue is empty', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+                      const SizedBox(height: 4),
+                      Text('Messages queue when next hop is unreachable', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
                     ],
                   ),
                 )
               : ListView.separated(
                   padding: const EdgeInsets.all(12),
                   itemCount: _queuedMessages.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, __) => const SizedBox(height: 4),
                   itemBuilder: (context, index) {
                     final msg = _queuedMessages[index];
-                    return ListTile(
-                      leading: Icon(
-                        Icons.mail_outline,
-                        color: _priorityColor(msg.message.priority.index),
+                    final priorityColor = _priorityColor(msg.message.priority.index);
+                    return Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: priorityColor.withValues(alpha: 0.04),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: priorityColor.withValues(alpha: 0.15)),
                       ),
-                      title: Text(
-                        'ID: ${_shortenId(msg.message.messageId)}',
-                        style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                      ),
-                      subtitle: Text(
-                        'To: ${_shortenId(msg.nextHopPeerId)} · Attempts: ${msg.attemptCount}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      trailing: Text(
-                        _priorityLabel(msg.message.priority.index),
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
-                          color: _priorityColor(msg.message.priority.index),
-                        ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.mail_outline_rounded, color: priorityColor),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'ID: ${_shortenId(msg.message.messageId)}',
+                                  style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary),
+                                ),
+                                Text(
+                                  'To: ${_shortenId(msg.nextHopPeerId)} · Attempts: ${msg.attemptCount}',
+                                  style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: priorityColor.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              _priorityLabel(msg.message.priority.index),
+                              style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w700, color: priorityColor),
+                            ),
+                          ),
+                        ],
                       ),
                     );
                   },
@@ -223,56 +308,104 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // Local identity
-          Card(
-            child: ListTile(
-              leading: const CircleAvatar(child: Icon(Icons.person)),
-              title: Text(appState.displayName),
-              subtitle: Text(
-                'ID: ${_shortenId(appState.meshRouter.localPeerId)}',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              ),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: AppTheme.accentBorderCard(radius: 14),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: AppTheme.primary.withValues(alpha: 0.15),
+                  child: Text(
+                    appState.initials,
+                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.primary),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(appState.displayName, style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: AppTheme.textPrimary)),
+                      Text(
+                        'ID: ${_shortenId(appState.meshRouter.localPeerId)}',
+                        style: GoogleFonts.firaCode(fontSize: 11, color: AppTheme.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
           // Connected peers section
           Text(
             'Connected Peers (${_connectedPeerIds.length})',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
           ),
           const SizedBox(height: 8),
           if (_connectedPeerIds.isEmpty)
-            const Card(
-              child: ListTile(
-                leading: Icon(Icons.signal_wifi_off, color: Colors.grey),
-                title: Text('No connected peers'),
-                subtitle: Text('Ensure Bluetooth and WiFi are enabled'),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: AppTheme.glassCard(radius: 12),
+              child: Row(
+                children: [
+                  Icon(Icons.signal_wifi_off_rounded, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('No connected peers', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w500)),
+                        Text('Ensure Bluetooth and WiFi are enabled', style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary)),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             )
           else
             ...List.generate(_connectedPeerIds.length, (i) {
               final peerId = _connectedPeerIds[i];
-              return Card(
-                child: ListTile(
-                  leading: const CircleAvatar(
-                    backgroundColor: Colors.green,
-                    child: Icon(Icons.link, color: Colors.white, size: 18),
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppTheme.online.withValues(alpha: 0.04),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppTheme.online.withValues(alpha: 0.15)),
                   ),
-                  title: Text(
-                    _shortenId(peerId),
-                    style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: AppTheme.online.withValues(alpha: 0.15),
+                        child: const Icon(Icons.link_rounded, color: AppTheme.online, size: 16),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(_shortenId(peerId), style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary)),
+                            Text('Active connection', style: GoogleFonts.inter(fontSize: 11, color: AppTheme.online)),
+                          ],
+                        ),
+                      ),
+                    ],
                   ),
-                  subtitle: const Text('Active connection'),
                 ),
               );
             }),
 
-          const SizedBox(height: 16),
+          const SizedBox(height: 20),
 
-          // Discovered peers section
+          // All known peers
           Text(
             'All Known Peers (${appState.peers.length})',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
           ),
           const SizedBox(height: 8),
           ...appState.peers.map((peer) {
@@ -280,24 +413,44 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
             final lastSeenAgo = DateTime.now().millisecondsSinceEpoch - peer.lastSeen;
             final minutes = (lastSeenAgo / 60000).floor();
 
-            return Card(
-              child: ListTile(
-                leading: CircleAvatar(
-                  backgroundColor: isConnected ? Colors.green : Colors.grey,
-                  child: Text(
-                    peer.displayName.isNotEmpty ? peer.displayName[0].toUpperCase() : '?',
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-                title: Text(peer.displayName),
-                subtitle: Text(
-                  '${_shortenId(peer.id)} · ${peer.hasApp ? "PeerChat" : "BT only"} · ${minutes}m ago',
-                  style: const TextStyle(fontSize: 11),
-                ),
-                trailing: Icon(
-                  isConnected ? Icons.link : Icons.link_off,
-                  color: isConnected ? Colors.green : Colors.grey,
-                  size: 18,
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Container(
+                padding: const EdgeInsets.all(12),
+                decoration: AppTheme.glassCard(radius: 12),
+                child: Row(
+                  children: [
+                    CircleAvatar(
+                      radius: 16,
+                      backgroundColor: (isConnected ? AppTheme.online : AppTheme.textSecondary).withValues(alpha: 0.15),
+                      child: Text(
+                        peer.displayName.isNotEmpty ? peer.displayName[0].toUpperCase() : '?',
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: isConnected ? AppTheme.online : AppTheme.textSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(peer.displayName, style: GoogleFonts.inter(fontWeight: FontWeight.w500, color: AppTheme.textPrimary, fontSize: 13)),
+                          Text(
+                            '${_shortenId(peer.id)} · ${peer.hasApp ? "PeerChat" : "BT only"} · ${minutes}m ago',
+                            style: GoogleFonts.inter(fontSize: 10, color: AppTheme.textSecondary),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(
+                      isConnected ? Icons.link_rounded : Icons.link_off_rounded,
+                      color: isConnected ? AppTheme.online : AppTheme.textSecondary.withValues(alpha: 0.5),
+                      size: 18,
+                    ),
+                  ],
                 ),
               ),
             );
@@ -313,8 +466,11 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('$count', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
-        Text(label, style: const TextStyle(fontSize: 11, color: Colors.grey)),
+        Text(
+          '$count',
+          style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w800, color: color),
+        ),
+        Text(label, style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary)),
       ],
     );
   }
@@ -326,9 +482,9 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
 
   Color _priorityColor(int priority) {
     switch (priority) {
-      case 2: return Colors.red;
-      case 1: return Colors.orange;
-      default: return Colors.grey;
+      case 2: return AppTheme.danger;
+      case 1: return AppTheme.warning;
+      default: return AppTheme.textSecondary;
     }
   }
 

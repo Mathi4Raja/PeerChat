@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import '../app_state.dart';
-import '../widgets/identity_card.dart';
-import '../widgets/mesh_status_card.dart';
-import 'peers_screen.dart';
-import 'chats_list_screen.dart';
-import 'debug/routing_debug_screen.dart';
+import '../theme.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -13,189 +12,507 @@ class HomeScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-    final connectedCount = appState.meshRouter.getConnectedPeerIds().length;
-    final discoveredCount = appState.activePeers.length;
-
-    // Calculate total unread messages
-    final int totalUnread = appState.unreadCounts.values.fold(0, (sum, count) => sum + count);
+    final displayName = appState.displayName;
+    final initials = appState.initials;
+    final pub = appState.publicKey ?? 'Generating...';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('PeerChat Secure'),
-        actions: [
-          IconButton(
-            icon: Stack(
-              children: [
-                const Icon(Icons.chat),
-                if (totalUnread > 0)
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: Container(
-                      padding: const EdgeInsets.all(2),
-                      decoration: const BoxDecoration(
-                        color: Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                      constraints: const BoxConstraints(
-                        minWidth: 8,
-                        minHeight: 8,
-                      ),
-                    ),
-                  ),
-              ],
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(
+                gradient: AppTheme.primaryGradient,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.shield, size: 18, color: AppTheme.bgDeep),
             ),
-            tooltip: 'Messages',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const ChatsListScreen()),
-              );
+            const SizedBox(width: 10),
+            Text(
+              'PeerChat',
+              style: GoogleFonts.inter(
+                fontSize: 20,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(width: 4),
+            ShaderMask(
+              shaderCallback: (bounds) =>
+                  AppTheme.primaryGradient.createShader(bounds),
+              child: Text(
+                'Secure',
+                style: GoogleFonts.inter(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          // ─── Menu ───
+          PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert_rounded, size: 22),
+            color: AppTheme.bgSurface,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(14),
+              side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            onSelected: (value) {
+              if (value == 'refresh') {
+                appState.refreshDiscovery();
+              } else if (value == 'about') {
+                showAboutDialog(
+                  context: context,
+                  applicationName: 'PeerChat Secure',
+                  applicationVersion: '0.1.0',
+                  children: [
+                    Text(
+                      'A privacy-first P2P mesh chat.',
+                      style: GoogleFonts.inter(fontSize: 14),
+                    ),
+                  ],
+                );
+              }
             },
+            itemBuilder: (context) => [
+              PopupMenuItem(
+                value: 'refresh',
+                child: Row(
+                  children: [
+                    const Icon(Icons.refresh_rounded, size: 18, color: AppTheme.primary),
+                    const SizedBox(width: 10),
+                    Text('Refresh Discovery', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13)),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'about',
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline_rounded, size: 18, color: AppTheme.textSecondary),
+                    const SizedBox(width: 10),
+                    Text('About', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13)),
+                  ],
+                ),
+              ),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.bug_report),
-            tooltip: 'Mesh Debug',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(builder: (_) => const RoutingDebugScreen()),
-              );
-            },
-          ),
+          const SizedBox(width: 4),
         ],
       ),
       body: RefreshIndicator(
+        color: AppTheme.primary,
+        backgroundColor: AppTheme.bgCard,
         onRefresh: () async {
           await appState.refreshDiscovery();
         },
-        child: SafeArea(
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const IdentityCard(),
-                  const SizedBox(height: 16),
-                  const MeshStatusCard(),
-                  const SizedBox(height: 16),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Padding(
+            padding: const EdgeInsets.all(16.0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ─── Identity Card ───
+                _IdentitySection(
+                  displayName: displayName,
+                  initials: initials,
+                  publicKey: pub,
+                ),
+                const SizedBox(height: 20),
 
-                  // ─── Navigation to Peers Screen ───
-                  Card(
-                    clipBehavior: Clip.antiAlias,
-                    child: InkWell(
-                      onTap: () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(builder: (_) => const PeersScreen()),
-                        );
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(16.0),
-                        child: Row(
-                          children: [
-                            CircleAvatar(
-                              backgroundColor: Colors.blue.shade100,
-                              child: Icon(Icons.people, color: Colors.blue.shade700),
-                            ),
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  const Text(
-                                    'Peers & Discovery',
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.bold,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    '$connectedCount connected · ${discoveredCount - connectedCount} unconnected',
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: Colors.grey.shade600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Icon(Icons.chevron_right, color: Colors.grey.shade400),
-                          ],
-                        ),
-                      ),
+                // ─── Mesh Network Status ───
+                _MeshStatusSection(),
+
+                const SizedBox(height: 20),
+
+                // ─── Privacy Info ───
+                Container(
+                  decoration: BoxDecoration(
+                    color: AppTheme.primary.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: AppTheme.primary.withValues(alpha: 0.15),
                     ),
                   ),
-                  const SizedBox(height: 16),
-
-                  // ─── Privacy & Persistence Info ───
-                  Card(
-                    color: Colors.blue.shade50,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      side: BorderSide(color: Colors.blue.shade200),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Row(
-                            children: [
-                              Icon(Icons.security, size: 20, color: Colors.blue.shade800),
-                              const SizedBox(width: 8),
-                              Text(
-                                'Privacy & Storage',
-                                style: TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue.shade800,
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          const Text(
-                            'PeerChat Secure is fully decentralized. Your messages and identity keys are stored locally on this device.',
-                            style: TextStyle(fontSize: 14),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Icon(Icons.cloud_off, size: 16, color: Colors.grey.shade700),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'No central servers used.',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: [
-                              Icon(Icons.delete_forever, size: 16, color: Colors.grey.shade700),
-                              const SizedBox(width: 8),
-                              const Expanded(
-                                child: Text(
-                                  'Data is wiped if you uninstall the app.',
-                                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
-                                ),
-                              ),
-                            ],
+                          Icon(Icons.verified_user_rounded, size: 16, color: AppTheme.primary.withValues(alpha: 0.8)),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Privacy & Storage',
+                            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: AppTheme.primary),
                           ),
                         ],
                       ),
-                    ),
+                      const SizedBox(height: 10),
+                      _PrivacyRow(icon: Icons.cloud_off_rounded, text: 'Fully decentralized — no servers'),
+                      const SizedBox(height: 5),
+                      _PrivacyRow(icon: Icons.lock_rounded, text: 'End-to-end encrypted messages'),
+                      const SizedBox(height: 5),
+                      _PrivacyRow(icon: Icons.delete_forever_rounded, text: 'Data wiped on uninstall'),
+                    ],
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+// ─── Identity Section ───
+class _IdentitySection extends StatelessWidget {
+  final String displayName;
+  final String initials;
+  final String publicKey;
+
+  const _IdentitySection({
+    required this.displayName,
+    required this.initials,
+    required this.publicKey,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: AppTheme.accentBorderCard(),
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          // Avatar + name
+          Container(
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.primary.withValues(alpha: 0.3),
+                  blurRadius: 16,
+                  spreadRadius: 2,
+                ),
+              ],
+            ),
+            child: CircleAvatar(
+              radius: 32,
+              backgroundColor: AppTheme.primary.withValues(alpha: 0.15),
+              child: Text(
+                initials,
+                style: GoogleFonts.inter(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.primary,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            displayName,
+            style: GoogleFonts.inter(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.textPrimary,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+            decoration: BoxDecoration(
+              color: AppTheme.primary.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+            ),
+            child: Text(
+              'LOCAL-ONLY',
+              style: GoogleFonts.inter(
+                fontSize: 9,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.primary,
+                letterSpacing: 0.8,
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 20),
+
+          // QR Code
+          publicKey == 'Generating...'
+              ? const SizedBox(
+                  height: 160,
+                  child: Center(child: CircularProgressIndicator(color: AppTheme.primary)),
+                )
+              : Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3), width: 2),
+                  ),
+                  child: QrImageView(data: publicKey, version: QrVersions.auto, size: 160.0),
+                ),
+
+          const SizedBox(height: 14),
+
+          // Public key row
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.bgSurface,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.key, size: 13, color: AppTheme.textSecondary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    publicKey,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.firaCode(fontSize: 10, color: AppTheme.textSecondary),
+                  ),
+                ),
+                if (publicKey != 'Generating...')
+                  InkWell(
+                    onTap: () {
+                      Clipboard.setData(ClipboardData(text: publicKey));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Public key copied!')),
+                      );
+                    },
+                    child: const Padding(
+                      padding: EdgeInsets.only(left: 8),
+                      child: Icon(Icons.copy_rounded, size: 14, color: AppTheme.accent),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Mesh Status Section ───
+class _MeshStatusSection extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (context, appState, child) {
+        final connectedCount = appState.meshRouter.getConnectedPeerIds().length;
+        final discoveredCount = appState.activePeers.length;
+
+        return FutureBuilder(
+          future: appState.meshRouter.stats,
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return Container(
+                decoration: AppTheme.glassCard(),
+                padding: const EdgeInsets.all(20),
+                child: const Center(child: CircularProgressIndicator(color: AppTheme.primary)),
+              );
+            }
+
+            final stats = snapshot.data!;
+
+            return Container(
+              decoration: AppTheme.glassCard(),
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Header
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Icon(Icons.hub_rounded, color: AppTheme.primary, size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Mesh Network',
+                              style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                            ),
+                            Text(
+                              '$connectedCount connected · $discoveredCount discovered',
+                              style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(
+                          gradient: connectedCount > 0
+                              ? const LinearGradient(colors: [AppTheme.online, Color(0xFF81C784)])
+                              : null,
+                          color: connectedCount > 0 ? null : AppTheme.textSecondary.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              width: 6,
+                              height: 6,
+                              decoration: BoxDecoration(
+                                color: connectedCount > 0 ? Colors.white : AppTheme.textSecondary,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            const SizedBox(width: 5),
+                            Text(
+                              connectedCount > 0 ? 'LIVE' : 'IDLE',
+                              style: GoogleFonts.inter(
+                                fontSize: 9,
+                                fontWeight: FontWeight.w800,
+                                color: connectedCount > 0 ? AppTheme.bgDeep : AppTheme.textSecondary,
+                                letterSpacing: 0.6,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  // Stats grid
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _MeshStat(
+                          icon: Icons.route_rounded,
+                          label: 'Routes',
+                          value: stats.totalRoutes.toString(),
+                          color: AppTheme.primary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _MeshStat(
+                          icon: Icons.schedule_send_rounded,
+                          label: 'Queued',
+                          value: stats.queuedMessages.toString(),
+                          color: stats.queuedMessages > 0 ? AppTheme.warning : AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _MeshStat(
+                          icon: Icons.check_circle_outline_rounded,
+                          label: 'Pending',
+                          value: stats.pendingAcks.toString(),
+                          color: stats.pendingAcks > 0 ? AppTheme.accent : AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+
+                  if (stats.blockedPeers > 0) ...[
+                    const SizedBox(height: 8),
+                    _MeshStat(
+                      icon: Icons.block_rounded,
+                      label: 'Blocked',
+                      value: stats.blockedPeers.toString(),
+                      color: AppTheme.danger,
+                    ),
+                  ],
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _MeshStat extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final String value;
+  final Color color;
+
+  const _MeshStat({
+    required this.icon,
+    required this.label,
+    required this.value,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.12)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 18, color: color),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: GoogleFonts.inter(
+              fontSize: 18,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              color: color.withValues(alpha: 0.7),
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Privacy Row ───
+class _PrivacyRow extends StatelessWidget {
+  final IconData icon;
+  final String text;
+  const _PrivacyRow({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 13, color: AppTheme.textSecondary),
+        const SizedBox(width: 8),
+        Text(
+          text,
+          style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+        ),
+      ],
     );
   }
 }

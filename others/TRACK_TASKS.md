@@ -87,3 +87,32 @@
 - [x] Debug "Pending ACKs / Queued Messages" synchronization issue
 - [x] Fix reverse routing logic (ensure recipient can find sender)
 - [x] Optimize ACK transmission reliability
+
+## Phase 16: Java LTS Upgrade (Feb 23, 2026)
+- [x] Install Java 21 LTS (Oracle JDK) via `winget`
+- [x] Remove Java 8 (Red Hat OpenJDK)
+- [x] Update `JAVA_HOME` and `Path` environment variables
+- [x] Verify Gradle compatibility (Fix "Dependency requires at least JVM runtime version 11")
+- [x] Success: `flutter build apk` completed
+
+## Phase 17: UI/UX Modernization (Feb 23, 2026)
+- [x] Create dark-mode-first theme (`theme.dart`) with teal/cyan palette, glassmorphism helpers
+- [x] Add `google_fonts` (Inter) dependency, update `main.dart` theme setup
+- [x] Redesign `home_screen.dart` — gradient AppBar, glass tiles, privacy panel
+- [x] Redesign `identity_card.dart` — avatar with glow, copy-key button, styled QR
+- [x] Redesign `mesh_status_card.dart` — stat chips, gradient P2P badge
+- [x] Redesign `chats_list_screen.dart` — colored avatars, online dots, teal badges
+- [x] Redesign `chat_screen.dart` — gradient bubbles, dark input bar, lock indicator
+- [x] Redesign `peers_screen.dart` — modern tabs, initials avatars, status pills
+- [x] Redesign `add_peer_screen.dart` — gradient scan button, crosshair overlay, glass cards
+- [x] Redesign `peers_list.dart` — consistent dark styling
+- [x] `flutter analyze`: No issues found
+
+## Phase 17b: Navigation Restructure (Feb 23, 2026)
+- [x] Create `main_shell.dart` — custom bottom nav (Home, Messages, Peers, Debug)
+- [x] Simplify `home_screen.dart` — QR identity + mesh status only, popup menu
+- [x] Redesign mesh status — stat grid with LIVE/IDLE badge, connected/discovered counts
+- [x] Fix chat seen status — bright lime green icon for high contrast on teal gradient
+- [x] Reverse peer tabs — Discovered first, Connected second
+- [x] Apply dark theme to `routing_debug_screen.dart`
+- [x] `flutter analyze`: No issues found
