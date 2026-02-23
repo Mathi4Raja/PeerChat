@@ -120,3 +120,23 @@
 ## Phase 19: Message Queue Size Limits & Prioritization (Feb 23, 2026)
 - [x] Implemented a strict 5000-message maxQueueSize limit in MessageQueue`n- [x] Added _enforceQueueLimit() to automatically drop the oldest, lowest priority messages when the limit is exceeded
 - [x] lutter analyze verified successful implementation
+
+## Phase 18: Full Architecture Implementation (Feb 23, 2026)
+### Phase 1: Mode Separation - DONE
+- [x] Created communication_mode.dart, added mode check + sendDirect + debounce + sender-prefixed IDs
+- [x] Strengthened peer identity persistence, deleted simple_message_service.dart
+- [x] flutter analyze: No issues found
+
+### Phase 2: Mesh Queue Improvements - DONE
+- [x] Clock-independent expiryDuration on MeshMessage, exponential backoff, per-dest limit (50/peer)
+- [x] Route failure-rate pruning (>70%), DB v10 migration, getReadyMessages()
+- [x] flutter analyze: No issues found
+
+### Phase 3: Controlled Lazy Flooding - DONE
+- [x] Forwarding fingerprint dedup, lazy flood to 2-3 random peers, forwardedTo tracking
+- [x] flutter analyze: No issues found
+
+### Phase 4: File Transfer System - DONE
+- [x] Model, Service (sliding window, cumulative ACKs, SHA-256), DB v11
+- [x] Composition Root injection in AppState
+- [x] Protocol wiring (0xFE) in MeshRouterService

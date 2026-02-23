@@ -19,7 +19,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 9,
+      version: 11,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -47,6 +47,12 @@ class DBService {
         }
         if (oldVersion < 9) {
           await _migrateTo9(db);
+        }
+        if (oldVersion < 10) {
+          await _migrateTo10(db);
+        }
+        if (oldVersion < 11) {
+          await _migrateTo11(db);
         }
       },
     );
@@ -90,7 +96,8 @@ class DBService {
         priority INTEGER NOT NULL,
         queued_timestamp INTEGER NOT NULL,
         attempt_count INTEGER DEFAULT 0,
-        last_attempt_timestamp INTEGER
+        last_attempt_timestamp INTEGER,
+        next_retry_time INTEGER DEFAULT 0
       )
     ''');
 
@@ -153,6 +160,26 @@ class DBService {
         reconnect_attempts INTEGER DEFAULT 0
       )
     ''');
+
+    // File transfer persistent state - version 11
+    await db.execute('''
+      CREATE TABLE file_transfers (
+        file_id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        mime_type TEXT NOT NULL,
+        sha256_hash BLOB NOT NULL,
+        total_chunks INTEGER NOT NULL,
+        received_chunks INTEGER DEFAULT 0,
+        direction INTEGER NOT NULL,
+        state INTEGER NOT NULL,
+        file_path TEXT,
+        ack_timeout_ms INTEGER,
+        last_activity INTEGER NOT NULL,
+        start_timestamp INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _migrateTo6(Database db) async {
@@ -191,6 +218,33 @@ class DBService {
     await db.execute('ALTER TABLE deduplication_cache ADD COLUMN original_timestamp INTEGER DEFAULT 0');
     // For old entries, just set original_timestamp to seen_timestamp
     await db.execute('UPDATE deduplication_cache SET original_timestamp = seen_timestamp WHERE original_timestamp = 0');
+  }
+
+  Future<void> _migrateTo11(Database db) async {
+    // Add file_transfers table for state persistence
+    await db.execute('''
+      CREATE TABLE file_transfers (
+        file_id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        mime_type TEXT NOT NULL,
+        sha256_hash BLOB NOT NULL,
+        total_chunks INTEGER NOT NULL,
+        received_chunks INTEGER DEFAULT 0,
+        direction INTEGER NOT NULL,
+        state INTEGER NOT NULL,
+        file_path TEXT,
+        ack_timeout_ms INTEGER,
+        last_activity INTEGER NOT NULL,
+        start_timestamp INTEGER NOT NULL
+      )
+    ''');
+  }
+
+  Future<void> _migrateTo10(Database db) async {
+    // Add next_retry_time column for exponential backoff
+    await db.execute('ALTER TABLE message_queue ADD COLUMN next_retry_time INTEGER DEFAULT 0');
   }
 
   Future<void> _migrateTo2(Database db) async {

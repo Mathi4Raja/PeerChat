@@ -119,13 +119,22 @@ class ConnectionManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Handle connection lost
+  /// Handle connection lost.
+  /// 
+  /// Only removes transport→crypto mapping. The crypto→transport mapping
+  /// is intentionally preserved so that if the same peer reconnects via a
+  /// different transport (WiFi → BT switch), we atomically update the mapping
+  /// in handleHandshake() instead of creating a duplicate peer entry.
   void onConnectionLost(String transportId) {
     debugPrint('Connection lost with $transportId');
     
     final cryptoId = _transportToCrypto[transportId];
     if (cryptoId != null) {
-      _cryptoToTransport.remove(cryptoId);
+      // Only remove crypto→transport if it still points to THIS transport.
+      // If a new transport already replaced it (race), don't touch it.
+      if (_cryptoToTransport[cryptoId] == transportId) {
+        _cryptoToTransport.remove(cryptoId);
+      }
     }
     _transportToCrypto.remove(transportId);
     _handshakeComplete.remove(transportId);

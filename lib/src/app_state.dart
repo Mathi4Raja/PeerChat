@@ -10,6 +10,16 @@ import 'models/peer.dart';
 import 'services/db_service.dart';
 import 'services/discovery_service.dart';
 import 'services/mesh_router_service.dart';
+import 'services/crypto_service.dart';
+import 'services/deduplication_cache.dart';
+import 'services/signature_verifier.dart';
+import 'services/message_queue.dart';
+import 'services/transport_service.dart';
+import 'services/delivery_ack_handler.dart';
+import 'services/connection_manager.dart';
+import 'services/file_transfer_service.dart';
+import 'services/route_manager.dart';
+import 'services/message_manager.dart';
 import 'utils/name_generator.dart';
 
 class AppState extends ChangeNotifier {
@@ -98,10 +108,61 @@ class AppState extends ChangeNotifier {
       debugPrint('AppState.init: Opening Database...');
       peers = await _db.allPeers();
       
+      debugPrint('AppState.init: Composing P2P Services...');
+      final cryptoService = CryptoService(_sodium);
+      final deduplicationCache = DeduplicationCache(_db);
+      final signatureVerifier = SignatureVerifier(cryptoService, _db);
+      final messageQueue = MessageQueue(_db);
+      final transportService = MultiTransportService();
+      final deliveryAckHandler = DeliveryAckHandler(_db, cryptoService);
+      final connectionManager = ConnectionManager(_db, cryptoService);
+      final fileTransferService = FileTransferService(_db, transportService, connectionManager);
+
+      // RouteManager needs a transport callback
+      final routeManager = RouteManager(
+        _db,
+        signatureVerifier,
+        cryptoService,
+        (peerId, data) async {
+          final transportId = connectionManager.getTransportId(peerId);
+          return transportId != null ? await transportService.sendMessage(transportId, data) : false;
+        },
+      );
+
+      // MessageManager needs a transport callback for relay/ACKs
+      final messageManager = MessageManager(
+        cryptoService,
+        routeManager,
+        messageQueue,
+        deduplicationCache,
+        signatureVerifier,
+        deliveryAckHandler,
+        (peerId, data) async {
+          final transportId = connectionManager.getTransportId(peerId);
+          return transportId != null ? await transportService.sendMessage(transportId, data) : false;
+        },
+      );
+
       debugPrint('AppState.init: Initializing MeshRouter...');
-      // Initialize mesh router service
-      meshRouter = MeshRouterService(_sodium, _db, _discovery);
+      // Initialize combined mesh router service
+      meshRouter = MeshRouterService(
+        sodium: _sodium,
+        db: _db,
+        discovery: _discovery,
+        cryptoService: cryptoService,
+        deduplicationCache: deduplicationCache,
+        signatureVerifier: signatureVerifier,
+        messageQueue: messageQueue,
+        routeManager: routeManager,
+        deliveryAckHandler: deliveryAckHandler,
+        messageManager: messageManager,
+        transportService: transportService,
+        connectionManager: connectionManager,
+        fileTransferService: fileTransferService,
+      );
+      
       await meshRouter.init();
+      await fileTransferService.init(); // Initialize file transfer recovery last
       
       debugPrint('AppState.init: Setting local name...');
       // Update WiFi Direct advertising with generated name

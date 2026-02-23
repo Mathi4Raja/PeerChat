@@ -26,6 +26,13 @@ class MeshMessage {
   final int timestamp;
   final Uint8List? encryptedContent;
   final Uint8List signature;
+  /// Duration in milliseconds before this message expires.
+  /// Uses duration-based checking (clock-independent):
+  ///   age = now - timestamp; if (age > expiryDuration) → expired
+  final int expiryDuration;
+
+  /// Default expiry: 7 days in milliseconds.
+  static const int defaultExpiryDuration = 604800000;
 
   MeshMessage({
     required this.messageId,
@@ -38,7 +45,30 @@ class MeshMessage {
     required this.timestamp,
     this.encryptedContent,
     required this.signature,
+    this.expiryDuration = defaultExpiryDuration,
   });
+
+  /// Check if this message has expired using clock-independent duration.
+  bool get isExpired {
+    final age = DateTime.now().millisecondsSinceEpoch - timestamp;
+    return age > expiryDuration;
+  }
+
+  MeshMessage copyWithSignature(Uint8List signature) {
+    return MeshMessage(
+      messageId: messageId,
+      type: type,
+      senderPeerId: senderPeerId,
+      recipientPeerId: recipientPeerId,
+      ttl: ttl,
+      hopCount: hopCount,
+      priority: priority,
+      timestamp: timestamp,
+      expiryDuration: expiryDuration,
+      encryptedContent: encryptedContent,
+      signature: signature,
+    );
+  }
 
   // Serialize to bytes for transmission
   Uint8List toBytes() {
@@ -83,6 +113,9 @@ class MeshMessage {
     // Signature length (2 bytes) + signature
     buffer.add(_uint16ToBytes(signature.length));
     buffer.add(signature);
+    
+    // Expiry duration (8 bytes) — appended at end for backward compatibility
+    buffer.add(_uint64ToBytes(expiryDuration));
     
     return buffer.toBytes();
   }
@@ -140,6 +173,14 @@ class MeshMessage {
     final signatureLength = _bytesToUint16(bytes.sublist(offset, offset + 2));
     offset += 2;
     final signature = bytes.sublist(offset, offset + signatureLength);
+    offset += signatureLength;
+    
+    // Expiry duration (8 bytes, optional for backward compatibility)
+    int expiryDuration = MeshMessage.defaultExpiryDuration;
+    if (offset + 8 <= bytes.length) {
+      expiryDuration = _bytesToUint64(bytes.sublist(offset, offset + 8));
+      // offset += 8; // no more fields after this
+    }
     
     return MeshMessage(
       messageId: messageId,
@@ -152,6 +193,7 @@ class MeshMessage {
       timestamp: timestamp,
       encryptedContent: encryptedContent,
       signature: signature,
+      expiryDuration: expiryDuration,
     );
   }
 
@@ -198,6 +240,7 @@ class MeshMessage {
       timestamp: timestamp,
       encryptedContent: encryptedContent,
       signature: signature,
+      expiryDuration: expiryDuration,
     );
   }
 

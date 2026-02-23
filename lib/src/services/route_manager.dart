@@ -321,11 +321,20 @@ class RouteManager {
         .subtract(const Duration(minutes: 30))
         .millisecondsSinceEpoch;
 
+    // Remove stale routes (not used in 30 minutes)
     await database.delete(
       'routes',
       where: 'last_used_timestamp < ?',
       whereArgs: [cutoffTimestamp],
     );
+
+    // Route failure-rate pruning: remove routes with >70% failure rate
+    // Only prune routes that have been tried at least 5 times (avoid noise)
+    await database.rawDelete('''
+      DELETE FROM routes
+      WHERE (success_count + failure_count) >= 5
+        AND CAST(failure_count AS REAL) / (success_count + failure_count) > 0.7
+    ''');
   }
 
   // Process route discovery request

@@ -7,6 +7,14 @@ class QueuedMessage {
   final int queuedTimestamp;
   final int attemptCount;
   final int? lastAttemptTimestamp;
+  /// When this message is next eligible for retry.
+  /// Uses exponential backoff: nextRetryTime = now + base * 2^min(retryCount, 10)
+  final int nextRetryTime;
+
+  /// Maximum retry attempts before dropping the message.
+  static const int maxRetries = 50;
+  /// Base retry interval in milliseconds (30 seconds).
+  static const int baseRetryInterval = 30000;
 
   QueuedMessage({
     required this.message,
@@ -14,14 +22,14 @@ class QueuedMessage {
     required this.queuedTimestamp,
     this.attemptCount = 0,
     this.lastAttemptTimestamp,
+    this.nextRetryTime = 0,
   });
 
-  // Check if message has expired (queued > 7 days)
-  bool get isExpired {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final age = now - message.timestamp;
-    return age > 604800000; // 7 days in milliseconds
-  }
+  /// Check if message has expired (uses clock-independent duration from MeshMessage)
+  bool get isExpired => message.isExpired;
+
+  /// Check if message should be dropped (exceeded max retries)
+  bool get shouldDrop => attemptCount > maxRetries;
 
   // Serialize for database storage
   Map<String, Object?> toMap() {
@@ -33,6 +41,7 @@ class QueuedMessage {
       'queued_timestamp': queuedTimestamp,
       'attempt_count': attemptCount,
       'last_attempt_timestamp': lastAttemptTimestamp,
+      'next_retry_time': nextRetryTime,
     };
   }
 
@@ -47,6 +56,7 @@ class QueuedMessage {
       queuedTimestamp: map['queued_timestamp'] as int,
       attemptCount: map['attempt_count'] as int? ?? 0,
       lastAttemptTimestamp: map['last_attempt_timestamp'] as int?,
+      nextRetryTime: map['next_retry_time'] as int? ?? 0,
     );
   }
 
@@ -57,6 +67,7 @@ class QueuedMessage {
     int? queuedTimestamp,
     int? attemptCount,
     int? lastAttemptTimestamp,
+    int? nextRetryTime,
   }) {
     return QueuedMessage(
       message: message ?? this.message,
@@ -64,6 +75,7 @@ class QueuedMessage {
       queuedTimestamp: queuedTimestamp ?? this.queuedTimestamp,
       attemptCount: attemptCount ?? this.attemptCount,
       lastAttemptTimestamp: lastAttemptTimestamp ?? this.lastAttemptTimestamp,
+      nextRetryTime: nextRetryTime ?? this.nextRetryTime,
     );
   }
 }
