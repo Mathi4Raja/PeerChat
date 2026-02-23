@@ -19,6 +19,7 @@ class QueueStats {
 
 class MessageQueue {
   final DBService _db;
+  static const int maxQueueSize = 5000;
 
   MessageQueue(this._db);
 
@@ -30,6 +31,29 @@ class MessageQueue {
       message.toMap(),
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
+    await _enforceQueueLimit();
+  }
+
+  // Enforce maximum queue size, dropping oldest lowest priority messages first
+  Future<void> _enforceQueueLimit() async {
+    final database = await _db.db;
+    final count = Sqflite.firstIntValue(
+      await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
+    ) ?? 0;
+
+    if (count > maxQueueSize) {
+      final excess = count - maxQueueSize;
+      
+      // Delete oldest, lowest priority messages
+      await database.rawDelete('''
+        DELETE FROM message_queue
+        WHERE message_id IN (
+          SELECT message_id FROM message_queue
+          ORDER BY priority ASC, queued_timestamp ASC
+          LIMIT ?
+        )
+      ''', [excess]);
+    }
   }
 
   // Get messages ready for transmission to a specific peer
@@ -66,11 +90,11 @@ class MessageQueue {
     return results.map((map) => QueuedMessage.fromMap(map)).toList();
   }
 
-  // Remove expired messages (older than 48 hours)
+  // Remove expired messages (older than 7 days)
   Future<void> removeExpired() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(const Duration(hours: 48))
+        .subtract(const Duration(days: 7))
         .millisecondsSinceEpoch;
 
     await database.delete(

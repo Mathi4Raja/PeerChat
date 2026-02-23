@@ -16,10 +16,11 @@ class QueuedMessage {
     this.lastAttemptTimestamp,
   });
 
-  // Check if message has expired (queued > 48 hours)
+  // Check if message has expired (queued > 7 days)
   bool get isExpired {
-    final age = DateTime.now().millisecondsSinceEpoch - queuedTimestamp;
-    return age > 172800000; // 48 hours in milliseconds
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final age = now - message.timestamp;
+    return age > 604800000; // 7 days in milliseconds
   }
 
   // Serialize for database storage

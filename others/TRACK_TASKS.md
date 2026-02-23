@@ -116,3 +116,7 @@
 - [x] Reverse peer tabs — Discovered first, Connected second
 - [x] Apply dark theme to `routing_debug_screen.dart`
 - [x] `flutter analyze`: No issues found
+
+## Phase 19: Message Queue Size Limits & Prioritization (Feb 23, 2026)
+- [x] Implemented a strict 5000-message maxQueueSize limit in MessageQueue`n- [x] Added _enforceQueueLimit() to automatically drop the oldest, lowest priority messages when the limit is exceeded
+- [x] lutter analyze verified successful implementation

@@ -4,7 +4,7 @@ import 'db_service.dart';
 class DeduplicationCache {
   final DBService _db;
   static const int maxCacheSize = 10000;
-  static const Duration minRetention = Duration(hours: 24);
+  static const Duration absoluteMaxAge = Duration(days: 7);
 
   DeduplicationCache(this._db);
 
@@ -20,7 +20,7 @@ class DeduplicationCache {
   }
 
   // Mark message ID as seen
-  Future<void> markSeen(String messageId) async {
+  Future<void> markSeen(String messageId, int originalTimestamp) async {
     final database = await _db.db;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
     
@@ -29,6 +29,7 @@ class DeduplicationCache {
       {
         'message_id': messageId,
         'seen_timestamp': timestamp,
+        'original_timestamp': originalTimestamp,
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
@@ -58,16 +59,18 @@ class DeduplicationCache {
     ''', [entriesToRemove]);
   }
 
-  // Remove entries older than minimum retention period
+  // Strictly remove entries whose original timestamp is older than absolute maximum age
+  // This guarantees ghost messages cannot loop because they will be actively rejected
+  // by MessageManager before even reaching the cache checking phase.
   Future<void> cleanup() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(minRetention)
+        .subtract(absoluteMaxAge)
         .millisecondsSinceEpoch;
     
     await database.delete(
       'deduplication_cache',
-      where: 'seen_timestamp < ?',
+      where: 'original_timestamp < ?',
       whereArgs: [cutoffTimestamp],
     );
   }

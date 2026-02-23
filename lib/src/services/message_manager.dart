@@ -57,8 +57,13 @@ class MessageManager {
       throw Exception('Message exceeds maximum size of $maxMessageSize bytes');
     }
 
-    final id = messageId ?? _uuid.v4();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    
+    // Generate a strong, highly traceable Message ID
+    // Format: <timestamp>_<short_sender_id>_<short_uuid>
+    final shortSenderId = _cryptoService.localPeerId.substring(0, 8);
+    final shortUuid = _uuid.v4().substring(0, 8);
+    final id = messageId ?? '${timestamp}_${shortSenderId}_$shortUuid';
     
     // Random TTL between 8-16 hops
     final ttl = 8 + _random.nextInt(9);
@@ -121,12 +126,17 @@ class MessageManager {
       return ProcessResult.invalid;
     }
 
-    // Check timestamp validity (not older than 5 minutes or in future)
+    // Check timestamp validity (strict 7-day expiration to match MessageQueue)
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
-    if (age > 300000 || age < -60000) {
-      debugPrint('Message expired or from future: $age ms');
-      return ProcessResult.invalid;
+    
+    // Max age: 7 days (in milliseconds)
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
+    
+    // Future tolerance: 5 minutes (clocks might be slightly off)
+    if (age > maxAgeMs || age < -300000) {
+      debugPrint('Message hard-expired or from future: $age ms');
+      return ProcessResult.expired;
     }
 
     // Check deduplication
@@ -134,8 +144,8 @@ class MessageManager {
       return ProcessResult.duplicate;
     }
 
-    // Mark as seen
-    await _deduplicationCache.markSeen(message.messageId);
+    // Mark as seen, anchoring cache lifespan heavily to the original message creation time
+    await _deduplicationCache.markSeen(message.messageId, message.timestamp);
 
     // Check TTL
     if (message.ttl <= 0) {

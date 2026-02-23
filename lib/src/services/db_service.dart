@@ -19,7 +19,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 8,
+      version: 9,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -44,6 +44,9 @@ class DBService {
         }
         if (oldVersion < 8) {
           await _migrateTo8(db);
+        }
+        if (oldVersion < 9) {
+          await _migrateTo9(db);
         }
       },
     );
@@ -181,6 +184,13 @@ class DBService {
         reconnect_attempts INTEGER DEFAULT 0
       )
     ''');
+  }
+
+  Future<void> _migrateTo9(Database db) async {
+    // Add original_timestamp to deduplication_cache to fix looping bug
+    await db.execute('ALTER TABLE deduplication_cache ADD COLUMN original_timestamp INTEGER DEFAULT 0');
+    // For old entries, just set original_timestamp to seen_timestamp
+    await db.execute('UPDATE deduplication_cache SET original_timestamp = seen_timestamp WHERE original_timestamp = 0');
   }
 
   Future<void> _migrateTo2(Database db) async {

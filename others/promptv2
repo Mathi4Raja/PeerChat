@@ -1,0 +1,531 @@
+You are a senior distributed systems engineer and Flutter architect.
+
+I am building a **peer-to-peer offline communication app (Flutter)** for disaster scenarios.
+
+The system must support:
+
+* Direct peer-to-peer chat + file transfer (WiFi Direct + Bluetooth)
+* Multi-hop mesh messaging (store-and-forward)
+* Emergency broadcast mode
+
+Security is **moderate (not military-grade)**.
+Reliability, delivery success, and battery efficiency are top priorities.
+
+---
+
+# 🧠 CORE ARCHITECTURE
+
+The system has 3 layers:
+
+---
+
+# 🟢 1. DIRECT LAYER (A ↔ B)
+
+Used when two peers are directly connected.
+
+## Features:
+
+* Real-time chat
+* File transfer (WiFi Direct preferred, Bluetooth fallback)
+* Resume support
+
+---
+
+## 📁 FILE TRANSFER DESIGN (CRITICAL)
+
+File transfer MUST NOT use mesh.
+
+---
+
+## Step 1: Metadata Exchange
+
+```text
+FILE_META:
+- fileId
+- fileName
+- fileSize
+- totalChunks
+- sha256Hash
+```
+
+---
+
+## Step 2: Resume Protocol
+
+```text
+RESUME_FROM:
+- fileId
+- nextChunkIndex
+```
+
+---
+
+## Step 3: Chunk Transfer
+
+```text
+CHUNK:
+- fileId
+- chunkIndex
+- bytes
+```
+
+---
+
+## ⚙️ Requirements:
+
+### Chunking
+
+```dart
+const chunkSize = 64 * 1024; // 64KB
+```
+
+---
+
+### Sliding Window (Flow Control)
+
+```dart
+maxInFlightChunks = 5;
+```
+
+---
+
+### ACK
+
+```text
+ACK:
+- fileId
+- chunkIndex
+```
+
+---
+
+## 🔁 FILE TRANSFER STATE MACHINE (MANDATORY)
+
+```text
+IDLE
+ → REQUESTED
+ → TRANSFERRING
+ → PAUSED
+ → COMPLETED
+ → FAILED
+```
+
+---
+
+## 🔄 Transport Switching
+
+```dart
+if (wifiAvailable) {
+  useWifi();
+} else {
+  fallbackToBluetooth();
+}
+```
+
+Resume MUST continue from last chunk.
+
+---
+
+## 🔌 Connection Upgrade (IMPORTANT)
+
+File transfer assumes direct connection, but discovery may happen via mesh.
+
+```text
+Mesh discovery → establish direct WiFi Direct → start transfer
+```
+
+---
+
+# 🟡 2. MESH LAYER (MESSAGES ONLY)
+
+Used for messaging (NOT files).
+
+---
+
+## 📦 MESSAGE STRUCTURE
+
+```dart
+class MeshMessage {
+  String messageId;
+  String sourceId;
+  String destinationId;
+
+  Uint8List payload;
+
+  int ttl; // hop limit
+  int hopCount;
+
+  DateTime expiryTime;
+  DateTime timestamp;
+}
+```
+
+---
+
+## 🔁 ROUTING STRATEGY (HYBRID)
+
+### Step 1: Try Route-Based (Briar-like)
+
+```dart
+if (routeManager.hasRoute(destination)) {
+  forwardToNextHop();
+}
+```
+
+---
+
+### Step 2: Opportunistic Forwarding (NOT blind flooding)
+
+If no route exists:
+
+```dart
+enqueueMessage(message);
+forwardToNewPeers(message);
+```
+
+---
+
+## ❗ IMPORTANT:
+
+* DO NOT do full blind flooding
+* DO controlled, gradual spread ("lazy flooding")
+
+---
+
+## 🔁 RETRY TRIGGERS
+
+Message retry should happen on:
+
+```dart
+onPeerDiscovered();
+onRouteUpdated();
+onScheduledRetry();
+```
+
+---
+
+## ⏱ TTL vs Expiry
+
+```dart
+ttl = 10–15; // limits spread
+expiry = 7 days; // limits lifetime
+```
+
+---
+
+## 🔁 DEDUPLICATION
+
+```dart
+if (dedupCache.contains(messageId)) return;
+dedupCache.add(messageId);
+```
+
+Cache must be bounded with eviction.
+
+---
+
+## 📬 MESSAGE QUEUE (IMPORTANT)
+
+Each queued message must include:
+
+```dart
+class QueueItem {
+  int retryCount;
+  DateTime nextRetryTime;
+  int priority;
+}
+```
+
+---
+
+## 🔁 EXPONENTIAL BACKOFF
+
+```dart
+nextRetryTime = now + base * (2 ^ retryCount);
+```
+
+---
+
+## ⚖️ PRIORITY + FAIRNESS (MANDATORY)
+
+Prevent starvation:
+
+```dart
+if (retryCount > MAX_RETRIES) dropMessage();
+increasePriorityOverTime();
+```
+
+---
+
+## 📩 ACK (DELIVERY RECEIPT)
+
+ACK must be treated as a normal message:
+
+```dart
+ack.destination = originalSender;
+routeOrOpportunisticForward(ack);
+```
+
+DO NOT rely on reverse path.
+
+---
+
+# 🔵 3. EMERGENCY BROADCAST MODE
+
+Public "shout" channel.
+
+---
+
+## 📢 MESSAGE FORMAT
+
+```dart
+destinationId = "BROADCAST_EMERGENCY";
+```
+
+---
+
+## 🔐 SECURITY MODEL
+
+* NOT encrypted (anyone can read)
+* BUT MUST be signed
+
+```dart
+verifySignature(senderPublicKey);
+```
+
+---
+
+## ⚠️ CONTROLS (MANDATORY)
+
+### TTL
+
+```dart
+ttl = 3–5;
+```
+
+---
+
+### Rate Limiting
+
+```dart
+maxBroadcastsPerMinute = 5;
+```
+
+---
+
+### Deduplication
+
+Reuse existing cache.
+
+---
+
+# 📡 TRANSPORT LAYER
+
+Supports:
+
+* WiFi Direct (preferred)
+* Bluetooth (fallback)
+
+---
+
+## REQUIREMENTS
+
+* Abstract interface
+* Runtime switching
+* Prefer WiFi
+
+---
+
+# 📊 NETWORK AWARENESS (LIGHTWEIGHT)
+
+Track:
+
+```dart
+peerCount;
+deliverySuccessRate;
+failedAttempts;
+```
+
+Used for tuning behavior (not complex AI).
+
+---
+
+# ⚠️ EDGE CASES TO HANDLE
+
+1. Route disappears mid-delivery
+2. Peer disconnects during file transfer
+3. Duplicate messages
+4. ACK lost
+5. Queue overload
+6. Device offline long time
+7. Broadcast spam
+
+---
+
+# 🎯 GOAL
+
+Design and implement:
+
+* Clean architecture for all layers
+* Hybrid routing (route + opportunistic)
+* Reliable message delivery
+* Resume-capable file transfer
+* Efficient battery usage
+
+---
+
+# 📌 OUTPUT REQUIREMENTS
+
+Provide:
+
+1. Refactored architecture (services/classes)
+2. Key Dart implementations:
+
+   * mesh router
+   * queue manager
+   * file transfer manager
+3. State machines
+4. Performance optimizations
+
+Avoid overengineering. Keep it practical for Flutter.
+
+
+# 🔄 SYSTEM OPERATION MODES (MANDATORY)
+
+The application operates in **three distinct modes**.
+These modes define how communication behaves and MUST NOT be mixed.
+
+---
+
+## 🟢 MODE 1: DIRECT CONNECTION MODE
+
+### Definition:
+
+Two peers are directly connected via WiFi Direct or Bluetooth.
+
+### Capabilities:
+
+* Real-time chat (low latency)
+* File transfer (ONLY allowed in this mode)
+* Resume support for file transfer
+
+### Behavior:
+
+```dart
+if (isDirectlyConnected(peerId)) {
+  useDirectChannel();
+}
+```
+
+### Rules:
+
+* MUST NOT use mesh routing
+* MUST NOT use message queue for delivery
+* File transfer ONLY allowed here
+
+---
+
+## 🟡 MODE 2: MESH MODE (DELAY-TOLERANT)
+
+### Definition:
+
+Peers are not directly connected but reachable via intermediate nodes.
+
+Example:
+
+```text
+A → B → C → D
+```
+
+### Capabilities:
+
+* Message sending only (NO file transfer)
+* Store-and-forward delivery
+* Multi-hop routing
+
+### Behavior:
+
+```dart
+if (!isDirectlyConnected(peerId)) {
+  useMeshRouting();
+}
+```
+
+### Rules:
+
+* MUST use MessageQueue
+* MUST respect TTL and expiry
+* MUST use hybrid routing:
+
+  * route-based first
+  * opportunistic fallback
+
+---
+
+## 🔵 MODE 3: EMERGENCY BROADCAST MODE ("TOWN SQUARE")
+
+### Definition:
+
+Public broadcast channel for all nearby peers.
+
+### Capabilities:
+
+* Send/receive public messages
+* No specific destination required
+
+### Behavior:
+
+```dart
+if (destinationId == BROADCAST_EMERGENCY) {
+  broadcastMessage();
+}
+```
+
+### Rules:
+
+* MUST NOT use route-based delivery
+* MUST use low TTL (3–5)
+* MUST be rate-limited
+* MUST be signed but NOT encrypted
+
+---
+
+# ⚠️ MODE SEPARATION RULES (CRITICAL)
+
+These rules MUST be strictly enforced:
+
+1. File transfer ONLY in Direct Mode
+2. Mesh Mode MUST NOT handle file transfer
+3. Broadcast Mode MUST NOT use routing
+4. Direct Mode MUST bypass queue and routing
+5. Each message MUST belong to exactly ONE mode
+
+---
+
+# 🔄 MODE SELECTION LOGIC
+
+```dart
+if (destinationId == BROADCAST_EMERGENCY) {
+  mode = EMERGENCY_BROADCAST;
+} else if (isDirectlyConnected(destinationId)) {
+  mode = DIRECT;
+} else {
+  mode = MESH;
+}
+```
+
+---
+
+# ❗ WHY THIS IS IMPORTANT
+
+Without explicit modes:
+
+* File transfer may accidentally go through mesh ❌
+* Broadcast messages may get routed inefficiently ❌
+* Queue may interfere with direct communication ❌
+
+This separation ensures:
+
+* clarity
+* performance
+* correctness

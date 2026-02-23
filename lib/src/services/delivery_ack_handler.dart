@@ -25,8 +25,10 @@ class DeliveryAckHandler {
 
   // Generate acknowledgment for delivered message
   Future<MeshMessage> createAcknowledgment(MeshMessage originalMessage) async {
-    final ackId = _uuid.v4();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final shortSenderId = _cryptoService.localPeerId.substring(0, 8);
+    final shortUuid = _uuid.v4().substring(0, 8);
+    final ackId = '${timestamp}_${shortSenderId}_$shortUuid';
 
     // Create acknowledgment message with original message ID in content
     final ackContent = 'ACK:${originalMessage.messageId}';
@@ -137,11 +139,11 @@ class DeliveryAckHandler {
     return result.isNotEmpty;
   }
 
-  // Clean up old pending acknowledgments (older than 48 hours)
+  // Clean up old pending acknowledgments (older than 7 days)
   Future<void> cleanupOldAcks() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(const Duration(hours: 48))
+        .subtract(const Duration(days: 7))
         .millisecondsSinceEpoch;
 
     await database.delete(
