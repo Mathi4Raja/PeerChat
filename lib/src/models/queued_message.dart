@@ -10,6 +10,9 @@ class QueuedMessage {
   /// When this message is next eligible for retry.
   /// Uses exponential backoff: nextRetryTime = now + base * 2^min(retryCount, 10)
   final int nextRetryTime;
+  /// Absolute expiry timestamp in milliseconds (for DB-level pruning).
+  /// 0 means fallback to duration-based check from [MeshMessage].
+  final int expiryTime;
 
   /// Maximum retry attempts before dropping the message.
   static const int maxRetries = 50;
@@ -23,6 +26,7 @@ class QueuedMessage {
     this.attemptCount = 0,
     this.lastAttemptTimestamp,
     this.nextRetryTime = 0,
+    this.expiryTime = 0,
   });
 
   /// Check if message has expired (uses clock-independent duration from MeshMessage)
@@ -42,6 +46,8 @@ class QueuedMessage {
       'attempt_count': attemptCount,
       'last_attempt_timestamp': lastAttemptTimestamp,
       'next_retry_time': nextRetryTime,
+      'expiry_time':
+          expiryTime > 0 ? expiryTime : (message.timestamp + message.expiryDuration),
     };
   }
 
@@ -57,6 +63,7 @@ class QueuedMessage {
       attemptCount: map['attempt_count'] as int? ?? 0,
       lastAttemptTimestamp: map['last_attempt_timestamp'] as int?,
       nextRetryTime: map['next_retry_time'] as int? ?? 0,
+      expiryTime: map['expiry_time'] as int? ?? 0,
     );
   }
 
@@ -68,6 +75,7 @@ class QueuedMessage {
     int? attemptCount,
     int? lastAttemptTimestamp,
     int? nextRetryTime,
+    int? expiryTime,
   }) {
     return QueuedMessage(
       message: message ?? this.message,
@@ -76,6 +84,7 @@ class QueuedMessage {
       attemptCount: attemptCount ?? this.attemptCount,
       lastAttemptTimestamp: lastAttemptTimestamp ?? this.lastAttemptTimestamp,
       nextRetryTime: nextRetryTime ?? this.nextRetryTime,
+      expiryTime: expiryTime ?? this.expiryTime,
     );
   }
 }

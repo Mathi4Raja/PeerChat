@@ -44,15 +44,19 @@ class MeshStatusCard extends StatelessWidget {
                         child: const Icon(Icons.router, color: AppTheme.primary, size: 20),
                       ),
                       const SizedBox(width: 10),
-                      Text(
-                        'Mesh Network',
-                        style: GoogleFonts.inter(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                          color: AppTheme.textPrimary,
+                      Expanded(
+                        child: Text(
+                          'Mesh Network',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                            color: AppTheme.textPrimary,
+                          ),
                         ),
                       ),
-                      const Spacer(),
+                      const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
@@ -95,7 +99,7 @@ class MeshStatusCard extends StatelessWidget {
                       ),
                       _StatChip(
                         icon: Icons.check_circle_outline,
-                        label: 'Acks',
+                        label: 'Pending ACK',
                         value: stats.pendingAcks.toString(),
                         color: stats.pendingAcks > 0
                             ? AppTheme.accent
@@ -108,6 +112,44 @@ class MeshStatusCard extends StatelessWidget {
                           value: stats.blockedPeers.toString(),
                           color: AppTheme.danger,
                         ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    'Queued = not sent yet. Pending ACK = sent, waiting for delivery confirmation.',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        appState.isBatteryLow
+                            ? Icons.battery_alert_rounded
+                            : (appState.isCharging
+                                ? Icons.battery_charging_full_rounded
+                                : Icons.battery_std_rounded),
+                        size: 14,
+                        color: appState.isBatteryLow
+                            ? AppTheme.warning
+                            : AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          appState.isBatteryLow
+                              ? 'Battery low (${appState.batteryLevel}%). Discovery is throttled.'
+                              : 'Battery ${appState.batteryLevel}%${appState.isCharging ? ' • Charging' : ''}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ),
                     ],
                   ),
                 ],

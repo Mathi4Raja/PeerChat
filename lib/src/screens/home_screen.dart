@@ -4,7 +4,11 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../app_state.dart';
+import '../models/runtime_profile.dart';
 import '../theme.dart';
+import 'mesh/routes_status_screen.dart';
+import 'mesh/queued_messages_status_screen.dart';
+import 'mesh/pending_acks_status_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -29,23 +33,58 @@ class HomeScreen extends StatelessWidget {
               child: const Icon(Icons.shield, size: 18, color: AppTheme.bgDeep),
             ),
             const SizedBox(width: 10),
-            Text(
-              'PeerChat',
-              style: GoogleFonts.inter(
-                fontSize: 20,
-                fontWeight: FontWeight.w800,
+            Expanded(
+              child: RichText(
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                text: TextSpan(
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.textPrimary,
+                  ),
+                  children: [
+                    const TextSpan(text: 'PeerChat '),
+                    WidgetSpan(
+                      child: ShaderMask(
+                        shaderCallback: (bounds) =>
+                            AppTheme.primaryGradient.createShader(bounds),
+                        child: Text(
+                          'Secure',
+                          style: GoogleFonts.inter(
+                            fontSize: 20,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
-            const SizedBox(width: 4),
-            ShaderMask(
-              shaderCallback: (bounds) =>
-                  AppTheme.primaryGradient.createShader(bounds),
-              child: Text(
-                'Secure',
-                style: GoogleFonts.inter(
-                  fontSize: 20,
-                  fontWeight: FontWeight.w800,
-                  color: Colors.white,
+            const SizedBox(width: 6),
+            Tooltip(
+              message: appState.isEmergencyBatteryProfile
+                  ? 'Disable Battery Saver'
+                  : 'Enable Battery Saver',
+              child: InkWell(
+                borderRadius: BorderRadius.circular(18),
+                onTap: () async {
+                  final nextProfile = appState.isEmergencyBatteryProfile
+                      ? RuntimeProfile.normalDirect
+                      : RuntimeProfile.emergencyBattery;
+                  await appState.setRuntimeProfile(nextProfile);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.all(6),
+                  child: Icon(
+                    Icons.battery_saver_rounded,
+                    size: 20,
+                    color: appState.isEmergencyBatteryProfile
+                        ? AppTheme.warning
+                        : AppTheme.textSecondary,
+                  ),
                 ),
               ),
             ),
@@ -82,9 +121,12 @@ class HomeScreen extends StatelessWidget {
                 value: 'refresh',
                 child: Row(
                   children: [
-                    const Icon(Icons.refresh_rounded, size: 18, color: AppTheme.primary),
+                    const Icon(Icons.refresh_rounded,
+                        size: 18, color: AppTheme.primary),
                     const SizedBox(width: 10),
-                    Text('Refresh Discovery', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13)),
+                    Text('Refresh Discovery',
+                        style: GoogleFonts.inter(
+                            color: AppTheme.textPrimary, fontSize: 13)),
                   ],
                 ),
               ),
@@ -92,9 +134,12 @@ class HomeScreen extends StatelessWidget {
                 value: 'about',
                 child: Row(
                   children: [
-                    const Icon(Icons.info_outline_rounded, size: 18, color: AppTheme.textSecondary),
+                    const Icon(Icons.info_outline_rounded,
+                        size: 18, color: AppTheme.textSecondary),
                     const SizedBox(width: 10),
-                    Text('About', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 13)),
+                    Text('About',
+                        style: GoogleFonts.inter(
+                            color: AppTheme.textPrimary, fontSize: 13)),
                   ],
                 ),
               ),
@@ -123,6 +168,8 @@ class HomeScreen extends StatelessWidget {
                   publicKey: pub,
                 ),
                 const SizedBox(height: 20),
+                _RuntimeProfileSection(),
+                const SizedBox(height: 20),
 
                 // ─── Mesh Network Status ───
                 _MeshStatusSection(),
@@ -144,20 +191,31 @@ class HomeScreen extends StatelessWidget {
                     children: [
                       Row(
                         children: [
-                          Icon(Icons.verified_user_rounded, size: 16, color: AppTheme.primary.withValues(alpha: 0.8)),
+                          Icon(Icons.verified_user_rounded,
+                              size: 16,
+                              color: AppTheme.primary.withValues(alpha: 0.8)),
                           const SizedBox(width: 8),
                           Text(
                             'Privacy & Storage',
-                            style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w700, color: AppTheme.primary),
+                            style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.primary),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
-                      _PrivacyRow(icon: Icons.cloud_off_rounded, text: 'Fully decentralized — no servers'),
+                      _PrivacyRow(
+                          icon: Icons.cloud_off_rounded,
+                          text: 'Fully decentralized — no servers'),
                       const SizedBox(height: 5),
-                      _PrivacyRow(icon: Icons.lock_rounded, text: 'End-to-end encrypted messages'),
+                      _PrivacyRow(
+                          icon: Icons.lock_rounded,
+                          text: 'End-to-end encrypted messages'),
                       const SizedBox(height: 5),
-                      _PrivacyRow(icon: Icons.delete_forever_rounded, text: 'Data wiped on uninstall'),
+                      _PrivacyRow(
+                          icon: Icons.delete_forever_rounded,
+                          text: 'Data wiped on uninstall'),
                     ],
                   ),
                 ),
@@ -166,6 +224,76 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _RuntimeProfileSection extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Consumer<AppState>(
+      builder: (context, appState, _) {
+        return Container(
+          decoration: AppTheme.glassCard(),
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(7),
+                    decoration: BoxDecoration(
+                      color: AppTheme.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(9),
+                    ),
+                    child: const Icon(
+                      Icons.tune_rounded,
+                      color: AppTheme.accent,
+                      size: 18,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Network Profile',
+                      style: GoogleFonts.inter(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.textPrimary,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                children: const [
+                  RuntimeProfile.normalDirect,
+                  RuntimeProfile.normalMesh,
+                ].map((profile) {
+                  final selected = appState.runtimeProfile == profile;
+                  return ChoiceChip(
+                    label: Text(profile.shortLabel),
+                    selected: selected,
+                    onSelected: (_) => appState.setRuntimeProfile(profile),
+                  );
+                }).toList(),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                appState.runtimeProfile.description,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: AppTheme.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -229,7 +357,8 @@ class _IdentitySection extends StatelessWidget {
             decoration: BoxDecoration(
               color: AppTheme.primary.withValues(alpha: 0.12),
               borderRadius: BorderRadius.circular(20),
-              border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+              border:
+                  Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
             ),
             child: Text(
               'LOCAL-ONLY',
@@ -248,16 +377,21 @@ class _IdentitySection extends StatelessWidget {
           publicKey == 'Generating...'
               ? const SizedBox(
                   height: 160,
-                  child: Center(child: CircularProgressIndicator(color: AppTheme.primary)),
+                  child: Center(
+                      child:
+                          CircularProgressIndicator(color: AppTheme.primary)),
                 )
               : Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: Colors.white,
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3), width: 2),
+                    border: Border.all(
+                        color: AppTheme.primary.withValues(alpha: 0.3),
+                        width: 2),
                   ),
-                  child: QrImageView(data: publicKey, version: QrVersions.auto, size: 160.0),
+                  child: QrImageView(
+                      data: publicKey, version: QrVersions.auto, size: 160.0),
                 ),
 
           const SizedBox(height: 14),
@@ -278,7 +412,8 @@ class _IdentitySection extends StatelessWidget {
                     publicKey,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: GoogleFonts.firaCode(fontSize: 10, color: AppTheme.textSecondary),
+                    style: GoogleFonts.firaCode(
+                        fontSize: 10, color: AppTheme.textSecondary),
                   ),
                 ),
                 if (publicKey != 'Generating...')
@@ -291,7 +426,8 @@ class _IdentitySection extends StatelessWidget {
                     },
                     child: const Padding(
                       padding: EdgeInsets.only(left: 8),
-                      child: Icon(Icons.copy_rounded, size: 14, color: AppTheme.accent),
+                      child: Icon(Icons.copy_rounded,
+                          size: 14, color: AppTheme.accent),
                     ),
                   ),
               ],
@@ -319,7 +455,8 @@ class _MeshStatusSection extends StatelessWidget {
               return Container(
                 decoration: AppTheme.glassCard(),
                 padding: const EdgeInsets.all(20),
-                child: const Center(child: CircularProgressIndicator(color: AppTheme.primary)),
+                child: const Center(
+                    child: CircularProgressIndicator(color: AppTheme.primary)),
               );
             }
 
@@ -340,7 +477,8 @@ class _MeshStatusSection extends StatelessWidget {
                           color: AppTheme.primary.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(10),
                         ),
-                        child: const Icon(Icons.hub_rounded, color: AppTheme.primary, size: 20),
+                        child: const Icon(Icons.hub_rounded,
+                            color: AppTheme.primary, size: 20),
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -349,22 +487,30 @@ class _MeshStatusSection extends StatelessWidget {
                           children: [
                             Text(
                               'Mesh Network',
-                              style: GoogleFonts.inter(fontSize: 16, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+                              style: GoogleFonts.inter(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.textPrimary),
                             ),
                             Text(
                               '$connectedCount connected · $discoveredCount discovered',
-                              style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                              style: GoogleFonts.inter(
+                                  fontSize: 11, color: AppTheme.textSecondary),
                             ),
                           ],
                         ),
                       ),
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
                           gradient: connectedCount > 0
-                              ? const LinearGradient(colors: [AppTheme.online, Color(0xFF81C784)])
+                              ? const LinearGradient(
+                                  colors: [AppTheme.online, Color(0xFF81C784)])
                               : null,
-                          color: connectedCount > 0 ? null : AppTheme.textSecondary.withValues(alpha: 0.2),
+                          color: connectedCount > 0
+                              ? null
+                              : AppTheme.textSecondary.withValues(alpha: 0.2),
                           borderRadius: BorderRadius.circular(20),
                         ),
                         child: Row(
@@ -374,7 +520,9 @@ class _MeshStatusSection extends StatelessWidget {
                               width: 6,
                               height: 6,
                               decoration: BoxDecoration(
-                                color: connectedCount > 0 ? Colors.white : AppTheme.textSecondary,
+                                color: connectedCount > 0
+                                    ? Colors.white
+                                    : AppTheme.textSecondary,
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -384,7 +532,9 @@ class _MeshStatusSection extends StatelessWidget {
                               style: GoogleFonts.inter(
                                 fontSize: 9,
                                 fontWeight: FontWeight.w800,
-                                color: connectedCount > 0 ? AppTheme.bgDeep : AppTheme.textSecondary,
+                                color: connectedCount > 0
+                                    ? AppTheme.bgDeep
+                                    : AppTheme.textSecondary,
                                 letterSpacing: 0.6,
                               ),
                             ),
@@ -405,6 +555,13 @@ class _MeshStatusSection extends StatelessWidget {
                           label: 'Routes',
                           value: stats.totalRoutes.toString(),
                           color: AppTheme.primary,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const RoutesStatusScreen(),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(width: 8),
@@ -413,16 +570,35 @@ class _MeshStatusSection extends StatelessWidget {
                           icon: Icons.schedule_send_rounded,
                           label: 'Queued',
                           value: stats.queuedMessages.toString(),
-                          color: stats.queuedMessages > 0 ? AppTheme.warning : AppTheme.textSecondary,
+                          color: stats.queuedMessages > 0
+                              ? AppTheme.warning
+                              : AppTheme.textSecondary,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const QueuedMessagesStatusScreen(),
+                              ),
+                            );
+                          },
                         ),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: _MeshStat(
                           icon: Icons.check_circle_outline_rounded,
-                          label: 'Pending',
+                          label: 'Pending ACK',
                           value: stats.pendingAcks.toString(),
-                          color: stats.pendingAcks > 0 ? AppTheme.accent : AppTheme.textSecondary,
+                          color: stats.pendingAcks > 0
+                              ? AppTheme.accent
+                              : AppTheme.textSecondary,
+                          onTap: () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const PendingAcksStatusScreen(),
+                              ),
+                            );
+                          },
                         ),
                       ),
                     ],
@@ -437,6 +613,15 @@ class _MeshStatusSection extends StatelessWidget {
                       color: AppTheme.danger,
                     ),
                   ],
+
+                  const SizedBox(height: 10),
+                  Text(
+                    'Queued: not sent yet. Pending ACK: sent, waiting for delivery confirmation.',
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
+                      color: AppTheme.textSecondary,
+                    ),
+                  ),
                 ],
               ),
             );
@@ -452,45 +637,54 @@ class _MeshStat extends StatelessWidget {
   final String label;
   final String value;
   final Color color;
+  final VoidCallback? onTap;
 
   const _MeshStat({
     required this.icon,
     required this.label,
     required this.value,
     required this.color,
+    this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.06),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withValues(alpha: 0.12)),
-      ),
-      child: Column(
-        children: [
-          Icon(icon, size: 18, color: color),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 18,
-              fontWeight: FontWeight.w800,
-              color: color,
-            ),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: color.withValues(alpha: 0.12)),
           ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: GoogleFonts.inter(
-              fontSize: 10,
-              color: color.withValues(alpha: 0.7),
-              fontWeight: FontWeight.w500,
-            ),
+          child: Column(
+            children: [
+              Icon(icon, size: 18, color: color),
+              const SizedBox(height: 6),
+              Text(
+                value,
+                style: GoogleFonts.inter(
+                  fontSize: 18,
+                  fontWeight: FontWeight.w800,
+                  color: color,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                style: GoogleFonts.inter(
+                  fontSize: 10,
+                  color: color.withValues(alpha: 0.7),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -508,9 +702,17 @@ class _PrivacyRow extends StatelessWidget {
       children: [
         Icon(icon, size: 13, color: AppTheme.textSecondary),
         const SizedBox(width: 8),
-        Text(
-          text,
-          style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary, fontWeight: FontWeight.w500),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
         ),
       ],
     );

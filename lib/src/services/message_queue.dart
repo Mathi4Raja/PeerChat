@@ -20,6 +20,7 @@ class QueueStats {
 class MessageQueue {
   final DBService _db;
   static const int maxQueueSize = 5000;
+
   /// Maximum messages per destination peer — prevents single unreachable peer
   /// from consuming the entire queue.
   static const int maxMessagesPerPeer = 50;
@@ -42,12 +43,13 @@ class MessageQueue {
   Future<void> _enforceQueueLimit() async {
     final database = await _db.db;
     final count = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
-    ) ?? 0;
+          await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
+        ) ??
+        0;
 
     if (count > maxQueueSize) {
       final excess = count - maxQueueSize;
-      
+
       // Delete oldest, lowest priority messages
       await database.rawDelete('''
         DELETE FROM message_queue
@@ -99,28 +101,39 @@ class MessageQueue {
   Future<List<QueuedMessage>> getReadyMessages() async {
     final database = await _db.db;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final results = await database.query(
-      'message_queue',
-      where: 'next_retry_time <= ?',
-      whereArgs: [now],
-      orderBy: 'priority DESC, queued_timestamp ASC',
-    );
+    final results = await database.rawQuery('''
+      SELECT * FROM message_queue
+      WHERE next_retry_time <= ?
+        AND (expiry_time = 0 OR expiry_time > ?)
+      ORDER BY
+        (priority + CASE WHEN (? - queued_timestamp) >= 3600000 THEN 1 ELSE 0 END) DESC,
+        queued_timestamp ASC
+    ''', [now, now, now]);
 
     return results.map((map) => QueuedMessage.fromMap(map)).toList();
   }
 
-  // Remove expired messages (older than 7 days)
+  // Remove expired messages based on each message's duration-based expiry.
   Future<void> removeExpired() async {
     final database = await _db.db;
-    final cutoffTimestamp = DateTime.now()
-        .subtract(const Duration(days: 7))
-        .millisecondsSinceEpoch;
-
+    final now = DateTime.now().millisecondsSinceEpoch;
     await database.delete(
       'message_queue',
-      where: 'queued_timestamp < ?',
-      whereArgs: [cutoffTimestamp],
+      where: 'expiry_time > 0 AND expiry_time <= ?',
+      whereArgs: [now],
     );
+
+    // Legacy rows without expiry_time still use message payload duration check.
+    final legacyRows = await database.query(
+      'message_queue',
+      where: 'expiry_time = 0',
+    );
+    for (final row in legacyRows) {
+      final queued = QueuedMessage.fromMap(row);
+      if (queued.isExpired) {
+        await dequeue(queued.message.messageId);
+      }
+    }
   }
 
   // Update attempt count with exponential backoff
@@ -135,12 +148,11 @@ class MessageQueue {
       where: 'message_id = ?',
       whereArgs: [messageId],
     );
-    
-    final currentAttempts = result.isNotEmpty 
-        ? (result.first['attempt_count'] as int? ?? 0) 
-        : 0;
+
+    final currentAttempts =
+        result.isNotEmpty ? (result.first['attempt_count'] as int? ?? 0) : 0;
     final newAttempts = currentAttempts + 1;
-    
+
     // Check if should drop (exceeded max retries)
     if (newAttempts > QueuedMessage.maxRetries) {
       await dequeue(messageId);
@@ -149,7 +161,7 @@ class MessageQueue {
 
     // Exponential backoff: base * 2^min(retryCount, 10)
     // Caps at ~30s * 1024 ≈ 8.5 hours max delay
-    final backoffMs = QueuedMessage.baseRetryInterval * 
+    final backoffMs = QueuedMessage.baseRetryInterval *
         (1 << (newAttempts < 10 ? newAttempts : 10));
     final nextRetryTime = now + backoffMs;
 
@@ -167,11 +179,12 @@ class MessageQueue {
   Future<void> _enforcePerPeerLimit(String peerId) async {
     final database = await _db.db;
     final count = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
-        [peerId],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
+            [peerId],
+          ),
+        ) ??
+        0;
 
     if (count > maxMessagesPerPeer) {
       final excess = count - maxMessagesPerPeer;
@@ -190,31 +203,35 @@ class MessageQueue {
   // Get queue statistics
   Future<QueueStats> getStats() async {
     final database = await _db.db;
-    
+
     final totalCount = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
-    ) ?? 0;
+          await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
+        ) ??
+        0;
 
     final highCount = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
-        [MessagePriority.high.index],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
+            [MessagePriority.high.index],
+          ),
+        ) ??
+        0;
 
     final normalCount = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
-        [MessagePriority.normal.index],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
+            [MessagePriority.normal.index],
+          ),
+        ) ??
+        0;
 
     final lowCount = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
-        [MessagePriority.low.index],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE priority = ?',
+            [MessagePriority.low.index],
+          ),
+        ) ??
+        0;
 
     return QueueStats(
       totalMessages: totalCount,
@@ -228,11 +245,12 @@ class MessageQueue {
   Future<bool> hasPendingMessagesForPeer(String peerId) async {
     final database = await _db.db;
     final count = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
-        [peerId],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
+            [peerId],
+          ),
+        ) ??
+        0;
 
     return count > 0;
   }
@@ -241,7 +259,8 @@ class MessageQueue {
   Future<int> getQueueSize() async {
     final database = await _db.db;
     return Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
-    ) ?? 0;
+          await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
+        ) ??
+        0;
   }
 }

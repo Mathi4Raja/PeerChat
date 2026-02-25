@@ -139,6 +139,16 @@ class DeliveryAckHandler {
     return result.isNotEmpty;
   }
 
+  /// Remove a single pending ACK record by message ID.
+  Future<int> removePendingAck(String messageId) async {
+    final database = await _db.db;
+    return database.delete(
+      'pending_acks',
+      where: 'message_id = ?',
+      whereArgs: [messageId],
+    );
+  }
+
   // Clean up old pending acknowledgments (older than 7 days)
   Future<void> cleanupOldAcks() async {
     final database = await _db.db;
@@ -151,6 +161,32 @@ class DeliveryAckHandler {
       where: 'sent_timestamp < ?',
       whereArgs: [cutoffTimestamp],
     );
+  }
+
+  /// Remove invalid pending ACK rows so "pending" truly means
+  /// "already sent, waiting for delivery confirmation".
+  Future<void> cleanupInvalidPendingAcks() async {
+    final database = await _db.db;
+    await database.rawDelete('''
+      DELETE FROM pending_acks
+      WHERE message_id IN (
+        SELECT p.message_id
+        FROM pending_acks p
+        LEFT JOIN chat_messages c ON c.id = p.message_id
+        WHERE c.id IS NULL
+           OR c.status IN (?, ?)
+      )
+    ''', [
+      MessageStatus.sending.index,
+      MessageStatus.failed.index,
+    ]);
+  }
+
+  /// Manually clear all pending acknowledgments.
+  /// Returns number of deleted rows.
+  Future<int> clearAllPendingAcks() async {
+    final database = await _db.db;
+    return database.delete('pending_acks');
   }
 
   // Get statistics

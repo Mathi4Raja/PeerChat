@@ -5,6 +5,7 @@ import '../../app_state.dart';
 import '../../models/route.dart' as mesh_route;
 import '../../models/queued_message.dart';
 import '../../services/message_queue.dart';
+import '../../services/mesh_router_service.dart';
 import '../../theme.dart';
 
 class RoutingDebugScreen extends StatefulWidget {
@@ -18,6 +19,7 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
   List<mesh_route.Route> _routes = [];
   List<QueuedMessage> _queuedMessages = [];
   QueueStats? _queueStats;
+  RoutingStats? _routingStats;
   List<String> _connectedPeerIds = [];
   bool _isLoading = true;
 
@@ -37,12 +39,14 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
       final routes = await router.routeManager.getAllRoutes();
       final queued = await router.messageQueue.getAllQueued();
       final stats = await router.messageQueue.getStats();
+      final routingStats = await router.stats;
       final connected = router.getConnectedPeerIds();
 
       setState(() {
         _routes = routes;
         _queuedMessages = queued;
         _queueStats = stats;
+        _routingStats = routingStats;
         _connectedPeerIds = connected;
         _isLoading = false;
       });
@@ -50,6 +54,30 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
       debugPrint('Error loading debug data: $e');
       setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _cleanupStaleData() async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final stats = await appState.clearStaleNetworkData(
+      stalePeerAge: const Duration(minutes: 30),
+      staleRouteAge: const Duration(minutes: 30),
+      staleEndpointAge: const Duration(hours: 2),
+    );
+    if (!mounted) return;
+    final removedPeers = stats['removed_peers'] ?? 0;
+    final removedRoutes = (stats['removed_routes_by_age'] ?? 0) +
+        (stats['removed_routes_via_stale_peers'] ?? 0);
+    final removedQueue = stats['removed_queue_via_stale_peers'] ?? 0;
+    final removedEndpoints = stats['removed_known_endpoints'] ?? 0;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Cleanup done: peers=$removedPeers routes=$removedRoutes queue=$removedQueue endpoints=$removedEndpoints',
+        ),
+      ),
+    );
+    await _loadDebugData();
   }
 
   @override
@@ -64,6 +92,11 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
           ),
           automaticallyImplyLeading: false,
           actions: [
+            IconButton(
+              icon: const Icon(Icons.cleaning_services_rounded),
+              tooltip: 'Cleanup stale data',
+              onPressed: _cleanupStaleData,
+            ),
             IconButton(
               icon: const Icon(Icons.refresh_rounded),
               tooltip: 'Refresh',
@@ -401,6 +434,55 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
             }),
 
           const SizedBox(height: 20),
+
+          if (_routingStats != null) ...[
+            Text(
+              'Delivery Stats',
+              style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: AppTheme.glassCard(radius: 12),
+              child: Wrap(
+                alignment: WrapAlignment.spaceAround,
+                runSpacing: 10,
+                spacing: 10,
+                children: [
+                  _statChip('Sent', _routingStats!.messagesSent, AppTheme.accent),
+                  _statChip('Delivered', _routingStats!.messagesDelivered,
+                      AppTheme.online),
+                  _statChip('Failed', _routingStats!.messagesFailed,
+                      AppTheme.danger),
+                  Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        '${(_routingStats!.deliverySuccessRate * 100).toStringAsFixed(0)}%',
+                        style: GoogleFonts.inter(
+                          fontSize: 20,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.warning,
+                        ),
+                      ),
+                      Text(
+                        'Success',
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: AppTheme.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
 
           // All known peers
           Text(

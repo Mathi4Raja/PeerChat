@@ -14,14 +14,17 @@ class RouteManager {
   final DBService _db;
   final SignatureVerifier _signatureVerifier;
   final CryptoService _cryptoService;
-  final Future<bool> Function(String peerId, Uint8List data) sendTransportMessage;
-  
+  final Future<bool> Function(String peerId, Uint8List data)
+      sendTransportMessage;
+
   final Map<String, Completer<bool>> _pendingDiscoveries = {};
   final Map<String, int> _discoveryAttempts = {};
   final _uuid = const Uuid();
 
-  final StreamController<String> _routeUpdateController = StreamController<String>.broadcast();
+  final StreamController<String> _routeUpdateController =
+      StreamController<String>.broadcast();
   Stream<String> get onRouteFound => _routeUpdateController.stream;
+  Stream<String> get onRouteUpdated => _routeUpdateController.stream;
 
   RouteManager(
     this._db,
@@ -32,26 +35,8 @@ class RouteManager {
 
   // Find next hop for a destination
   Future<String?> getNextHop(String destinationPeerId) async {
-    debugPrint('=== GET NEXT HOP ===');
-    debugPrint('Destination: $destinationPeerId');
-    
     final database = await _db.db;
-    
-    // Check for direct connection first
-    final peers = await _db.allPeers();
-    debugPrint('Total peers in database: ${peers.length}');
-    
-    for (final peer in peers) {
-      debugPrint('  Peer: ${peer.id} (${peer.address})');
-    }
-    
-    if (peers.any((p) => p.id == destinationPeerId)) {
-      debugPrint('Direct connection found!');
-      return destinationPeerId;
-    }
 
-    debugPrint('No direct connection, checking routing table...');
-    
     // Query routing table for best route
     final results = await database.query(
       'routes',
@@ -60,7 +45,6 @@ class RouteManager {
     );
 
     if (results.isEmpty) {
-      debugPrint('No route in routing table');
       return null;
     }
 
@@ -68,21 +52,21 @@ class RouteManager {
     final routes = results.map((map) => Route.fromMap(map)).toList();
     routes.sort((a, b) => b.preferenceScore.compareTo(a.preferenceScore));
 
-    debugPrint('Route found via: ${routes.first.nextHopPeerId}');
     return routes.first.nextHopPeerId;
   }
 
   // Get all routes from routing table (for debug UI)
   Future<List<Route>> getAllRoutes() async {
     final database = await _db.db;
-    final results = await database.query('routes', orderBy: 'last_updated_timestamp DESC');
+    final results =
+        await database.query('routes', orderBy: 'last_updated_timestamp DESC');
     return results.map((map) => Route.fromMap(map)).toList();
   }
 
   // Add or update a route
   Future<void> addRoute(Route route) async {
     final database = await _db.db;
-    
+
     // Check for existing route
     final existing = await database.query(
       'routes',
@@ -114,7 +98,8 @@ class RouteManager {
         route.toMap(),
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
-      debugPrint('Route added/updated: ${route.destinationPeerId} via ${route.nextHopPeerId} (${route.hopCount} hops)');
+      debugPrint(
+          'Route added/updated: ${route.destinationPeerId} via ${route.nextHopPeerId} (${route.hopCount} hops)');
       _routeUpdateController.add(route.destinationPeerId);
     }
   }
@@ -136,7 +121,7 @@ class RouteManager {
     // Create route request
     final requestId = _uuid.v4();
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
+
     final request = RouteRequest(
       requestId: requestId,
       requestorPeerId: _cryptoService.localPeerId,
@@ -158,17 +143,17 @@ class RouteManager {
     // Broadcast to all connected peers
     final peers = await _db.allPeers();
     // Better to rely on TransportService for knowing who is connected, but iterating known peers is a start
-    
+
     // Convert request to MeshMessage for transport
     // Note: We need to wrap RouteRequest in a MeshMessage structure or send as raw bytes depending on protocol
-    // Looking at MeshMessage, it has a type for routeRequest. 
+    // Looking at MeshMessage, it has a type for routeRequest.
     // We should construct a MeshMessage to carry this payload.
-    
+
     // Actually, RouteRequest has its own bytes. Let's send those.
     // The receiver needs to know it's a route request.
     // Usually we wrap everything in MeshMessage.
     // Let's create a MeshMessage wrapper for the route request.
-    
+
     final meshMessage = MeshMessage(
       messageId: _uuid.v4(),
       type: MessageType.routeRequest,
@@ -178,17 +163,19 @@ class RouteManager {
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: timestamp,
-      signature: Uint8List(0), // Signature logic for wrapper might be redundant if inner is signed
+      signature: Uint8List(
+          0), // Signature logic for wrapper might be redundant if inner is signed
       encryptedContent: request.toBytes(), // Payload is the request
     );
-    
+
     // We haven't signed the wrapper properly here (it needs to be signed).
     // A better approach might be to send the payload directly if Transport handles packaging,
     // BUT MeshRouterService.receiveMessage expects MeshMessage.fromBytes.
     // So we MUST send a MeshMessage.
-    
+
     // Sign the wrapper
-    final wrapperSignature = _cryptoService.signMessage(meshMessage.toBytesForSigning());
+    final wrapperSignature =
+        _cryptoService.signMessage(meshMessage.toBytesForSigning());
     final signedWrapper = MeshMessage(
       messageId: meshMessage.messageId,
       type: MessageType.routeRequest,
@@ -249,7 +236,6 @@ class RouteManager {
     await removeRoutesThrough(peerId);
   }
 
-
   // Remove routes through a specific peer
   Future<void> removeRoutesThrough(String peerId) async {
     final database = await _db.db;
@@ -263,7 +249,7 @@ class RouteManager {
   // Mark route as failed
   Future<void> markRouteFailed(String destinationPeerId, String nextHop) async {
     final database = await _db.db;
-    
+
     final results = await database.query(
       'routes',
       where: 'destination_peer_id = ? AND next_hop_peer_id = ?',
@@ -287,9 +273,10 @@ class RouteManager {
   }
 
   // Mark route as successful
-  Future<void> markRouteSuccess(String destinationPeerId, String nextHop) async {
+  Future<void> markRouteSuccess(
+      String destinationPeerId, String nextHop) async {
     final database = await _db.db;
-    
+
     final results = await database.query(
       'routes',
       where: 'destination_peer_id = ? AND next_hop_peer_id = ?',
@@ -338,9 +325,11 @@ class RouteManager {
   }
 
   // Process route discovery request
-  Future<void> handleRouteRequest(RouteRequest request, String fromPeerAddress) async {
+  Future<void> handleRouteRequest(
+      RouteRequest request, String fromPeerAddress) async {
     // Verify signature
-    final isValid = await _signatureVerifier.verifyRouteRequestSignature(request);
+    final isValid =
+        await _signatureVerifier.verifyRouteRequestSignature(request);
     if (!isValid) {
       await _signatureVerifier.recordInvalidSignature(request.requestorPeerId);
       return;
@@ -367,18 +356,31 @@ class RouteManager {
         ),
       );
 
-      // TODO: Send response back to requestor via transport layer
-      
       // Calculate next hop to requestor
       final nextHop = await getNextHop(request.requestorPeerId);
       if (nextHop != null) {
-        // Send response via transport
-        await sendTransportMessage(nextHop, response.toBytes());
-        debugPrint('Sent route response to ${request.requestorPeerId} via $nextHop');
+        // Wrap response in MeshMessage so receiver can parse it consistently.
+        final wrapper = MeshMessage(
+          messageId: _uuid.v4(),
+          type: MessageType.routeResponse,
+          senderPeerId: _cryptoService.localPeerId,
+          recipientPeerId: request.requestorPeerId,
+          ttl: 8,
+          hopCount: 0,
+          priority: MessagePriority.high,
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          encryptedContent: response.toBytes(),
+          signature: Uint8List(0),
+        );
+        final signedWrapper = wrapper.copyWithSignature(
+          _cryptoService.signMessage(wrapper.toBytesForSigning()),
+        );
+        await sendTransportMessage(nextHop, signedWrapper.toBytes());
+        debugPrint(
+            'Sent route response to ${request.requestorPeerId} via $nextHop');
       } else {
-        debugPrint('Cannot send route response: No route to ${request.requestorPeerId}');
-        // We could queue this or try to discover a route back, but for now we just drop it
-        // A better approach would be to queue it and trigger discovery for the requestor
+        debugPrint(
+            'Cannot send route response: No route to ${request.requestorPeerId}');
       }
       return;
     }
@@ -396,11 +398,30 @@ class RouteManager {
         signature: request.signature,
       );
 
+      // Wrap forwarded request in MeshMessage so receiver parsing stays consistent.
+      final wrapper = MeshMessage(
+        messageId: _uuid.v4(),
+        type: MessageType.routeRequest,
+        senderPeerId: _cryptoService.localPeerId,
+        recipientPeerId: request.targetPeerId,
+        ttl: request.ttl - 1,
+        hopCount: 0,
+        priority: MessagePriority.high,
+        timestamp: DateTime.now().millisecondsSinceEpoch,
+        encryptedContent: forwardedRequest.toBytes(),
+        signature: Uint8List(0),
+      );
+      final signedWrapper = wrapper.copyWithSignature(
+        _cryptoService.signMessage(wrapper.toBytesForSigning()),
+      );
+
       // Forward to next hop via transport layer
-      debugPrint('Forwarding route request for ${request.targetPeerId} to $nextHop');
-      await sendTransportMessage(nextHop, forwardedRequest.toBytes());
+      debugPrint(
+          'Forwarding route request for ${request.targetPeerId} to $nextHop');
+      await sendTransportMessage(nextHop, signedWrapper.toBytes());
     } else {
-      debugPrint('Dropping route request for ${request.targetPeerId}: No route or TTL expired');
+      debugPrint(
+          'Dropping route request for ${request.targetPeerId}: No route or TTL expired');
     }
   }
 
@@ -437,14 +458,19 @@ class RouteManager {
   // Get routing statistics
   Future<Map<String, int>> getStats() async {
     final database = await _db.db;
-    
+
     final totalRoutes = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM routes'),
-    ) ?? 0;
+          await database.rawQuery('SELECT COUNT(*) FROM routes'),
+        ) ??
+        0;
 
     return {
       'total_routes': totalRoutes,
       'pending_discoveries': _pendingDiscoveries.length,
     };
+  }
+
+  void dispose() {
+    _routeUpdateController.close();
   }
 }

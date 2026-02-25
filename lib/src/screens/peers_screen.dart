@@ -210,13 +210,17 @@ class _UnconnectedTab extends StatelessWidget {
             child: Icon(icon, size: 14, color: color),
           ),
           const SizedBox(width: 8),
-          Text(
-            '$title ($count)',
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: FontWeight.w700,
-              letterSpacing: 1.0,
-              color: color,
+          Expanded(
+            child: Text(
+              '$title ($count)',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                letterSpacing: 1.0,
+                color: color,
+              ),
             ),
           ),
         ],

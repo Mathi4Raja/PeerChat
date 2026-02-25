@@ -7,6 +7,8 @@ enum MessageType {
   routeRequest,
   routeResponse,
   readReceipt,
+  connectionUpgradeRequest,
+  connectionUpgradeResponse,
 }
 
 enum MessagePriority {
@@ -75,7 +77,7 @@ class MeshMessage {
     final buffer = BytesBuilder();
     
     // Message ID (36 bytes for UUID string)
-    buffer.add(utf8.encode(messageId.padRight(36)));
+    buffer.add(utf8.encode(_fixedWidthId(messageId)));
     
     // Type (1 byte)
     buffer.addByte(type.index);
@@ -201,7 +203,7 @@ class MeshMessage {
   Uint8List toBytesForSigning() {
     final buffer = BytesBuilder();
     
-    buffer.add(utf8.encode(messageId.padRight(36)));
+    buffer.add(utf8.encode(_fixedWidthId(messageId)));
     buffer.addByte(type.index);
     
     final senderBytes = utf8.encode(senderPeerId);
@@ -288,5 +290,11 @@ class MeshMessage {
         (bytes[5] << 16) |
         (bytes[6] << 8) |
         bytes[7];
+  }
+
+  /// Mesh wire format currently expects fixed-width 36-char IDs.
+  static String _fixedWidthId(String id) {
+    if (id.length >= 36) return id.substring(0, 36);
+    return id.padRight(36);
   }
 }

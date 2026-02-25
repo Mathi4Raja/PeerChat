@@ -7,36 +7,53 @@ import 'db_service.dart';
 
 class WiFiTransport implements TransportService {
   final Nearby _nearby = Nearby();
-  final StreamController<TransportMessage> _messageController = StreamController.broadcast();
+  final StreamController<TransportMessage> _messageController =
+      StreamController.broadcast();
   final Map<String, String> _connectedPeers = {}; // endpointId -> peerId
   final Function(String peerId, String address)? onPeerDiscovered;
   final DBService _db = DBService();
-  
+
   // Callback for when connection is established
   Function(String transportId)? onConnectionEstablished;
-  
+
   // Callback for when connection is lost
   Function(String transportId)? onConnectionLost;
-  
+
+  // Callback for discovery failures that require user action.
+  Function(WiFiDiscoveryFailure failure)? onDiscoveryFailure;
+
   // Keepalive mechanism
   Timer? _keepaliveTimer;
   Timer? _healthCheckTimer;
-  static const Duration keepAliveInterval = Duration(seconds: 15);
-  static const Duration connectionTimeout = Duration(seconds: 60); // 4x keepalive interval for more tolerance
-  static final Uint8List keepAlivePacket = Uint8List.fromList([0xFF, 0xFF]); // Special keepalive marker
-  
+  // Faster reconnect feel for normal usage.
+  static const Duration keepAliveInterval = Duration(seconds: 8);
+  static const Duration connectionTimeout =
+      Duration(seconds: 24); // ~3x keepalive interval
+  static final Uint8List keepAlivePacket =
+      Uint8List.fromList([0xFF, 0xFF]); // Special keepalive marker
+
   // Track last activity per connection
   final Map<String, int> _lastActivity = {}; // endpointId -> timestamp
-  
+
   // Track previously connected peers for auto-reconnection (loaded from DB)
-  Set<String> _knownPeers = {}; // endpointIds we've successfully connected to before
+  Set<String> _knownPeers =
+      {}; // endpointIds we've successfully connected to before
   final Map<String, int> _lastReconnectAttempt = {}; // endpointId -> timestamp
-  static const int maxReconnectAttempts = 5;
-  static const Duration reconnectCooldown = Duration(seconds: 30);
-  
+  static const Duration reconnectCooldown = Duration(seconds: 5);
+
   String? _localName;
   bool _isAdvertising = false;
   bool _isDiscovering = false;
+  final Set<String> _pendingConnectionAttempts = {};
+  final Map<String, int> _pendingAttemptStartedAt = {};
+  final Map<String, int> _lastConnectionAttempt = {};
+  static const Duration connectionAttemptCooldown = Duration(seconds: 2);
+  static const Duration pendingAttemptTimeout = Duration(seconds: 12);
+  static const Duration reconnectCheckInterval = Duration(seconds: 8);
+  int _lastDiscoveryRefreshTimestamp = 0;
+  static const Duration discoveryRefreshCooldown = Duration(seconds: 12);
+  int _lastDiscoveryFailureNoticeAt = 0;
+  static const Duration discoveryFailureNoticeCooldown = Duration(seconds: 45);
 
   WiFiTransport({this.onPeerDiscovered});
 
@@ -48,79 +65,95 @@ class WiFiTransport implements TransportService {
     try {
       // Load known peers from database
       _knownPeers = await _db.getKnownWiFiEndpoints();
-      debugPrint('Loaded ${_knownPeers.length} known WiFi Direct endpoints from database');
-      
+      debugPrint(
+          'Loaded ${_knownPeers.length} known WiFi Direct endpoints from database');
+
       // Request necessary permissions
       await _requestPermissions();
 
       // Start advertising and discovering
       await _startAdvertising();
       await _startDiscovery();
-      
+
       // Start keepalive timer
       _startKeepalive();
-      
+
       // Start health check timer
       _startHealthCheck();
-      
+
       // Start reconnection check timer
       _startReconnectionCheck();
     } catch (e) {
       debugPrint('Error initializing WiFi Direct: $e');
     }
   }
-  
+
   void _startReconnectionCheck() {
-    // Periodically check for disconnected known peers and reset reconnect attempts
-    Timer.periodic(const Duration(minutes: 2), (timer) async {
+    // Periodically check reconnect state and refresh discovery if needed.
+    Timer.periodic(reconnectCheckInterval, (timer) async {
       debugPrint('=== RECONNECTION CHECK ===');
       debugPrint('Known peers: ${_knownPeers.length}');
       debugPrint('Connected peers: ${_connectedPeers.length}');
-      
+      _cleanupStalePendingAttempts();
+
       // Reset reconnect attempts for peers that have been disconnected for a while
       final now = DateTime.now().millisecondsSinceEpoch;
       final resetThreshold = Duration(minutes: 5).inMilliseconds;
-      
+
       for (final endpointId in _knownPeers) {
         if (!_connectedPeers.containsKey(endpointId)) {
           final lastAttempt = _lastReconnectAttempt[endpointId];
           if (lastAttempt != null && (now - lastAttempt) > resetThreshold) {
             final oldAttempts = await _db.getReconnectAttempts(endpointId);
             if (oldAttempts > 0) {
-              debugPrint('Resetting reconnect attempts for $endpointId (was $oldAttempts)');
+              debugPrint(
+                  'Resetting reconnect attempts for $endpointId (was $oldAttempts)');
               await _db.resetReconnectAttempts(endpointId);
             }
           }
         }
       }
-      
+
+      // If we previously had peers but now have none, proactively refresh discovery
+      // to shorten reconnect latency after abrupt app restarts.
+      if (_knownPeers.isNotEmpty && _connectedPeers.isEmpty) {
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final elapsed = nowMs - _lastDiscoveryRefreshTimestamp;
+        if (elapsed > discoveryRefreshCooldown.inMilliseconds) {
+          _lastDiscoveryRefreshTimestamp = nowMs;
+          debugPrint('No active peers. Proactively refreshing WiFi Direct...');
+          await restartWiFiDirect();
+        }
+      }
+
       debugPrint('=== END RECONNECTION CHECK ===');
     });
   }
-  
+
   void _startKeepalive() {
     _keepaliveTimer = Timer.periodic(keepAliveInterval, (timer) {
       _sendKeepalives();
     });
-    debugPrint('WiFi Direct keepalive started (every ${keepAliveInterval.inSeconds}s)');
+    debugPrint(
+        'WiFi Direct keepalive started (every ${keepAliveInterval.inSeconds}s)');
   }
-  
+
   void _startHealthCheck() {
     _healthCheckTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
       _checkConnectionHealth();
     });
     debugPrint('WiFi Direct health check started');
   }
-  
+
   void _checkConnectionHealth() {
     final now = DateTime.now().millisecondsSinceEpoch;
     final timeoutMs = connectionTimeout.inMilliseconds;
     final staleConnections = <String>[];
     final orphanedActivity = <String>[];
-    
+
     debugPrint('=== CONNECTION HEALTH CHECK ===');
     debugPrint('Connected peers: ${_connectedPeers.length}');
-    
+
     // Check for stale connections
     for (final entry in _lastActivity.entries) {
       // Check if this activity entry has a corresponding connected peer
@@ -129,44 +162,46 @@ class WiFiTransport implements TransportService {
         orphanedActivity.add(entry.key);
         continue;
       }
-      
+
       final timeSinceActivity = now - entry.value;
       final secondsSinceActivity = (timeSinceActivity / 1000).round();
-      debugPrint('  ${entry.key}: ${secondsSinceActivity}s since last activity');
-      
+      debugPrint(
+          '  ${entry.key}: ${secondsSinceActivity}s since last activity');
+
       if (timeSinceActivity > timeoutMs) {
-        debugPrint('  ⚠️ TIMEOUT: ${entry.key} (${secondsSinceActivity}s > ${connectionTimeout.inSeconds}s)');
+        debugPrint(
+            '  ⚠️ TIMEOUT: ${entry.key} (${secondsSinceActivity}s > ${connectionTimeout.inSeconds}s)');
         staleConnections.add(entry.key);
       }
     }
-    
+
     if (staleConnections.isEmpty && orphanedActivity.isEmpty) {
       debugPrint('All connections healthy');
     }
     debugPrint('=== END HEALTH CHECK ===');
-    
+
     // Clean up orphaned activity entries
     for (final endpointId in orphanedActivity) {
       debugPrint('Cleaning up orphaned activity entry: $endpointId');
       _lastActivity.remove(endpointId);
     }
-    
+
     // Disconnect stale connections
     for (final endpointId in staleConnections) {
       _handleConnectionTimeout(endpointId);
     }
   }
-  
+
   void _handleConnectionTimeout(String endpointId) {
     debugPrint('Disconnecting stale connection: $endpointId');
     _connectedPeers.remove(endpointId);
     _lastActivity.remove(endpointId);
-    
+
     // Notify connection lost
     if (onConnectionLost != null) {
       onConnectionLost!(endpointId);
     }
-    
+
     // Try to disconnect from the endpoint
     try {
       _nearby.disconnectFromEndpoint(endpointId);
@@ -174,18 +209,19 @@ class WiFiTransport implements TransportService {
       debugPrint('Error disconnecting endpoint: $e');
     }
   }
-  
+
   void _updateActivity(String endpointId) {
     _lastActivity[endpointId] = DateTime.now().millisecondsSinceEpoch;
   }
-  
+
   void _sendKeepalives() {
     if (_connectedPeers.isEmpty) return;
-    
+
     final now = DateTime.now();
-    debugPrint('=== SENDING KEEPALIVES at ${now.hour}:${now.minute}:${now.second} ===');
+    debugPrint(
+        '=== SENDING KEEPALIVES at ${now.hour}:${now.minute}:${now.second} ===');
     debugPrint('Sending to ${_connectedPeers.length} peers');
-    
+
     for (final endpointId in _connectedPeers.keys) {
       try {
         _nearby.sendBytesPayload(endpointId, keepAlivePacket);
@@ -199,19 +235,24 @@ class WiFiTransport implements TransportService {
     }
     debugPrint('=== END KEEPALIVES ===');
   }
-  
+
   void setLocalIdentity(String peerId, String name) {
     _localName = name;
-    
+
     // Restart advertising with new name if already advertising
     if (_isAdvertising) {
       _restartAdvertising();
     }
   }
-  
+
   Future<void> restartWiFiDirect() async {
     debugPrint('Restarting WiFi Direct advertising and discovery...');
     try {
+      // Reset in-flight attempt state to avoid request deadlocks after process restart.
+      _pendingConnectionAttempts.clear();
+      _pendingAttemptStartedAt.clear();
+      _lastConnectionAttempt.clear();
+
       // Stop current advertising and discovery
       if (_isAdvertising) {
         await _nearby.stopAdvertising();
@@ -221,29 +262,35 @@ class WiFiTransport implements TransportService {
         await _nearby.stopDiscovery();
         _isDiscovering = false;
       }
-      
+
+      // If we currently have no active logical connections, clear nearby endpoint state too.
+      if (_connectedPeers.isEmpty) {
+        await _nearby.stopAllEndpoints();
+        _lastActivity.clear();
+      }
+
       // Wait a moment for cleanup
       await Future.delayed(const Duration(milliseconds: 500));
-      
+
       // Restart advertising and discovery
       await _startAdvertising();
       await _startDiscovery();
-      
+
       debugPrint('WiFi Direct restarted successfully');
     } catch (e) {
       debugPrint('Error restarting WiFi Direct: $e');
     }
   }
-  
+
   Future<void> _restartAdvertising() async {
     try {
       // Stop current advertising
       await _nearby.stopAdvertising();
       _isAdvertising = false;
-      
+
       // Wait a moment
       await Future.delayed(const Duration(milliseconds: 500));
-      
+
       // Start with new name
       await _startAdvertising();
     } catch (e) {
@@ -258,7 +305,7 @@ class WiFiTransport implements TransportService {
       debugPrint('Location permission not granted, requesting again...');
       await Permission.location.request();
     }
-    
+
     await [
       Permission.bluetooth,
       Permission.bluetoothScan,
@@ -266,7 +313,19 @@ class WiFiTransport implements TransportService {
       Permission.bluetoothAdvertise,
       Permission.nearbyWifiDevices,
     ].request();
-    
+
+    final hasLocationPermission =
+        await Permission.locationWhenInUse.isGranted ||
+            await Permission.location.isGranted;
+    if (!hasLocationPermission) {
+      _emitDiscoveryFailure(
+        const WiFiDiscoveryFailure(
+          code: WiFiDiscoveryFailureCode.locationPermissionMissing,
+          details: 'Location permission denied',
+        ),
+      );
+    }
+
     debugPrint('Permissions requested');
   }
 
@@ -276,7 +335,7 @@ class WiFiTransport implements TransportService {
     try {
       final strategy = Strategy.P2P_CLUSTER;
       final userName = _localName ?? 'PeerChat User';
-      
+
       await _nearby.startAdvertising(
         userName,
         strategy,
@@ -298,7 +357,7 @@ class WiFiTransport implements TransportService {
     try {
       final strategy = Strategy.P2P_CLUSTER;
       final userName = _localName ?? 'PeerChat User';
-      
+
       await _nearby.startDiscovery(
         userName,
         strategy,
@@ -310,121 +369,224 @@ class WiFiTransport implements TransportService {
       debugPrint('WiFi Direct discovery started');
     } catch (e) {
       debugPrint('Error starting WiFi Direct discovery: $e');
+      final failure = WiFiDiscoveryFailure.fromError(e.toString());
+      if (failure != null) {
+        _emitDiscoveryFailure(failure);
+      }
     }
   }
 
-  void _onEndpointFound(String endpointId, String endpointName, String serviceId) async {
+  void _emitDiscoveryFailure(WiFiDiscoveryFailure failure) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastDiscoveryFailureNoticeAt <
+        discoveryFailureNoticeCooldown.inMilliseconds) {
+      return;
+    }
+    _lastDiscoveryFailureNoticeAt = now;
+    onDiscoveryFailure?.call(failure);
+  }
+
+  void _cleanupStalePendingAttempts() {
+    if (_pendingConnectionAttempts.isEmpty) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final stale = <String>[];
+    for (final endpointId in _pendingConnectionAttempts) {
+      final startedAt = _pendingAttemptStartedAt[endpointId];
+      if (startedAt == null) {
+        stale.add(endpointId);
+        continue;
+      }
+      if (now - startedAt > pendingAttemptTimeout.inMilliseconds) {
+        stale.add(endpointId);
+      }
+    }
+    for (final endpointId in stale) {
+      debugPrint('Clearing stale pending WiFi connection attempt: $endpointId');
+      _pendingConnectionAttempts.remove(endpointId);
+      _pendingAttemptStartedAt.remove(endpointId);
+    }
+  }
+
+  bool _shouldWaitForRemoteInitiator(String endpointName) {
+    if (_localName == null ||
+        _localName!.isEmpty ||
+        endpointName.isEmpty ||
+        _localName == endpointName) {
+      return false;
+    }
+    // Deterministic tie-break to reduce simultaneous requestConnection collisions.
+    // Lexicographically lower name initiates, higher name waits and accepts.
+    return _localName!.compareTo(endpointName) > 0;
+  }
+
+  void _onEndpointFound(
+      String endpointId, String endpointName, String serviceId) async {
     debugPrint('WiFi Direct endpoint found: $endpointId ($endpointName)');
-    
+    _cleanupStalePendingAttempts();
+
     // Notify discovery service about the peer
     if (onPeerDiscovered != null) {
       onPeerDiscovered!(endpointId, endpointName);
     }
-    
+
+    // Skip if already connected or currently trying.
+    if (_connectedPeers.containsKey(endpointId)) {
+      debugPrint(
+          'Already connected to $endpointId, skipping connection request');
+      return;
+    }
+    if (_pendingConnectionAttempts.contains(endpointId)) {
+      debugPrint('Connection attempt already in progress for $endpointId');
+      return;
+    }
+
+    if (_shouldWaitForRemoteInitiator(endpointName)) {
+      debugPrint(
+          'Waiting for remote initiator for $endpointId to avoid collision');
+      return;
+    }
+
+    // Simple attempt cooldown to avoid request storms.
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastAttempt = _lastConnectionAttempt[endpointId];
+    if (lastAttempt != null &&
+        (now - lastAttempt) < connectionAttemptCooldown.inMilliseconds) {
+      return;
+    }
+
     // Check if we should auto-reconnect to this peer
     final shouldReconnect = await _shouldAttemptReconnect(endpointId);
-    
+
     if (shouldReconnect) {
       debugPrint('Auto-reconnecting to known peer: $endpointId');
+      _lastReconnectAttempt[endpointId] = now;
       await _db.incrementReconnectAttempts(endpointId);
-      _lastReconnectAttempt[endpointId] = DateTime.now().millisecondsSinceEpoch;
-    } else if (_connectedPeers.containsKey(endpointId)) {
-      debugPrint('Already connected to $endpointId, skipping connection request');
-      return;
     } else {
       debugPrint('New peer discovered, attempting initial connection');
     }
-    
+
     // Request connection
     final userName = _localName ?? 'PeerChat User';
-    _nearby.requestConnection(
-      userName,
-      endpointId,
-      onConnectionInitiated: _onConnectionInitiated,
-      onConnectionResult: _onConnectionResult,
-      onDisconnected: _onDisconnected,
-    );
+    _pendingConnectionAttempts.add(endpointId);
+    _pendingAttemptStartedAt[endpointId] = now;
+    _lastConnectionAttempt[endpointId] = now;
+    try {
+      await _nearby.requestConnection(
+        userName,
+        endpointId,
+        onConnectionInitiated: _onConnectionInitiated,
+        onConnectionResult: _onConnectionResult,
+        onDisconnected: _onDisconnected,
+      );
+    } catch (e) {
+      debugPrint('WiFi Direct requestConnection failed for $endpointId: $e');
+      _pendingConnectionAttempts.remove(endpointId);
+      _pendingAttemptStartedAt.remove(endpointId);
+
+      final message = e.toString();
+      if (message.contains('STATUS_ALREADY_CONNECTED_TO_ENDPOINT')) {
+        debugPrint(
+            'Nearby reported already connected for $endpointId, marking active');
+        _connectedPeers[endpointId] = endpointId;
+        _updateActivity(endpointId);
+        _knownPeers.add(endpointId);
+        await _db.saveKnownWiFiEndpoint(endpointId);
+        if (onConnectionEstablished != null) {
+          onConnectionEstablished!(endpointId);
+        }
+      }
+    }
   }
-  
+
   Future<bool> _shouldAttemptReconnect(String endpointId) async {
     // Don't reconnect if already connected
     if (_connectedPeers.containsKey(endpointId)) {
       return false;
     }
-    
+
     // Don't reconnect if this is a new peer (never connected before)
     if (!_knownPeers.contains(endpointId)) {
       return false;
     }
-    
-    // Check if we've exceeded max reconnect attempts (from database)
-    final attempts = await _db.getReconnectAttempts(endpointId);
-    if (attempts >= maxReconnectAttempts) {
-      debugPrint('Max reconnect attempts reached for $endpointId ($attempts/$maxReconnectAttempts)');
-      return false;
-    }
-    
+
     // Check if we're in cooldown period
     final lastAttempt = _lastReconnectAttempt[endpointId];
     if (lastAttempt != null) {
-      final timeSinceLastAttempt = DateTime.now().millisecondsSinceEpoch - lastAttempt;
+      final timeSinceLastAttempt =
+          DateTime.now().millisecondsSinceEpoch - lastAttempt;
       if (timeSinceLastAttempt < reconnectCooldown.inMilliseconds) {
-        final remainingSeconds = ((reconnectCooldown.inMilliseconds - timeSinceLastAttempt) / 1000).round();
-        debugPrint('Reconnect cooldown active for $endpointId ($remainingSeconds seconds remaining)');
+        final remainingSeconds =
+            ((reconnectCooldown.inMilliseconds - timeSinceLastAttempt) / 1000)
+                .round();
+        debugPrint(
+            'Reconnect cooldown active for $endpointId ($remainingSeconds seconds remaining)');
         return false;
       }
     }
-    
+
     return true;
   }
 
   void _onEndpointLost(String? endpointId) {
     debugPrint('WiFi Direct endpoint lost: $endpointId');
+    if (endpointId != null) {
+      _pendingConnectionAttempts.remove(endpointId);
+      _pendingAttemptStartedAt.remove(endpointId);
+    }
     // NOTE: Don't remove from _connectedPeers here!
     // onEndpointLost means the endpoint stopped advertising, not that the connection dropped.
     // The connection might still be active. Only remove on onDisconnected.
   }
 
-  void _onConnectionInitiated(String endpointId, ConnectionInfo info) {
+  void _onConnectionInitiated(String endpointId, ConnectionInfo info) async {
     debugPrint('WiFi Direct connection initiated: $endpointId');
-    
+
     // Auto-accept connections
-    _nearby.acceptConnection(
-      endpointId,
-      onPayLoadRecieved: (endpointId, payload) {
-        _handleIncomingPayload(endpointId, payload);
-      },
-    );
+    try {
+      await _nearby.acceptConnection(
+        endpointId,
+        onPayLoadRecieved: (endpointId, payload) {
+          _handleIncomingPayload(endpointId, payload);
+        },
+      );
+    } catch (e) {
+      debugPrint('WiFi Direct acceptConnection failed for $endpointId: $e');
+    }
   }
 
   void _onConnectionResult(String endpointId, Status status) async {
+    _pendingConnectionAttempts.remove(endpointId);
+    _pendingAttemptStartedAt.remove(endpointId);
     if (status == Status.CONNECTED) {
       debugPrint('WiFi Direct connected: $endpointId');
-      _connectedPeers[endpointId] = endpointId; // Use endpointId as peerId for now
+      _connectedPeers[endpointId] =
+          endpointId; // Use endpointId as peerId for now
       _updateActivity(endpointId); // Mark initial connection time
-      
+
       // Mark as known peer for future auto-reconnection (persist to database)
       _knownPeers.add(endpointId);
       await _db.saveKnownWiFiEndpoint(endpointId);
       debugPrint('Saved known WiFi endpoint to database: $endpointId');
-      
+
       // Reset reconnect attempts on successful connection
       await _db.resetReconnectAttempts(endpointId);
-      
+
       // Notify connection established
       if (onConnectionEstablished != null) {
         onConnectionEstablished!(endpointId);
       }
     } else {
-      debugPrint('WiFi Direct connection failed: $endpointId (status: $status)');
+      debugPrint(
+          'WiFi Direct connection failed: $endpointId (status: $status)');
       _connectedPeers.remove(endpointId);
       _lastActivity.remove(endpointId);
-      
+
       // Increment reconnect attempts on failure (if it's a known peer)
       if (_knownPeers.contains(endpointId)) {
         await _db.incrementReconnectAttempts(endpointId);
         final attempts = await _db.getReconnectAttempts(endpointId);
-        debugPrint('Reconnect attempt failed for $endpointId ($attempts/$maxReconnectAttempts)');
+        debugPrint(
+            'Reconnect attempt failed for $endpointId (attempts=$attempts)');
       }
     }
   }
@@ -433,17 +595,28 @@ class WiFiTransport implements TransportService {
     debugPrint('WiFi Direct disconnected: $endpointId');
     _connectedPeers.remove(endpointId);
     _lastActivity.remove(endpointId);
-    
+    _pendingConnectionAttempts.remove(endpointId);
+    _pendingAttemptStartedAt.remove(endpointId);
+
     // Mark as known peer for auto-reconnection (if it was successfully connected before)
     if (_knownPeers.contains(endpointId)) {
-      debugPrint('Known peer disconnected, will attempt auto-reconnect when rediscovered');
+      debugPrint(
+          'Known peer disconnected, will attempt auto-reconnect when rediscovered');
       // Reset reconnect attempts to allow fresh reconnection attempts
       await _db.resetReconnectAttempts(endpointId);
     }
-    
+
     // Notify connection lost
     if (onConnectionLost != null) {
       onConnectionLost!(endpointId);
+    }
+
+    // Promptly refresh discovery/advertising for quicker reconnection.
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (nowMs - _lastDiscoveryRefreshTimestamp >
+        discoveryRefreshCooldown.inMilliseconds) {
+      _lastDiscoveryRefreshTimestamp = nowMs;
+      await restartWiFiDirect();
     }
   }
 
@@ -451,15 +624,16 @@ class WiFiTransport implements TransportService {
     try {
       if (payload.type == PayloadType.BYTES && payload.bytes != null) {
         final bytes = Uint8List.fromList(payload.bytes!);
-        
+
         // Check if it's a keepalive packet
         if (bytes.length == 2 && bytes[0] == 0xFF && bytes[1] == 0xFF) {
           // Only process keepalive if this endpoint is in our connected peers
           if (_connectedPeers.containsKey(endpointId)) {
             _updateActivity(endpointId);
             final now = DateTime.now();
-            debugPrint('⟳ Received keepalive from $endpointId at ${now.hour}:${now.minute}:${now.second}');
-            
+            debugPrint(
+                '⟳ Received keepalive from $endpointId at ${now.hour}:${now.minute}:${now.second}');
+
             // Forward keepalive to message handler so updatePeerActivity gets called
             final message = TransportMessage(
               fromPeerId: endpointId,
@@ -468,15 +642,16 @@ class WiFiTransport implements TransportService {
             );
             _messageController.add(message);
           } else {
-            debugPrint('⚠️ Received keepalive from unknown endpoint $endpointId - ignoring');
+            debugPrint(
+                '⚠️ Received keepalive from unknown endpoint $endpointId - ignoring');
           }
           return;
         }
-        
+
         // For non-keepalive data (including handshakes), always process
         // Handshakes arrive before the endpoint is added to _connectedPeers
         _updateActivity(endpointId);
-        
+
         final message = TransportMessage(
           fromPeerId: endpointId,
           fromAddress: endpointId,
@@ -492,7 +667,7 @@ class WiFiTransport implements TransportService {
   @override
   Future<bool> sendMessage(String peerId, Uint8List data) async {
     debugPrint('WiFiTransport.sendMessage to $peerId');
-    
+
     // Find endpoint ID for peer
     String? endpointId;
     for (final entry in _connectedPeers.entries) {
@@ -538,5 +713,57 @@ class WiFiTransport implements TransportService {
     }
     await _nearby.stopAllEndpoints();
     await _messageController.close();
+  }
+}
+
+enum WiFiDiscoveryFailureCode {
+  locationPermissionMissing,
+  locationServiceDisabled,
+}
+
+class WiFiDiscoveryFailure {
+  final WiFiDiscoveryFailureCode code;
+  final String details;
+
+  const WiFiDiscoveryFailure({
+    required this.code,
+    required this.details,
+  });
+
+  bool get isLocationRelated => true;
+
+  String get userMessage {
+    switch (code) {
+      case WiFiDiscoveryFailureCode.locationPermissionMissing:
+        return 'Peer discovery needs location permission on Android.';
+      case WiFiDiscoveryFailureCode.locationServiceDisabled:
+        return 'Peer discovery needs Location turned on in system settings.';
+    }
+  }
+
+  static WiFiDiscoveryFailure? fromError(String rawError) {
+    final upper = rawError.toUpperCase();
+
+    if (upper.contains('MISSING_PERMISSION_ACCESS_COARSE_LOCATION') ||
+        upper.contains('ACCESS_COARSE_LOCATION') ||
+        upper.contains('ACCESS_FINE_LOCATION') ||
+        upper.contains('MISSING_PERMISSION') ||
+        upper.contains('8034')) {
+      return WiFiDiscoveryFailure(
+        code: WiFiDiscoveryFailureCode.locationPermissionMissing,
+        details: rawError,
+      );
+    }
+
+    if (upper.contains('LOCATION_SETTINGS') ||
+        upper.contains('LOCATION IS TURNED OFF') ||
+        upper.contains('LOCATION_DISABLED')) {
+      return WiFiDiscoveryFailure(
+        code: WiFiDiscoveryFailureCode.locationServiceDisabled,
+        details: rawError,
+      );
+    }
+
+    return null;
   }
 }

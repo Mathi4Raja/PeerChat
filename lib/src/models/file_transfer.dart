@@ -4,16 +4,22 @@ import 'dart:typed_data';
 enum FileTransferState {
   /// Transfer initiated, waiting for acceptance.
   pending,
+
   /// Receiver accepted, chunks being transmitted.
   transferring,
+
   /// All chunks sent/received, waiting for integrity check.
   verifying,
+
   /// Transfer complete, file validated.
   completed,
+
   /// Transfer failed or rejected.
   failed,
+
   /// Transfer paused (e.g., transport switch).
   paused,
+
   /// Transfer cancelled by user.
   cancelled,
 }
@@ -28,20 +34,33 @@ enum TransferDirection {
 enum FileTransferMessageType {
   /// Sender → Receiver: file metadata + SHA-256
   fileMeta,
+
   /// Receiver → Sender: accept/reject
   fileAccept,
+
   /// Receiver → Sender: reject transfer
   fileReject,
+
   /// Sender → Receiver: a chunk of file data
   chunk,
+
   /// Receiver → Sender: cumulative ACK (highestContiguousChunkIndex)
   chunkAck,
+
   /// Sender/Receiver: transfer complete
   fileComplete,
+
   /// Either direction: resume from specific chunk
   resumeFrom,
+
   /// Either direction: cancel transfer
   cancelTransfer,
+
+  /// Sender -> Receiver: sender intentionally paused transfer.
+  transferPaused,
+
+  /// Sender -> Receiver: sender resumed transfer.
+  transferResumed,
 }
 
 /// Metadata about a file being transferred.
@@ -66,27 +85,28 @@ class FileMetadata {
   });
 
   Map<String, dynamic> toMap() => {
-    'fileId': fileId,
-    'fileName': fileName,
-    'fileSize': fileSize,
-    'mimeType': mimeType,
-    'sha256Hash': sha256Hash,
-    'totalChunks': totalChunks,
-  };
+        'fileId': fileId,
+        'fileName': fileName,
+        'fileSize': fileSize,
+        'mimeType': mimeType,
+        'sha256Hash': sha256Hash,
+        'totalChunks': totalChunks,
+      };
 
   factory FileMetadata.fromMap(Map<String, dynamic> map) => FileMetadata(
-    fileId: map['fileId'] as String,
-    fileName: map['fileName'] as String,
-    fileSize: map['fileSize'] as int,
-    mimeType: map['mimeType'] as String,
-    sha256Hash: map['sha256Hash'] as Uint8List,
-    totalChunks: map['totalChunks'] as int,
-  );
+        fileId: map['fileId'] as String,
+        fileName: map['fileName'] as String,
+        fileSize: map['fileSize'] as int,
+        mimeType: map['mimeType'] as String,
+        sha256Hash: map['sha256Hash'] as Uint8List,
+        totalChunks: map['totalChunks'] as int,
+      );
 }
 
 /// Tracks the state of a chunk using a bitset for ordering.
 class ChunkTracker {
   final int totalChunks;
+
   /// Bitset: bit i = 1 means chunk i has been received.
   final List<bool> _received;
 
@@ -138,6 +158,8 @@ class FileTransferSession {
   final FileMetadata metadata;
   final TransferDirection direction;
   FileTransferState state;
+  bool rejectedByPeer;
+  bool cancelledByPeer;
   final ChunkTracker chunkTracker;
 
   /// Path to temp file (partial download) or source file (upload).
@@ -169,11 +191,17 @@ class FileTransferSession {
     required this.metadata,
     required this.direction,
     this.state = FileTransferState.pending,
+    this.rejectedByPeer = false,
+    this.cancelledByPeer = false,
     this.filePath,
     this.ackTimeoutMs = 10000, // Default 10s for WiFi
-  }) : chunkTracker = ChunkTracker(metadata.totalChunks),
-       lastActivityTimestamp = DateTime.now().millisecondsSinceEpoch,
-       startTimestamp = DateTime.now().millisecondsSinceEpoch;
+    int? lastActivityTimestamp,
+    int? startTimestamp,
+  })  : chunkTracker = ChunkTracker(metadata.totalChunks),
+        lastActivityTimestamp =
+            lastActivityTimestamp ?? DateTime.now().millisecondsSinceEpoch,
+        startTimestamp =
+            startTimestamp ?? DateTime.now().millisecondsSinceEpoch;
 
   /// Check if the sliding window has room for more chunks.
   bool get canSendMore => inFlightChunks.length < maxInFlight;
@@ -195,19 +223,20 @@ class FileTransferSession {
 
   /// For DB persistence (crash recovery).
   Map<String, dynamic> toMap() => {
-    'file_id': fileId,
-    'peer_id': peerId,
-    'file_name': metadata.fileName,
-    'file_size': metadata.fileSize,
-    'mime_type': metadata.mimeType,
-    'sha256_hash': metadata.sha256Hash,
-    'total_chunks': metadata.totalChunks,
-    'received_chunks': chunkTracker.receivedCount,
-    'direction': direction.index,
-    'state': state.index,
-    'file_path': filePath,
-    'ack_timeout_ms': ackTimeoutMs,
-    'last_activity': lastActivityTimestamp,
-    'start_timestamp': startTimestamp,
-  };
+        'file_id': fileId,
+        'peer_id': peerId,
+        'file_name': metadata.fileName,
+        'file_size': metadata.fileSize,
+        'mime_type': metadata.mimeType,
+        'sha256_hash': metadata.sha256Hash,
+        'total_chunks': metadata.totalChunks,
+        // Persist highest contiguous chunk + 1 to support cumulative ACK resume.
+        'received_chunks': chunkTracker.highestContiguous + 1,
+        'direction': direction.index,
+        'state': state.index,
+        'file_path': filePath,
+        'ack_timeout_ms': ackTimeoutMs,
+        'last_activity': lastActivityTimestamp,
+        'start_timestamp': startTimestamp,
+      };
 }

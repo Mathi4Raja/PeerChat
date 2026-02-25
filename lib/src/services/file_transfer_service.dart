@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:crypto/crypto.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
@@ -35,12 +36,14 @@ class FileTransferService extends ChangeNotifier {
   /// Stream for notifying UI of transfer updates.
   final StreamController<FileTransferSession> _transferUpdateController =
       StreamController<FileTransferSession>.broadcast();
-  Stream<FileTransferSession> get onTransferUpdate => _transferUpdateController.stream;
+  Stream<FileTransferSession> get onTransferUpdate =>
+      _transferUpdateController.stream;
 
   /// Stream for incoming transfer requests (UI shows accept/reject dialog).
   final StreamController<FileTransferSession> _incomingRequestController =
       StreamController<FileTransferSession>.broadcast();
-  Stream<FileTransferSession> get onIncomingRequest => _incomingRequestController.stream;
+  Stream<FileTransferSession> get onIncomingRequest =>
+      _incomingRequestController.stream;
 
   /// ACK timeout timers per file transfer.
   final Map<String, Timer> _ackTimers = {};
@@ -51,7 +54,8 @@ class FileTransferService extends ChangeNotifier {
   /// Temp file max age for cleanup.
   static const Duration tempFileMaxAge = Duration(hours: 24);
 
-  FileTransferService(this._db, this._transportService, this._connectionManager);
+  FileTransferService(
+      this._db, this._transportService, this._connectionManager);
 
   /// Initialize the service: clean up old temp files, resume incomplete transfers.
   Future<void> init() async {
@@ -63,7 +67,10 @@ class FileTransferService extends ChangeNotifier {
   List<FileTransferSession> get activeTransfers => _transfers.values.toList();
 
   /// Get pending incoming requests.
-  List<FileTransferSession> get pendingRequests => _pendingIncoming.values.toList();
+  List<FileTransferSession> get pendingRequests =>
+      _pendingIncoming.values.toList();
+  List<FileTransferSession> transfersForPeer(String peerId) =>
+      _transfers.values.where((t) => t.peerId == peerId).toList();
 
   // ── SENDER FLOW ──
 
@@ -76,7 +83,17 @@ class FileTransferService extends ChangeNotifier {
     // Verify peer is directly connected
     final transportId = _connectionManager.getTransportId(peerId);
     if (transportId == null) {
-      debugPrint('FileTransfer: Cannot send — peer $peerId not directly connected');
+      debugPrint(
+          'FileTransfer: Cannot send — peer $peerId not directly connected');
+      return null;
+    }
+
+    if (!_connectionManager.peerSupportsFileTransfer(
+      peerId,
+      defaultValue: false,
+    )) {
+      debugPrint(
+          'FileTransfer: Cannot send — peer $peerId reports file transfer disabled');
       return null;
     }
 
@@ -88,7 +105,10 @@ class FileTransferService extends ChangeNotifier {
 
     final fileSize = await file.length();
     final fileName = filePath.split(Platform.pathSeparator).last;
-    final fileId = '${peerId.substring(0, 8)}_${const Uuid().v4()}';
+    final prefix = peerId.length >= 8 ? peerId.substring(0, 8) : peerId;
+    // File transfer protocol reserves 36 chars for fileId on wire.
+    final compactUuid = const Uuid().v4().replaceAll('-', '').substring(0, 27);
+    final fileId = '${prefix}_$compactUuid';
 
     // Compute SHA-256 hash
     final bytes = await file.readAsBytes();
@@ -111,9 +131,11 @@ class FileTransferService extends ChangeNotifier {
       metadata: metadata,
       direction: TransferDirection.sending,
       filePath: filePath,
+      ackTimeoutMs: _ackTimeoutForPeer(peerId),
     );
 
     _transfers[fileId] = session;
+    await _persistTransferState(session);
 
     // Send FILE_META message
     await _sendFileTransferMessage(
@@ -123,7 +145,8 @@ class FileTransferService extends ChangeNotifier {
       data: _encodeMetadata(metadata),
     );
 
-    debugPrint('FileTransfer: Initiated send of "$fileName" ($totalChunks chunks) to $peerId');
+    debugPrint(
+        'FileTransfer: Initiated send of "$fileName" ($totalChunks chunks) to $peerId');
     _transferUpdateController.add(session);
     notifyListeners();
     return session;
@@ -146,7 +169,7 @@ class FileTransferService extends ChangeNotifier {
         await _handleFileAccept(fileId);
         break;
       case FileTransferMessageType.fileReject:
-        _handleFileReject(fileId);
+        await _handleFileReject(fileId);
         break;
       case FileTransferMessageType.chunk:
         await _handleChunk(fromPeerId, fileId, data);
@@ -155,13 +178,19 @@ class FileTransferService extends ChangeNotifier {
         await _handleChunkAck(fileId, data);
         break;
       case FileTransferMessageType.fileComplete:
-        _handleFileComplete(fileId);
+        await _handleFileComplete(fileId);
         break;
       case FileTransferMessageType.resumeFrom:
         await _handleResumeFrom(fileId, data);
         break;
       case FileTransferMessageType.cancelTransfer:
-        _handleCancel(fileId);
+        await _handleCancel(fileId);
+        break;
+      case FileTransferMessageType.transferPaused:
+        await _handleTransferPaused(fileId);
+        break;
+      case FileTransferMessageType.transferResumed:
+        await _handleTransferResumed(fileId);
         break;
     }
   }
@@ -170,12 +199,14 @@ class FileTransferService extends ChangeNotifier {
   Future<void> acceptTransfer(String fileId) async {
     final session = _pendingIncoming.remove(fileId);
     if (session == null) return;
+    session.ackTimeoutMs = _ackTimeoutForPeer(session.peerId);
 
     // Disk pressure check
     final available = await _getAvailableStorage();
     final required = session.metadata.fileSize;
     if (available < required * 1.2) {
-      debugPrint('FileTransfer: Insufficient storage. Available: $available, Required: $required');
+      debugPrint(
+          'FileTransfer: Insufficient storage. Available: $available, Required: $required');
       session.state = FileTransferState.failed;
       await _sendFileTransferMessage(
         peerId: session.peerId,
@@ -188,9 +219,12 @@ class FileTransferService extends ChangeNotifier {
       return;
     }
 
-    // Create temp file
-    final tempDir = await getTemporaryDirectory();
-    final tempPath = '${tempDir.path}/peerchat_transfer_$fileId.tmp';
+    // Create per-transfer temp directory to store chunks safely by index.
+    final tempPath = await _transferTempDirPath(fileId);
+    final tempDirEntity = Directory(tempPath);
+    if (!await tempDirEntity.exists()) {
+      await tempDirEntity.create(recursive: true);
+    }
     session.filePath = tempPath;
     session.state = FileTransferState.transferring;
     _transfers[fileId] = session;
@@ -233,6 +267,7 @@ class FileTransferService extends ChangeNotifier {
     if (session == null) return;
 
     session.state = FileTransferState.cancelled;
+    session.cancelledByPeer = false;
     _ackTimers[fileId]?.cancel();
     _ackTimers.remove(fileId);
 
@@ -243,21 +278,82 @@ class FileTransferService extends ChangeNotifier {
       data: Uint8List(0),
     );
 
-    // Clean up temp file
-    if (session.direction == TransferDirection.receiving && session.filePath != null) {
-      final tempFile = File(session.filePath!);
-      if (await tempFile.exists()) await tempFile.delete();
-    }
+    await _cleanupReceivingArtifacts(session);
 
     await _removeTransferState(fileId);
     _transferUpdateController.add(session);
     notifyListeners();
   }
 
+  Future<void> pauseTransfer(String fileId) async {
+    final session = _transfers[fileId];
+    if (session == null) return;
+    if (session.direction != TransferDirection.sending) return;
+    if (session.state != FileTransferState.transferring) return;
+
+    session.state = FileTransferState.paused;
+    _ackTimers[fileId]?.cancel();
+    _ackTimers.remove(fileId);
+    session.inFlightChunks.clear();
+    session.chunkSentTimestamp.clear();
+    session.chunkRetryCount.clear();
+
+    await _sendFileTransferMessage(
+      peerId: session.peerId,
+      type: FileTransferMessageType.transferPaused,
+      fileId: fileId,
+      data: Uint8List(0),
+    );
+
+    await _persistTransferState(session);
+    _transferUpdateController.add(session);
+    notifyListeners();
+  }
+
+  Future<void> resumeTransfer(String fileId) async {
+    final session = _transfers[fileId];
+    if (session == null) return;
+    if (session.direction != TransferDirection.sending) return;
+    if (session.state != FileTransferState.paused &&
+        session.state != FileTransferState.failed) {
+      return;
+    }
+
+    session.ackTimeoutMs = _ackTimeoutForPeer(session.peerId);
+    session.state = FileTransferState.transferring;
+    session.inFlightChunks.clear();
+    session.chunkSentTimestamp.clear();
+    session.chunkRetryCount.clear();
+
+    await _sendFileTransferMessage(
+      peerId: session.peerId,
+      type: FileTransferMessageType.transferResumed,
+      fileId: fileId,
+      data: Uint8List(0),
+    );
+
+    await _sendNextChunks(session);
+    _startAckTimer(session);
+
+    await _persistTransferState(session);
+    _transferUpdateController.add(session);
+    notifyListeners();
+  }
+
+  void onPeerReconnected(String peerId) {
+    for (final session in _transfers.values.where((t) => t.peerId == peerId)) {
+      if (session.state == FileTransferState.transferring &&
+          session.direction == TransferDirection.receiving) {
+        _requestResumeFromSender(session);
+      }
+    }
+  }
+
   // ── INTERNAL HANDLERS ──
 
-  Future<void> _handleFileMeta(String fromPeerId, String fileId, Uint8List data) async {
-    final metadata = _decodeMetadata(data);
+  Future<void> _handleFileMeta(
+      String fromPeerId, String fileId, Uint8List data) async {
+    final metadata = _decodeMetadata(fileId, data);
     if (metadata == null) return;
 
     final session = FileTransferSession(
@@ -269,57 +365,61 @@ class FileTransferService extends ChangeNotifier {
 
     _pendingIncoming[fileId] = session;
     _incomingRequestController.add(session);
-    debugPrint('FileTransfer: Incoming request — "${metadata.fileName}" (${metadata.fileSize} bytes)');
+    debugPrint(
+        'FileTransfer: Incoming request — "${metadata.fileName}" (${metadata.fileSize} bytes)');
     notifyListeners();
   }
 
   Future<void> _handleFileAccept(String fileId) async {
     final session = _transfers[fileId];
-    if (session == null || session.direction != TransferDirection.sending) return;
+    if (session == null || session.direction != TransferDirection.sending) {
+      return;
+    }
 
     session.state = FileTransferState.transferring;
-    debugPrint('FileTransfer: Peer accepted transfer $fileId, starting chunk stream');
+    debugPrint(
+        'FileTransfer: Peer accepted transfer $fileId, starting chunk stream');
 
     // Start sending chunks
     await _sendNextChunks(session);
     _startAckTimer(session);
+    await _persistTransferState(session);
     _transferUpdateController.add(session);
     notifyListeners();
   }
 
-  void _handleFileReject(String fileId) {
+  Future<void> _handleFileReject(String fileId) async {
     final session = _transfers.remove(fileId);
     if (session == null) return;
 
     session.state = FileTransferState.failed;
+    session.rejectedByPeer = true;
+    await _removeTransferState(fileId);
     debugPrint('FileTransfer: Peer rejected transfer $fileId');
     _transferUpdateController.add(session);
     notifyListeners();
   }
 
-  Future<void> _handleChunk(String fromPeerId, String fileId, Uint8List data) async {
+  Future<void> _handleChunk(
+      String fromPeerId, String fileId, Uint8List data) async {
     final session = _transfers[fileId];
-    if (session == null || session.direction != TransferDirection.receiving) return;
+    if (session == null || session.direction != TransferDirection.receiving) {
+      return;
+    }
 
     // Parse chunk: first 4 bytes = index, rest = data
     if (data.length < 4) return;
-    final chunkIndex = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+    final chunkIndex =
+        (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
     final chunkData = data.sublist(4);
 
     // Skip if already received (dedup)
     if (session.chunkTracker.isReceived(chunkIndex)) return;
 
-    // Write chunk to temp file at correct offset
-    if (session.filePath != null) {
-      final file = File(session.filePath!);
-      final raf = await file.open(mode: FileMode.writeOnlyAppend);
-      try {
-        await raf.setPosition(chunkIndex * FileMetadata.chunkSize);
-        await raf.writeFrom(chunkData);
-      } finally {
-        await raf.close();
-      }
-    }
+    // Store each chunk as a separate temp part file.
+    final tempDir = await _ensureReceiverTempDir(session);
+    final chunkFile = File(_chunkTempPath(tempDir, chunkIndex));
+    await chunkFile.writeAsBytes(chunkData, flush: false);
 
     session.chunkTracker.markReceived(chunkIndex);
     session.lastActivityTimestamp = DateTime.now().millisecondsSinceEpoch;
@@ -355,10 +455,13 @@ class FileTransferService extends ChangeNotifier {
 
   Future<void> _handleChunkAck(String fileId, Uint8List data) async {
     final session = _transfers[fileId];
-    if (session == null || session.direction != TransferDirection.sending) return;
+    if (session == null || session.direction != TransferDirection.sending) {
+      return;
+    }
 
     if (data.length < 4) return;
-    final highestContiguous = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+    final highestContiguous =
+        (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 
     // Mark all chunks up to highestContiguous as received
     for (int i = 0; i <= highestContiguous; i++) {
@@ -388,19 +491,26 @@ class FileTransferService extends ChangeNotifier {
     } else {
       // Send more chunks (fill the window)
       await _sendNextChunks(session);
+      await _persistTransferState(session);
     }
 
     _transferUpdateController.add(session);
     notifyListeners();
   }
 
-  void _handleFileComplete(String fileId) {
+  Future<void> _handleFileComplete(String fileId) async {
     final session = _transfers[fileId];
     if (session == null) return;
+    if (session.direction == TransferDirection.receiving &&
+        !session.chunkTracker.isComplete) {
+      // Ignore premature complete; receiver finalizes on hash verification.
+      return;
+    }
 
     session.state = FileTransferState.completed;
     _ackTimers[fileId]?.cancel();
     _ackTimers.remove(fileId);
+    await _removeTransferState(fileId);
     debugPrint('FileTransfer: Transfer $fileId marked complete by peer');
     _transferUpdateController.add(session);
     notifyListeners();
@@ -408,10 +518,23 @@ class FileTransferService extends ChangeNotifier {
 
   Future<void> _handleResumeFrom(String fileId, Uint8List data) async {
     final session = _transfers[fileId];
-    if (session == null || session.direction != TransferDirection.sending) return;
+    if (session == null || session.direction != TransferDirection.sending) {
+      return;
+    }
+
+    if (session.state == FileTransferState.paused) {
+      await _sendFileTransferMessage(
+        peerId: session.peerId,
+        type: FileTransferMessageType.transferPaused,
+        fileId: fileId,
+        data: Uint8List(0),
+      );
+      return;
+    }
 
     if (data.length < 4) return;
-    final resumeIndex = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
+    final resumeIndex =
+        (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 
     // Mark all chunks before resumeIndex as received
     for (int i = 0; i < resumeIndex; i++) {
@@ -424,17 +547,55 @@ class FileTransferService extends ChangeNotifier {
 
     await _sendNextChunks(session);
     _startAckTimer(session);
+    await _persistTransferState(session);
     _transferUpdateController.add(session);
     notifyListeners();
   }
 
-  void _handleCancel(String fileId) {
-    final session = _transfers.remove(fileId) ?? _pendingIncoming.remove(fileId);
+  Future<void> _handleTransferPaused(String fileId) async {
+    final session = _transfers[fileId];
+    if (session == null || session.direction != TransferDirection.receiving) {
+      return;
+    }
+    if (session.state == FileTransferState.completed ||
+        session.state == FileTransferState.cancelled) {
+      return;
+    }
+
+    session.state = FileTransferState.paused;
+    await _persistTransferState(session);
+    _transferUpdateController.add(session);
+    notifyListeners();
+  }
+
+  Future<void> _handleTransferResumed(String fileId) async {
+    final session = _transfers[fileId];
+    if (session == null || session.direction != TransferDirection.receiving) {
+      return;
+    }
+    if (session.state == FileTransferState.completed ||
+        session.state == FileTransferState.cancelled) {
+      return;
+    }
+
+    session.state = FileTransferState.transferring;
+    await _requestResumeFromSender(session);
+    await _persistTransferState(session);
+    _transferUpdateController.add(session);
+    notifyListeners();
+  }
+
+  Future<void> _handleCancel(String fileId) async {
+    final session =
+        _transfers.remove(fileId) ?? _pendingIncoming.remove(fileId);
     if (session == null) return;
 
     session.state = FileTransferState.cancelled;
+    session.cancelledByPeer = true;
     _ackTimers[fileId]?.cancel();
     _ackTimers.remove(fileId);
+    await _cleanupReceivingArtifacts(session);
+    await _removeTransferState(fileId);
     debugPrint('FileTransfer: Transfer $fileId cancelled by peer');
     _transferUpdateController.add(session);
     notifyListeners();
@@ -450,16 +611,22 @@ class FileTransferService extends ChangeNotifier {
     if (!await file.exists()) return;
 
     while (session.canSendMore) {
+      if (session.state != FileTransferState.transferring) break;
       final chunkIndex = session.nextChunkToSend;
       if (chunkIndex == null) break;
 
       // Read chunk from file
       final raf = await file.open(mode: FileMode.read);
       try {
+        if (session.state != FileTransferState.transferring) break;
         await raf.setPosition(chunkIndex * FileMetadata.chunkSize);
-        final remaining = session.metadata.fileSize - (chunkIndex * FileMetadata.chunkSize);
-        final readSize = remaining < FileMetadata.chunkSize ? remaining : FileMetadata.chunkSize;
+        final remaining =
+            session.metadata.fileSize - (chunkIndex * FileMetadata.chunkSize);
+        final readSize = remaining < FileMetadata.chunkSize
+            ? remaining
+            : FileMetadata.chunkSize;
         final chunkData = await raf.read(readSize);
+        if (session.state != FileTransferState.transferring) break;
 
         // Prepend chunk index (4 bytes)
         final payload = BytesBuilder();
@@ -476,9 +643,11 @@ class FileTransferService extends ChangeNotifier {
           fileId: session.fileId,
           data: payload.toBytes(),
         );
+        if (session.state != FileTransferState.transferring) break;
 
         session.inFlightChunks.add(chunkIndex);
-        session.chunkSentTimestamp[chunkIndex] = DateTime.now().millisecondsSinceEpoch;
+        session.chunkSentTimestamp[chunkIndex] =
+            DateTime.now().millisecondsSinceEpoch;
         session.chunkRetryCount.putIfAbsent(chunkIndex, () => 0);
       } finally {
         await raf.close();
@@ -496,7 +665,7 @@ class FileTransferService extends ChangeNotifier {
     );
   }
 
-  void _checkAckTimeouts(FileTransferSession session) {
+  Future<void> _checkAckTimeouts(FileTransferSession session) async {
     if (session.state != FileTransferState.transferring) return;
     final now = DateTime.now().millisecondsSinceEpoch;
 
@@ -505,9 +674,12 @@ class FileTransferService extends ChangeNotifier {
       if (now - sentAt > session.ackTimeoutMs) {
         final retries = session.chunkRetryCount[chunkIndex] ?? 0;
         if (retries >= FileTransferSession.maxChunkRetries) {
-          debugPrint('FileTransfer: Chunk $chunkIndex exceeded max retries, aborting');
+          debugPrint(
+              'FileTransfer: Chunk $chunkIndex exceeded max retries, aborting');
           session.state = FileTransferState.failed;
           _ackTimers[session.fileId]?.cancel();
+          await _cleanupReceivingArtifacts(session);
+          await _removeTransferState(session.fileId);
           _transferUpdateController.add(session);
           notifyListeners();
           return;
@@ -515,18 +687,21 @@ class FileTransferService extends ChangeNotifier {
         // Resend chunk
         session.chunkRetryCount[chunkIndex] = retries + 1;
         session.inFlightChunks.remove(chunkIndex);
-        debugPrint('FileTransfer: ACK timeout for chunk $chunkIndex, resending (retry ${retries + 1})');
+        debugPrint(
+            'FileTransfer: ACK timeout for chunk $chunkIndex, resending (retry ${retries + 1})');
       }
     }
 
     // Fill window after removing timed-out chunks
-    _sendNextChunks(session);
+    await _sendNextChunks(session);
 
     // Check for stale transfer (no activity for 10 minutes)
     if (now - session.lastActivityTimestamp > staleThreshold.inMilliseconds) {
       debugPrint('FileTransfer: Transfer ${session.fileId} stale, aborting');
       session.state = FileTransferState.failed;
       _ackTimers[session.fileId]?.cancel();
+      await _cleanupReceivingArtifacts(session);
+      await _removeTransferState(session.fileId);
       _transferUpdateController.add(session);
       notifyListeners();
     }
@@ -540,22 +715,56 @@ class FileTransferService extends ChangeNotifier {
 
     if (session.filePath == null) {
       session.state = FileTransferState.failed;
+      await _removeTransferState(session.fileId);
       return;
     }
 
-    final file = File(session.filePath!);
-    final bytes = await file.readAsBytes();
-    final hash = sha256.convert(bytes);
+    final chunkDir = Directory(session.filePath!);
+    if (!await chunkDir.exists()) {
+      session.state = FileTransferState.failed;
+      await _removeTransferState(session.fileId);
+      _transferUpdateController.add(session);
+      notifyListeners();
+      return;
+    }
 
-    if (listEquals(Uint8List.fromList(hash.bytes), session.metadata.sha256Hash)) {
+    // Re-assemble chunks in order.
+    final assembledPath =
+        '${chunkDir.path}${Platform.pathSeparator}assembled.tmp';
+    final assembledFile = File(assembledPath);
+    final output = assembledFile.openWrite(mode: FileMode.writeOnly);
+
+    for (int i = 0; i < session.metadata.totalChunks; i++) {
+      final part = File(_chunkTempPath(chunkDir.path, i));
+      if (!await part.exists()) {
+        await output.close();
+        if (await assembledFile.exists()) {
+          await assembledFile.delete();
+        }
+        if (await chunkDir.exists()) {
+          await chunkDir.delete(recursive: true);
+        }
+        session.state = FileTransferState.failed;
+        await _removeTransferState(session.fileId);
+        _transferUpdateController.add(session);
+        notifyListeners();
+        return;
+      }
+
+      final partBytes = await part.readAsBytes();
+      output.add(partBytes);
+    }
+
+    await output.close();
+    final digest = sha256.convert(await assembledFile.readAsBytes());
+
+    if (listEquals(
+        Uint8List.fromList(digest.bytes), session.metadata.sha256Hash)) {
       // Move from temp to final location
-      final docsDir = await getApplicationDocumentsDirectory();
-      final finalPath = '${docsDir.path}/peerchat_files/${session.metadata.fileName}';
-      final finalDir = Directory('${docsDir.path}/peerchat_files');
-      if (!await finalDir.exists()) await finalDir.create(recursive: true);
-
-      await file.copy(finalPath);
-      await file.delete();
+      final finalPath =
+          await _resolveReceivedFileDestination(session.metadata.fileName);
+      await assembledFile.copy(finalPath);
+      await chunkDir.delete(recursive: true);
 
       session.filePath = finalPath;
       session.state = FileTransferState.completed;
@@ -564,7 +773,13 @@ class FileTransferService extends ChangeNotifier {
     } else {
       session.state = FileTransferState.failed;
       debugPrint('FileTransfer: SHA-256 mismatch! Transfer corrupted.');
-      await file.delete();
+      if (await assembledFile.exists()) {
+        await assembledFile.delete();
+      }
+      if (await chunkDir.exists()) {
+        await chunkDir.delete(recursive: true);
+      }
+      await _removeTransferState(session.fileId);
     }
 
     _transferUpdateController.add(session);
@@ -575,33 +790,43 @@ class FileTransferService extends ChangeNotifier {
 
   Future<void> _resumeIncompleteTransfers() async {
     final database = await _db.db;
-    final rows = await database.query('file_transfers',
-      where: 'state = ?',
-      whereArgs: [FileTransferState.transferring.index],
+    final rows = await database.query(
+      'file_transfers',
+      where: 'state IN (?, ?)',
+      whereArgs: [
+        FileTransferState.transferring.index,
+        FileTransferState.paused.index,
+      ],
     );
 
+    if (rows.isEmpty) return;
+
     for (final row in rows) {
-      debugPrint('FileTransfer: Found incomplete transfer: ${row['file_id']}');
-      // For receiving transfers, send RESUME_FROM to sender
-      if (row['direction'] == TransferDirection.receiving.index) {
-        final peerId = row['peer_id'] as String;
-        final fileId = row['file_id'] as String;
-        final receivedChunks = row['received_chunks'] as int? ?? 0;
+      final session = _sessionFromRow(row);
+      if (session == null) continue;
+      _transfers[session.fileId] = session;
 
-        final resumeData = Uint8List(4)
-          ..[0] = (receivedChunks >> 24) & 0xFF
-          ..[1] = (receivedChunks >> 16) & 0xFF
-          ..[2] = (receivedChunks >> 8) & 0xFF
-          ..[3] = receivedChunks & 0xFF;
+      debugPrint('FileTransfer: Restored transfer ${session.fileId}');
 
-        await _sendFileTransferMessage(
-          peerId: peerId,
-          type: FileTransferMessageType.resumeFrom,
-          fileId: fileId,
-          data: resumeData,
-        );
+      final hasTransport =
+          _connectionManager.getTransportId(session.peerId) != null;
+      if (!hasTransport) {
+        session.state = FileTransferState.paused;
+        await _persistTransferState(session);
+        continue;
+      }
+
+      if (session.direction == TransferDirection.receiving) {
+        if (session.state == FileTransferState.transferring) {
+          await _requestResumeFromSender(session);
+        }
+      } else if (session.state == FileTransferState.transferring) {
+        await _sendNextChunks(session);
+        _startAckTimer(session);
       }
     }
+
+    notifyListeners();
   }
 
   Future<void> _persistTransferState(FileTransferSession session) async {
@@ -615,22 +840,24 @@ class FileTransferService extends ChangeNotifier {
 
   Future<void> _removeTransferState(String fileId) async {
     final database = await _db.db;
-    await database.delete('file_transfers', where: 'file_id = ?', whereArgs: [fileId]);
+    await database
+        .delete('file_transfers', where: 'file_id = ?', whereArgs: [fileId]);
   }
 
   // ── TEMP FILE CLEANUP ──
 
   Future<void> _cleanupTempFiles() async {
     final tempDir = await getTemporaryDirectory();
-    final files = tempDir.listSync().whereType<File>();
+    final entities = tempDir.listSync();
     final now = DateTime.now();
 
-    for (final file in files) {
-      if (file.path.contains('peerchat_transfer_')) {
-        final stat = await file.stat();
+    for (final entity in entities) {
+      if (entity.path.contains('peerchat_transfer_')) {
+        final stat = await entity.stat();
         if (now.difference(stat.modified) > tempFileMaxAge) {
-          await file.delete();
-          debugPrint('FileTransfer: Cleaned up old temp file: ${file.path}');
+          await entity.delete(recursive: true);
+          debugPrint(
+              'FileTransfer: Cleaned up old temp artifact: ${entity.path}');
         }
       }
     }
@@ -648,10 +875,34 @@ class FileTransferService extends ChangeNotifier {
       if (lines.length < 2) return 1024 * 1024 * 1024;
       final parts = lines[1].split(RegExp(r'\s+'));
       if (parts.length < 4) return 1024 * 1024 * 1024;
-      return int.tryParse(parts[3]) ?? (1024 * 1024 * 1024);
+      return (int.tryParse(parts[3]) ?? (1024 * 1024 * 1024)) * 1024;
     } catch (_) {
       return 1024 * 1024 * 1024; // Fallback: assume 1GB
     }
+  }
+
+  int _ackTimeoutForPeer(String peerId) {
+    final transportId = _connectionManager.getTransportId(peerId) ?? '';
+    final looksBluetooth =
+        transportId.contains(':') || transportId.startsWith('BT_');
+    return looksBluetooth ? 15000 : 10000;
+  }
+
+  Future<void> _requestResumeFromSender(FileTransferSession session) async {
+    if (session.direction != TransferDirection.receiving) return;
+    await _ensureReceiverTempDir(session);
+    final resumeIndex = session.chunkTracker.highestContiguous + 1;
+    final resumeData = Uint8List(4)
+      ..[0] = (resumeIndex >> 24) & 0xFF
+      ..[1] = (resumeIndex >> 16) & 0xFF
+      ..[2] = (resumeIndex >> 8) & 0xFF
+      ..[3] = resumeIndex & 0xFF;
+    await _sendFileTransferMessage(
+      peerId: session.peerId,
+      type: FileTransferMessageType.resumeFrom,
+      fileId: session.fileId,
+      data: resumeData,
+    );
   }
 
   // ── TRANSPORT HELPER ──
@@ -672,7 +923,7 @@ class FileTransferService extends ChangeNotifier {
     final buffer = BytesBuilder();
     buffer.addByte(0xFE); // File transfer protocol marker
     buffer.addByte(type.index);
-    buffer.add(utf8.encode(fileId.padRight(36)));
+    buffer.add(utf8.encode(_wireFileId(fileId)));
     buffer.add(data);
 
     await _transportService.sendMessage(transportId, buffer.toBytes());
@@ -682,6 +933,7 @@ class FileTransferService extends ChangeNotifier {
 
   Uint8List _encodeMetadata(FileMetadata metadata) {
     final json = jsonEncode({
+      'fileId': metadata.fileId,
       'fileName': metadata.fileName,
       'fileSize': metadata.fileSize,
       'mimeType': metadata.mimeType,
@@ -691,11 +943,11 @@ class FileTransferService extends ChangeNotifier {
     return utf8.encode(json);
   }
 
-  FileMetadata? _decodeMetadata(Uint8List data) {
+  FileMetadata? _decodeMetadata(String fileId, Uint8List data) {
     try {
       final json = jsonDecode(utf8.decode(data)) as Map<String, dynamic>;
       return FileMetadata(
-        fileId: '', // Will be set by caller
+        fileId: (json['fileId'] as String?) ?? fileId,
         fileName: json['fileName'] as String,
         fileSize: json['fileSize'] as int,
         mimeType: json['mimeType'] as String,
@@ -727,6 +979,201 @@ class FileTransferService extends ChangeNotifier {
       fileId: fileId,
       data: payload,
     );
+  }
+
+  Future<String> _transferTempDirPath(String fileId) async {
+    final tempDir = await getTemporaryDirectory();
+    return '${tempDir.path}${Platform.pathSeparator}peerchat_transfer_$fileId';
+  }
+
+  Future<String> _resolveReceivedFileDestination(
+      String originalFileName) async {
+    final sharedDir = await _resolveSharedPeerChatDirectory();
+    if (sharedDir != null) {
+      return _buildUniquePath(sharedDir, originalFileName);
+    }
+
+    final docsDir = await getApplicationDocumentsDirectory();
+    final fallbackDir =
+        Directory('${docsDir.path}${Platform.pathSeparator}peerchat_files');
+    if (!await fallbackDir.exists()) {
+      await fallbackDir.create(recursive: true);
+    }
+    debugPrint(
+        'FileTransfer: Shared storage unavailable, using app storage at ${fallbackDir.path}');
+    return _buildUniquePath(fallbackDir, originalFileName);
+  }
+
+  Future<Directory?> _resolveSharedPeerChatDirectory() async {
+    if (!Platform.isAndroid) return null;
+
+    final hasAccess = await _ensureSharedStorageAccess();
+    if (!hasAccess) return null;
+
+    final appExternalDir = await getExternalStorageDirectory();
+    if (appExternalDir == null) return null;
+
+    final normalized = appExternalDir.path.replaceAll('\\', '/');
+    final androidIndex = normalized.indexOf('/Android/');
+    if (androidIndex <= 0) {
+      return null;
+    }
+
+    final rootPath = normalized.substring(0, androidIndex);
+    final peerChatDir = Directory('$rootPath/PeerChat');
+    if (!await peerChatDir.exists()) {
+      await peerChatDir.create(recursive: true);
+    }
+    return peerChatDir;
+  }
+
+  Future<bool> _ensureSharedStorageAccess() async {
+    if (!Platform.isAndroid) return false;
+
+    try {
+      final manageStatus = await Permission.manageExternalStorage.status;
+      if (manageStatus.isGranted) return true;
+
+      final requestedManage = await Permission.manageExternalStorage.request();
+      if (requestedManage.isGranted) return true;
+    } catch (_) {
+      // Continue to legacy permission fallback below.
+    }
+
+    try {
+      final storageStatus = await Permission.storage.status;
+      if (storageStatus.isGranted) return true;
+
+      final requestedStorage = await Permission.storage.request();
+      return requestedStorage.isGranted;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<String> _buildUniquePath(Directory dir, String fileName) async {
+    final safeName = _sanitizeFileName(fileName);
+    final extensionIndex = safeName.lastIndexOf('.');
+    final hasExtension = extensionIndex > 0;
+    final base =
+        hasExtension ? safeName.substring(0, extensionIndex) : safeName;
+    final extension = hasExtension ? safeName.substring(extensionIndex) : '';
+
+    var candidate = '${dir.path}${Platform.pathSeparator}$safeName';
+    var counter = 1;
+    while (await File(candidate).exists()) {
+      candidate =
+          '${dir.path}${Platform.pathSeparator}${base}_$counter$extension';
+      counter++;
+    }
+    return candidate;
+  }
+
+  String _sanitizeFileName(String input) {
+    final sanitized = input
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+
+    if (sanitized.isEmpty) {
+      return 'received_${DateTime.now().millisecondsSinceEpoch}.bin';
+    }
+    return sanitized;
+  }
+
+  String _wireFileId(String fileId) {
+    if (fileId.length >= 36) return fileId.substring(0, 36);
+    return fileId.padRight(36);
+  }
+
+  String _chunkTempPath(String transferDirPath, int chunkIndex) {
+    return '$transferDirPath${Platform.pathSeparator}chunk_$chunkIndex.part';
+  }
+
+  Future<String> _ensureReceiverTempDir(FileTransferSession session) async {
+    session.filePath ??= await _transferTempDirPath(session.fileId);
+    final dir = Directory(session.filePath!);
+    if (await dir.exists()) {
+      return dir.path;
+    }
+
+    // Clean legacy single-file temp path if present.
+    final legacyFile = File(session.filePath!);
+    if (await legacyFile.exists()) {
+      await legacyFile.delete();
+    }
+
+    await dir.create(recursive: true);
+    return dir.path;
+  }
+
+  Future<void> _cleanupReceivingArtifacts(FileTransferSession session) async {
+    if (session.direction != TransferDirection.receiving ||
+        session.filePath == null) {
+      return;
+    }
+
+    final path = session.filePath!;
+    final dir = Directory(path);
+    if (await dir.exists()) {
+      await dir.delete(recursive: true);
+      return;
+    }
+
+    final file = File(path);
+    if (await file.exists()) {
+      await file.delete();
+    }
+  }
+
+  FileTransferSession? _sessionFromRow(Map<String, Object?> row) {
+    try {
+      final fileId = row['file_id'] as String;
+      final peerId = row['peer_id'] as String;
+      final directionIndex = (row['direction'] as int?) ?? 0;
+      final stateIndex =
+          (row['state'] as int?) ?? FileTransferState.pending.index;
+
+      if (directionIndex < 0 ||
+          directionIndex >= TransferDirection.values.length ||
+          stateIndex < 0 ||
+          stateIndex >= FileTransferState.values.length) {
+        return null;
+      }
+
+      final metadata = FileMetadata(
+        fileId: fileId,
+        fileName: row['file_name'] as String,
+        fileSize: row['file_size'] as int,
+        mimeType: row['mime_type'] as String,
+        sha256Hash: row['sha256_hash'] as Uint8List,
+        totalChunks: row['total_chunks'] as int,
+      );
+
+      final session = FileTransferSession(
+        fileId: fileId,
+        peerId: peerId,
+        metadata: metadata,
+        direction: TransferDirection.values[directionIndex],
+        state: FileTransferState.values[stateIndex],
+        filePath: row['file_path'] as String?,
+        ackTimeoutMs:
+            (row['ack_timeout_ms'] as int?) ?? _ackTimeoutForPeer(peerId),
+        lastActivityTimestamp: row['last_activity'] as int?,
+        startTimestamp: row['start_timestamp'] as int?,
+      );
+
+      final contiguousReceived = (row['received_chunks'] as int?) ?? 0;
+      final safeCount = contiguousReceived.clamp(0, metadata.totalChunks);
+      for (int i = 0; i < safeCount; i++) {
+        session.chunkTracker.markReceived(i);
+      }
+
+      return session;
+    } catch (e) {
+      debugPrint('FileTransfer: Failed to restore transfer row: $e');
+      return null;
+    }
   }
 
   @override

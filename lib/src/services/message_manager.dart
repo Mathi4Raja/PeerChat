@@ -26,13 +26,14 @@ class MessageManager {
   final DeduplicationCache _deduplicationCache;
   final SignatureVerifier _signatureVerifier;
   final DeliveryAckHandler _deliveryAckHandler;
-  
+
   final _uuid = const Uuid();
   final _random = Random.secure();
-  
+
   static const int maxMessageSize = 65536; // 64 KB
-  
-  final Future<bool> Function(String peerId, Uint8List data) sendTransportMessage;
+
+  final Future<bool> Function(String peerId, Uint8List data)
+      sendTransportMessage;
 
   MessageManager(
     this._cryptoService,
@@ -58,20 +59,22 @@ class MessageManager {
     }
 
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
-    // Generate a strong, highly traceable Message ID
-    // Format: <timestamp>_<short_sender_id>_<short_uuid>
-    final shortSenderId = _cryptoService.localPeerId.substring(0, 8);
-    final shortUuid = _uuid.v4().substring(0, 8);
-    final id = messageId ?? '${timestamp}_${shortSenderId}_$shortUuid';
-    
+
+    // Keep wire-compatible message IDs (<= 36 chars).
+    final localId = _cryptoService.localPeerId;
+    final shortSenderId = localId.length >= 8 ? localId.substring(0, 8) : localId;
+    final compactUuid = _uuid.v4().replaceAll('-', '').substring(0, 27);
+    final id = messageId ?? '${shortSenderId}_$compactUuid';
+
     // Random TTL between 8-16 hops
     final ttl = 8 + _random.nextInt(9);
 
     // Get recipient's encryption public key
-    final recipientEncryptionKey = await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
+    final recipientEncryptionKey =
+        await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
     if (recipientEncryptionKey == null) {
-      throw Exception('Encryption key not found for peer $recipientPeerId. Handshake may be incomplete.');
+      throw Exception(
+          'Encryption key not found for peer $recipientPeerId. Handshake may be incomplete.');
     }
 
     // Encrypt content
@@ -95,7 +98,8 @@ class MessageManager {
     );
 
     // Sign the message
-    final signature = _cryptoService.signMessage(unsignedMessage.toBytesForSigning());
+    final signature =
+        _cryptoService.signMessage(unsignedMessage.toBytesForSigning());
 
     return MeshMessage(
       messageId: id,
@@ -112,35 +116,44 @@ class MessageManager {
   }
 
   // Process incoming message
-  Future<ProcessResult> processMessage(MeshMessage message, String fromPeerAddress) async {
+  Future<ProcessResult> processMessage(
+      MeshMessage message, String fromPeerAddress) async {
     // Check if peer is blocked
     if (await _signatureVerifier.isPeerBlocked(message.senderPeerId)) {
       return ProcessResult.invalid;
     }
 
     // Verify signature (uses signing key)
-    final isValidSignature = await _signatureVerifier.verifyMessageSignature(message);
+    final isValidSignature =
+        await _signatureVerifier.verifyMessageSignature(message);
     if (!isValidSignature) {
       debugPrint('Invalid signature from ${message.senderPeerId}');
       await _signatureVerifier.recordInvalidSignature(message.senderPeerId);
       return ProcessResult.invalid;
     }
 
-    // Check timestamp validity (strict 7-day expiration to match MessageQueue)
+    // Check timestamp validity with duration-based expiry.
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
-    
-    // Max age: 7 days (in milliseconds)
-    const maxAgeMs = 7 * 24 * 60 * 60 * 1000;
-    
-    // Future tolerance: 5 minutes (clocks might be slightly off)
-    if (age > maxAgeMs || age < -300000) {
+    // Future tolerance: 5 minutes (clock skew guard)
+    if (age < -300000 || message.isExpired) {
       debugPrint('Message hard-expired or from future: $age ms');
       return ProcessResult.expired;
     }
 
     // Check deduplication
     if (await _deduplicationCache.hasSeen(message.messageId)) {
+      // If receiver already saw this DATA message, re-ACK it so sender can clear
+      // pending state when the original ACK was lost.
+      if (message.recipientPeerId == _cryptoService.localPeerId &&
+          message.type == MessageType.data) {
+        try {
+          final ack = await _deliveryAckHandler.createAcknowledgment(message);
+          await forwardMessage(ack);
+        } catch (_) {
+          // Best-effort ACK on duplicate.
+        }
+      }
       return ProcessResult.duplicate;
     }
 
@@ -170,7 +183,7 @@ class MessageManager {
     // We are a relay - forward the message
     final forwardedMessage = message.copyForForwarding();
     final forwarded = await forwardMessage(forwardedMessage);
-    
+
     return forwarded ? ProcessResult.forwarded : ProcessResult.queued;
   }
 
@@ -178,7 +191,7 @@ class MessageManager {
   Future<bool> forwardMessage(MeshMessage message) async {
     // Get next hop
     final nextHop = await _routeManager.getNextHop(message.recipientPeerId);
-    
+
     if (nextHop == null) {
       // No route available - queue message and initiate discovery
       final queuedMessage = QueuedMessage(
@@ -187,16 +200,16 @@ class MessageManager {
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
       );
       await _messageQueue.enqueue(queuedMessage);
-      
+
       // Initiate route discovery
       _routeManager.discoverRoute(message.recipientPeerId);
-      
+
       return false;
     }
 
     // Send message to next hop via transport layer
     final sent = await sendTransportMessage(nextHop, message.toBytes());
-    
+
     if (!sent) {
       debugPrint('Transport send failed to $nextHop, queuing message');
       // If send failed, queue it
@@ -208,7 +221,7 @@ class MessageManager {
       await _messageQueue.enqueue(queuedMessage);
       return false;
     }
-    
+
     return true;
   }
 
@@ -224,9 +237,11 @@ class MessageManager {
 
     try {
       // Use encryption public key for decryption
-      final senderEncryptionKey = await _signatureVerifier.getPeerEncryptionKey(message.senderPeerId);
+      final senderEncryptionKey =
+          await _signatureVerifier.getPeerEncryptionKey(message.senderPeerId);
       if (senderEncryptionKey == null) {
-        debugPrint('Encryption key not found for sender ${message.senderPeerId}');
+        debugPrint(
+            'Encryption key not found for sender ${message.senderPeerId}');
         return null;
       }
 
