@@ -6,6 +6,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import '../app_state.dart';
 import '../models/runtime_profile.dart';
 import '../theme.dart';
+import 'menu/menu_screen.dart';
 import 'mesh/routes_status_screen.dart';
 import 'mesh/queued_messages_status_screen.dart';
 import 'mesh/pending_acks_status_screen.dart';
@@ -92,59 +93,16 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
         actions: [
-          // ─── Menu ───
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert_rounded, size: 22),
-            color: AppTheme.bgSurface,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-            ),
-            onSelected: (value) {
-              if (value == 'refresh') {
-                appState.refreshDiscovery();
-              } else if (value == 'about') {
-                showAboutDialog(
-                  context: context,
-                  applicationName: 'PeerChat Secure',
-                  applicationVersion: '0.1.0',
-                  children: [
-                    Text(
-                      'A privacy-first P2P mesh chat.',
-                      style: GoogleFonts.inter(fontSize: 14),
-                    ),
-                  ],
-                );
-              }
+          IconButton(
+            icon: const Icon(Icons.menu_rounded, size: 22),
+            tooltip: 'Menu',
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const MenuScreen(),
+                ),
+              );
             },
-            itemBuilder: (context) => [
-              PopupMenuItem(
-                value: 'refresh',
-                child: Row(
-                  children: [
-                    const Icon(Icons.refresh_rounded,
-                        size: 18, color: AppTheme.primary),
-                    const SizedBox(width: 10),
-                    Text('Refresh Discovery',
-                        style: GoogleFonts.inter(
-                            color: AppTheme.textPrimary, fontSize: 13)),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'about',
-                child: Row(
-                  children: [
-                    const Icon(Icons.info_outline_rounded,
-                        size: 18, color: AppTheme.textSecondary),
-                    const SizedBox(width: 10),
-                    Text('About',
-                        style: GoogleFonts.inter(
-                            color: AppTheme.textPrimary, fontSize: 13)),
-                  ],
-                ),
-              ),
-            ],
           ),
           const SizedBox(width: 4),
         ],
@@ -158,7 +116,7 @@ class HomeScreen extends StatelessWidget {
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Padding(
-            padding: const EdgeInsets.all(16.0),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -174,52 +132,6 @@ class HomeScreen extends StatelessWidget {
 
                 // ─── Mesh Network Status ───
                 _MeshStatusSection(),
-
-                const SizedBox(height: 20),
-
-                // ─── Privacy Info ───
-                Container(
-                  decoration: BoxDecoration(
-                    color: AppTheme.primary.withValues(alpha: 0.05),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: AppTheme.primary.withValues(alpha: 0.15),
-                    ),
-                  ),
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(Icons.verified_user_rounded,
-                              size: 16,
-                              color: AppTheme.primary.withValues(alpha: 0.8)),
-                          const SizedBox(width: 8),
-                          Text(
-                            'Privacy & Storage',
-                            style: GoogleFonts.inter(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.primary),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 10),
-                      _PrivacyRow(
-                          icon: Icons.cloud_off_rounded,
-                          text: 'Fully decentralized — no servers'),
-                      const SizedBox(height: 5),
-                      _PrivacyRow(
-                          icon: Icons.lock_rounded,
-                          text: 'End-to-end encrypted messages'),
-                      const SizedBox(height: 5),
-                      _PrivacyRow(
-                          icon: Icons.delete_forever_rounded,
-                          text: 'Data wiped on uninstall'),
-                    ],
-                  ),
-                ),
               ],
             ),
           ),
@@ -696,35 +608,6 @@ class _MeshStat extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-// ─── Privacy Row ───
-class _PrivacyRow extends StatelessWidget {
-  final IconData icon;
-  final String text;
-  const _PrivacyRow({required this.icon, required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      children: [
-        Icon(icon, size: 13, color: AppTheme.textSecondary),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              color: AppTheme.textSecondary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-        ),
-      ],
     );
   }
 }

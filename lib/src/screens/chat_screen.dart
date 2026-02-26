@@ -79,10 +79,8 @@ class _ChatScreenState extends State<ChatScreen> {
     // Listen for status updates (ACKs, read receipts)
     _statusChangeSubscription =
         appState.meshRouter.onMessageStatusChanged.listen((messageId) {
-      if (_selectedPeerId != null && mounted) {
-        // Reload all messages to update status icons
-        _loadMessages();
-      }
+      if (_selectedPeerId == null || !mounted) return;
+      _applyStatusUpdate(messageId);
     });
 
     _transferUpdateSubscription =
@@ -175,6 +173,34 @@ class _ChatScreenState extends State<ChatScreen> {
     });
   }
 
+  Future<void> _applyStatusUpdate(String messageId) async {
+    if (_selectedPeerId == null || !mounted) return;
+
+    final appState = Provider.of<AppState>(context, listen: false);
+    final updated = await appState.db.getChatMessageById(messageId);
+    if (updated == null || !mounted) return;
+    if (updated.peerId != _selectedPeerId) return;
+
+    final existingIndex = _messages.indexWhere((m) => m.id == messageId);
+    if (existingIndex == -1) {
+      setState(() {
+        _messages.add(updated);
+        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+      });
+      return;
+    }
+
+    final existing = _messages[existingIndex];
+    if (existing.status == updated.status &&
+        existing.isRead == updated.isRead) {
+      return;
+    }
+
+    setState(() {
+      _messages[existingIndex] = updated;
+    });
+  }
+
   Future<void> _sendMessage() async {
     if (_messageController.text.trim().isEmpty || _selectedPeerId == null) {
       return;
@@ -249,9 +275,22 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     await appState.db.updateMessageStatus(messageId, newStatus);
+    if (!mounted) return;
 
-    // Reload messages to show updated status
-    await _loadMessages();
+    final index = _messages.indexWhere((m) => m.id == messageId);
+    if (index == -1) return;
+    setState(() {
+      final old = _messages[index];
+      _messages[index] = ChatMessage(
+        id: old.id,
+        peerId: old.peerId,
+        content: old.content,
+        timestamp: old.timestamp,
+        isSentByMe: old.isSentByMe,
+        status: newStatus,
+        isRead: old.isRead,
+      );
+    });
   }
 
   @override
@@ -553,7 +592,18 @@ class _ChatScreenState extends State<ChatScreen> {
       itemCount: _messages.length,
       itemBuilder: (context, index) {
         final message = _messages[index];
-        return _buildMessageBubble(message);
+        final showDateHeader = index == 0 ||
+            !_isSameDay(
+              _messages[index - 1].timestamp,
+              message.timestamp,
+            );
+
+        return Column(
+          children: [
+            if (showDateHeader) _buildDateSeparator(message.timestamp),
+            _buildMessageBubble(message),
+          ],
+        );
       },
     );
   }
@@ -664,6 +714,79 @@ class _ChatScreenState extends State<ChatScreen> {
     } else {
       return '${date.day}/${date.month} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
     }
+  }
+
+  bool _isSameDay(int aTimestamp, int bTimestamp) {
+    final a = DateTime.fromMillisecondsSinceEpoch(aTimestamp);
+    final b = DateTime.fromMillisecondsSinceEpoch(bTimestamp);
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatDateSeparatorLabel(int timestamp) {
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final now = DateTime.now();
+    final yesterday = now.subtract(const Duration(days: 1));
+
+    if (date.year == now.year &&
+        date.month == now.month &&
+        date.day == now.day) {
+      return 'Today';
+    }
+    if (date.year == yesterday.year &&
+        date.month == yesterday.month &&
+        date.day == yesterday.day) {
+      return 'Yesterday';
+    }
+
+    const months = <String>[
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    return '${date.day} ${months[date.month - 1]} ${date.year}';
+  }
+
+  Widget _buildDateSeparator(int timestamp) {
+    final label = _formatDateSeparatorLabel(timestamp);
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Divider(
+              color: AppTheme.textSecondary.withValues(alpha: 0.25),
+              thickness: 0.8,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            child: Text(
+              label,
+              style: GoogleFonts.inter(
+                fontSize: 11,
+                color: AppTheme.textSecondary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Divider(
+              color: AppTheme.textSecondary.withValues(alpha: 0.25),
+              thickness: 0.8,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Widget _buildMessageInput(
