@@ -8,6 +8,8 @@ import '../models/route.dart';
 import '../models/route_discovery.dart';
 import '../models/peer.dart';
 import '../models/mesh_message.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 import 'package:uuid/uuid.dart';
 
 class RouteManager {
@@ -126,14 +128,14 @@ class RouteManager {
       requestId: requestId,
       requestorPeerId: _cryptoService.localPeerId,
       targetPeerId: destinationPeerId,
-      ttl: 8,
+      ttl: MessageLimits.routeControlTtl,
       timestamp: timestamp,
       signature: _cryptoService.signMessage(
         RouteRequest(
           requestId: requestId,
           requestorPeerId: _cryptoService.localPeerId,
           targetPeerId: destinationPeerId,
-          ttl: 8,
+          ttl: MessageLimits.routeControlTtl,
           timestamp: timestamp,
           signature: Uint8List(0),
         ).toBytesForSigning(),
@@ -159,7 +161,7 @@ class RouteManager {
       type: MessageType.routeRequest,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: destinationPeerId, // Target of the discovery
-      ttl: 8,
+      ttl: MessageLimits.routeControlTtl,
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: timestamp,
@@ -212,8 +214,12 @@ class RouteManager {
 
   // Calculate exponential backoff (1s, 2s, 4s, 8s, max 8s)
   int _calculateBackoff(int attempts) {
-    final backoff = 1 << attempts.clamp(0, 3);
-    return backoff.clamp(1, 8);
+    final backoff =
+        1 << attempts.clamp(0, RouteTimerConfig.discoveryBackoffMaxExponent);
+    return backoff.clamp(
+      RouteTimerConfig.discoveryBackoffMinSeconds,
+      RouteTimerConfig.discoveryBackoffMaxSeconds,
+    );
   }
 
   // Update routing table when peer connectivity changes
@@ -305,7 +311,7 @@ class RouteManager {
   Future<void> expireStaleRoutes() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(const Duration(minutes: 30))
+        .subtract(RouteTimerConfig.staleRouteAge)
         .millisecondsSinceEpoch;
 
     // Remove stale routes (not used in 30 minutes)
@@ -319,9 +325,12 @@ class RouteManager {
     // Only prune routes that have been tried at least 5 times (avoid noise)
     await database.rawDelete('''
       DELETE FROM routes
-      WHERE (success_count + failure_count) >= 5
-        AND CAST(failure_count AS REAL) / (success_count + failure_count) > 0.7
-    ''');
+      WHERE (success_count + failure_count) >= ?
+        AND CAST(failure_count AS REAL) / (success_count + failure_count) > ?
+    ''', [
+      RouteLimits.failurePruneMinSamples,
+      RouteLimits.failurePruneThreshold,
+    ]);
   }
 
   // Process route discovery request
@@ -365,7 +374,7 @@ class RouteManager {
           type: MessageType.routeResponse,
           senderPeerId: _cryptoService.localPeerId,
           recipientPeerId: request.requestorPeerId,
-          ttl: 8,
+          ttl: MessageLimits.routeControlTtl,
           hopCount: 0,
           priority: MessagePriority.high,
           timestamp: DateTime.now().millisecondsSinceEpoch,

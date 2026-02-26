@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../models/route.dart' as mesh_route;
 import '../../models/queued_message.dart';
+import '../../config/timer_config.dart';
+import '../../config/identity_ui_config.dart';
 import '../../services/message_queue.dart';
 import '../../services/mesh_router_service.dart';
 import '../../theme.dart';
@@ -59,9 +61,9 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
   Future<void> _cleanupStaleData() async {
     final appState = Provider.of<AppState>(context, listen: false);
     final stats = await appState.clearStaleNetworkData(
-      stalePeerAge: const Duration(minutes: 30),
-      staleRouteAge: const Duration(minutes: 30),
-      staleEndpointAge: const Duration(hours: 2),
+      stalePeerAge: DatabaseTimerConfig.stalePeerAge,
+      staleRouteAge: DatabaseTimerConfig.staleRouteAge,
+      staleEndpointAge: DatabaseTimerConfig.staleEndpointAge,
     );
     if (!mounted) return;
     final removedPeers = stats['removed_peers'] ?? 0;
@@ -114,7 +116,8 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
           ),
         ),
         body: _isLoading
-            ? const Center(child: CircularProgressIndicator(color: AppTheme.primary))
+            ? const Center(
+                child: CircularProgressIndicator(color: AppTheme.primary))
             : TabBarView(
                 children: [
                   _buildRoutesTab(),
@@ -140,12 +143,20 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                 color: AppTheme.textSecondary.withValues(alpha: 0.06),
                 shape: BoxShape.circle,
               ),
-              child: Icon(Icons.alt_route_rounded, size: 48, color: AppTheme.textSecondary.withValues(alpha: 0.4)),
+              child: Icon(Icons.alt_route_rounded,
+                  size: 48,
+                  color: AppTheme.textSecondary.withValues(alpha: 0.4)),
             ),
             const SizedBox(height: 16),
-            Text('No routes discovered', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+            Text('No routes discovered',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textPrimary,
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600)),
             const SizedBox(height: 4),
-            Text('Routes populate when peers communicate', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+            Text('Routes populate when peers communicate',
+                style: GoogleFonts.inter(
+                    color: AppTheme.textSecondary, fontSize: 12)),
           ],
         ),
       );
@@ -174,7 +185,9 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
             children: [
               CircleAvatar(
                 radius: 18,
-                backgroundColor: (route.isStale ? AppTheme.warning : AppTheme.online).withValues(alpha: 0.15),
+                backgroundColor:
+                    (route.isStale ? AppTheme.warning : AppTheme.online)
+                        .withValues(alpha: 0.15),
                 child: Text(
                   '${route.hopCount}',
                   style: GoogleFonts.inter(
@@ -191,12 +204,14 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   children: [
                     Text(
                       'To: ${_shortenId(route.destinationPeerId)}',
-                      style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary),
+                      style: GoogleFonts.firaCode(
+                          fontSize: 12, color: AppTheme.textPrimary),
                     ),
                     const SizedBox(height: 2),
                     Text(
                       'Via: ${_shortenId(route.nextHopPeerId)} · Score: ${route.preferenceScore.toStringAsFixed(3)}',
-                      style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                      style: GoogleFonts.inter(
+                          fontSize: 11, color: AppTheme.textSecondary),
                     ),
                   ],
                 ),
@@ -206,13 +221,17 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                 children: [
                   Text(
                     '✓${route.successCount}  ✗${route.failureCount}',
-                    style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                    style: GoogleFonts.inter(
+                        fontSize: 11, color: AppTheme.textSecondary),
                   ),
                   const SizedBox(height: 2),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: (route.isStale ? AppTheme.warning : AppTheme.online).withValues(alpha: 0.1),
+                      color:
+                          (route.isStale ? AppTheme.warning : AppTheme.online)
+                              .withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(6),
                     ),
                     child: Text(
@@ -220,7 +239,8 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                       style: GoogleFonts.inter(
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
-                        color: route.isStale ? AppTheme.warning : AppTheme.online,
+                        color:
+                            route.isStale ? AppTheme.warning : AppTheme.online,
                       ),
                     ),
                   ),
@@ -249,8 +269,10 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
               children: [
                 _statChip('Total', _queueStats!.totalMessages, AppTheme.accent),
                 _statChip('High', _queueStats!.highPriority, AppTheme.danger),
-                _statChip('Normal', _queueStats!.normalPriority, AppTheme.warning),
-                _statChip('Low', _queueStats!.lowPriority, AppTheme.textSecondary),
+                _statChip(
+                    'Normal', _queueStats!.normalPriority, AppTheme.warning),
+                _statChip(
+                    'Low', _queueStats!.lowPriority, AppTheme.textSecondary),
               ],
             ),
           ),
@@ -267,12 +289,20 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                           color: AppTheme.online.withValues(alpha: 0.06),
                           shape: BoxShape.circle,
                         ),
-                        child: Icon(Icons.check_circle_outline_rounded, size: 48, color: AppTheme.online.withValues(alpha: 0.4)),
+                        child: Icon(Icons.check_circle_outline_rounded,
+                            size: 48,
+                            color: AppTheme.online.withValues(alpha: 0.4)),
                       ),
                       const SizedBox(height: 16),
-                      Text('Queue is empty', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontSize: 16, fontWeight: FontWeight.w600)),
+                      Text('Queue is empty',
+                          style: GoogleFonts.inter(
+                              color: AppTheme.textPrimary,
+                              fontSize: 16,
+                              fontWeight: FontWeight.w600)),
                       const SizedBox(height: 4),
-                      Text('Messages queue when next hop is unreachable', style: GoogleFonts.inter(color: AppTheme.textSecondary, fontSize: 12)),
+                      Text('Messages queue when next hop is unreachable',
+                          style: GoogleFonts.inter(
+                              color: AppTheme.textSecondary, fontSize: 12)),
                     ],
                   ),
                 )
@@ -282,17 +312,20 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 4),
                   itemBuilder: (context, index) {
                     final msg = _queuedMessages[index];
-                    final priorityColor = _priorityColor(msg.message.priority.index);
+                    final priorityColor =
+                        _priorityColor(msg.message.priority.index);
                     return Container(
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
                         color: priorityColor.withValues(alpha: 0.04),
                         borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: priorityColor.withValues(alpha: 0.15)),
+                        border: Border.all(
+                            color: priorityColor.withValues(alpha: 0.15)),
                       ),
                       child: Row(
                         children: [
-                          Icon(Icons.mail_outline_rounded, color: priorityColor),
+                          Icon(Icons.mail_outline_rounded,
+                              color: priorityColor),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Column(
@@ -300,24 +333,32 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                               children: [
                                 Text(
                                   'ID: ${_shortenId(msg.message.messageId)}',
-                                  style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary),
+                                  style: GoogleFonts.firaCode(
+                                      fontSize: 12,
+                                      color: AppTheme.textPrimary),
                                 ),
                                 Text(
                                   'To: ${_shortenId(msg.nextHopPeerId)} · Attempts: ${msg.attemptCount}',
-                                  style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary),
+                                  style: GoogleFonts.inter(
+                                      fontSize: 11,
+                                      color: AppTheme.textSecondary),
                                 ),
                               ],
                             ),
                           ),
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
                             decoration: BoxDecoration(
                               color: priorityColor.withValues(alpha: 0.1),
                               borderRadius: BorderRadius.circular(6),
                             ),
                             child: Text(
                               _priorityLabel(msg.message.priority.index),
-                              style: GoogleFonts.inter(fontSize: 9, fontWeight: FontWeight.w700, color: priorityColor),
+                              style: GoogleFonts.inter(
+                                  fontSize: 9,
+                                  fontWeight: FontWeight.w700,
+                                  color: priorityColor),
                             ),
                           ),
                         ],
@@ -351,7 +392,10 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   backgroundColor: AppTheme.primary.withValues(alpha: 0.15),
                   child: Text(
                     appState.initials,
-                    style: GoogleFonts.inter(fontSize: 14, fontWeight: FontWeight.w700, color: AppTheme.primary),
+                    style: GoogleFonts.inter(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.primary),
                   ),
                 ),
                 const SizedBox(width: 12),
@@ -359,10 +403,14 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(appState.displayName, style: GoogleFonts.inter(fontWeight: FontWeight.w600, color: AppTheme.textPrimary)),
+                      Text(appState.displayName,
+                          style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textPrimary)),
                       Text(
                         'ID: ${_shortenId(appState.meshRouter.localPeerId)}',
-                        style: GoogleFonts.firaCode(fontSize: 11, color: AppTheme.textSecondary),
+                        style: GoogleFonts.firaCode(
+                            fontSize: 11, color: AppTheme.textSecondary),
                       ),
                     ],
                   ),
@@ -375,7 +423,10 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
           // Connected peers section
           Text(
             'Connected Peers (${_connectedPeerIds.length})',
-            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+            style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary),
           ),
           const SizedBox(height: 8),
           if (_connectedPeerIds.isEmpty)
@@ -384,14 +435,20 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
               decoration: AppTheme.glassCard(radius: 12),
               child: Row(
                 children: [
-                  Icon(Icons.signal_wifi_off_rounded, color: AppTheme.textSecondary.withValues(alpha: 0.5)),
+                  Icon(Icons.signal_wifi_off_rounded,
+                      color: AppTheme.textSecondary.withValues(alpha: 0.5)),
                   const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('No connected peers', style: GoogleFonts.inter(color: AppTheme.textPrimary, fontWeight: FontWeight.w500)),
-                        Text('Ensure Bluetooth and WiFi are enabled', style: GoogleFonts.inter(fontSize: 12, color: AppTheme.textSecondary)),
+                        Text('No connected peers',
+                            style: GoogleFonts.inter(
+                                color: AppTheme.textPrimary,
+                                fontWeight: FontWeight.w500)),
+                        Text('Ensure Bluetooth and WiFi are enabled',
+                            style: GoogleFonts.inter(
+                                fontSize: 12, color: AppTheme.textSecondary)),
                       ],
                     ),
                   ),
@@ -408,22 +465,29 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   decoration: BoxDecoration(
                     color: AppTheme.online.withValues(alpha: 0.04),
                     borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppTheme.online.withValues(alpha: 0.15)),
+                    border: Border.all(
+                        color: AppTheme.online.withValues(alpha: 0.15)),
                   ),
                   child: Row(
                     children: [
                       CircleAvatar(
                         radius: 16,
-                        backgroundColor: AppTheme.online.withValues(alpha: 0.15),
-                        child: const Icon(Icons.link_rounded, color: AppTheme.online, size: 16),
+                        backgroundColor:
+                            AppTheme.online.withValues(alpha: 0.15),
+                        child: const Icon(Icons.link_rounded,
+                            color: AppTheme.online, size: 16),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(_shortenId(peerId), style: GoogleFonts.firaCode(fontSize: 12, color: AppTheme.textPrimary)),
-                            Text('Active connection', style: GoogleFonts.inter(fontSize: 11, color: AppTheme.online)),
+                            Text(_shortenId(peerId),
+                                style: GoogleFonts.firaCode(
+                                    fontSize: 12, color: AppTheme.textPrimary)),
+                            Text('Active connection',
+                                style: GoogleFonts.inter(
+                                    fontSize: 11, color: AppTheme.online)),
                           ],
                         ),
                       ),
@@ -453,11 +517,12 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                 runSpacing: 10,
                 spacing: 10,
                 children: [
-                  _statChip('Sent', _routingStats!.messagesSent, AppTheme.accent),
+                  _statChip(
+                      'Sent', _routingStats!.messagesSent, AppTheme.accent),
                   _statChip('Delivered', _routingStats!.messagesDelivered,
                       AppTheme.online),
-                  _statChip('Failed', _routingStats!.messagesFailed,
-                      AppTheme.danger),
+                  _statChip(
+                      'Failed', _routingStats!.messagesFailed, AppTheme.danger),
                   Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -487,13 +552,17 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
           // All known peers
           Text(
             'All Known Peers (${appState.peers.length})',
-            style: GoogleFonts.inter(fontSize: 15, fontWeight: FontWeight.w700, color: AppTheme.textPrimary),
+            style: GoogleFonts.inter(
+                fontSize: 15,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.textPrimary),
           ),
           const SizedBox(height: 8),
           ...appState.peers.map((peer) {
             final isConnected = _connectedPeerIds.contains(peer.id);
-            final lastSeenAgo = DateTime.now().millisecondsSinceEpoch - peer.lastSeen;
-            final minutes = (lastSeenAgo / 60000).floor();
+            final lastSeenAgo =
+                DateTime.now().millisecondsSinceEpoch - peer.lastSeen;
+            final minutes = (lastSeenAgo / TimeFormatConfig.minuteMs).floor();
 
             return Padding(
               padding: const EdgeInsets.only(bottom: 6),
@@ -504,13 +573,20 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                   children: [
                     CircleAvatar(
                       radius: 16,
-                      backgroundColor: (isConnected ? AppTheme.online : AppTheme.textSecondary).withValues(alpha: 0.15),
+                      backgroundColor: (isConnected
+                              ? AppTheme.online
+                              : AppTheme.textSecondary)
+                          .withValues(alpha: 0.15),
                       child: Text(
-                        peer.displayName.isNotEmpty ? peer.displayName[0].toUpperCase() : '?',
+                        peer.displayName.isNotEmpty
+                            ? peer.displayName[0].toUpperCase()
+                            : '?',
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: isConnected ? AppTheme.online : AppTheme.textSecondary,
+                          color: isConnected
+                              ? AppTheme.online
+                              : AppTheme.textSecondary,
                         ),
                       ),
                     ),
@@ -519,17 +595,24 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(peer.displayName, style: GoogleFonts.inter(fontWeight: FontWeight.w500, color: AppTheme.textPrimary, fontSize: 13)),
+                          Text(peer.displayName,
+                              style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w500,
+                                  color: AppTheme.textPrimary,
+                                  fontSize: 13)),
                           Text(
                             '${_shortenId(peer.id)} · ${peer.hasApp ? "PeerChat" : "BT only"} · ${minutes}m ago',
-                            style: GoogleFonts.inter(fontSize: 10, color: AppTheme.textSecondary),
+                            style: GoogleFonts.inter(
+                                fontSize: 10, color: AppTheme.textSecondary),
                           ),
                         ],
                       ),
                     ),
                     Icon(
                       isConnected ? Icons.link_rounded : Icons.link_off_rounded,
-                      color: isConnected ? AppTheme.online : AppTheme.textSecondary.withValues(alpha: 0.5),
+                      color: isConnected
+                          ? AppTheme.online
+                          : AppTheme.textSecondary.withValues(alpha: 0.5),
                       size: 18,
                     ),
                   ],
@@ -550,31 +633,40 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
       children: [
         Text(
           '$count',
-          style: GoogleFonts.inter(fontSize: 20, fontWeight: FontWeight.w800, color: color),
+          style: GoogleFonts.inter(
+              fontSize: 20, fontWeight: FontWeight.w800, color: color),
         ),
-        Text(label, style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary)),
+        Text(label,
+            style:
+                GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary)),
       ],
     );
   }
 
   String _shortenId(String id) {
-    if (id.length <= 12) return id;
-    return '${id.substring(0, 6)}…${id.substring(id.length - 6)}';
+    if (id.length <= IdPreviewConfig.fullDisplayThreshold) return id;
+    return '${id.substring(0, IdPreviewConfig.leadingChars)}…${id.substring(id.length - IdPreviewConfig.debugTrailingChars)}';
   }
 
   Color _priorityColor(int priority) {
     switch (priority) {
-      case 2: return AppTheme.danger;
-      case 1: return AppTheme.warning;
-      default: return AppTheme.textSecondary;
+      case 2:
+        return AppTheme.danger;
+      case 1:
+        return AppTheme.warning;
+      default:
+        return AppTheme.textSecondary;
     }
   }
 
   String _priorityLabel(int priority) {
     switch (priority) {
-      case 2: return 'HIGH';
-      case 1: return 'NORMAL';
-      default: return 'LOW';
+      case 2:
+        return 'HIGH';
+      case 1:
+        return 'NORMAL';
+      default:
+        return 'LOW';
     }
   }
 }

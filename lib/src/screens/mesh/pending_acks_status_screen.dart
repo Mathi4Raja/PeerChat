@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../services/mesh_router_service.dart';
+import '../../config/identity_ui_config.dart';
 import '../../theme.dart';
 import '../../utils/name_generator.dart';
 
@@ -10,7 +11,8 @@ class PendingAcksStatusScreen extends StatefulWidget {
   const PendingAcksStatusScreen({super.key});
 
   @override
-  State<PendingAcksStatusScreen> createState() => _PendingAcksStatusScreenState();
+  State<PendingAcksStatusScreen> createState() =>
+      _PendingAcksStatusScreenState();
 }
 
 class _PendingAcksStatusScreenState extends State<PendingAcksStatusScreen> {
@@ -50,13 +52,14 @@ class _PendingAcksStatusScreenState extends State<PendingAcksStatusScreen> {
   }
 
   String _short(String value) {
-    if (value.length <= 12) return value;
-    return '${value.substring(0, 6)}…${value.substring(value.length - 4)}';
+    if (value.length <= IdPreviewConfig.fullDisplayThreshold) return value;
+    return '${value.substring(0, IdPreviewConfig.leadingChars)}…${value.substring(value.length - IdPreviewConfig.statusTrailingChars)}';
   }
 
   Future<void> _queueOne(PendingAckDetail detail) async {
     final appState = Provider.of<AppState>(context, listen: false);
-    final ok = await appState.meshRouter.queuePendingAckForMessage(detail.messageId);
+    final ok =
+        await appState.meshRouter.queuePendingAckForMessage(detail.messageId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -74,7 +77,8 @@ class _PendingAcksStatusScreenState extends State<PendingAcksStatusScreen> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text('Queued $queued pending ACK message(s) in original order'),
+        content:
+            Text('Queued $queued pending ACK message(s) in original order'),
       ),
     );
     await _load();
@@ -219,7 +223,8 @@ class _PendingAcksStatusScreenState extends State<PendingAcksStatusScreen> {
                                     const SizedBox(width: 10),
                                     Expanded(
                                       child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
                                         children: [
                                           Text(
                                             item.contentPreview ??

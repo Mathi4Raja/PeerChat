@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../models/route.dart' as mesh_route;
+import '../../config/identity_ui_config.dart';
 import '../../theme.dart';
 import '../../utils/name_generator.dart';
 
@@ -51,10 +52,16 @@ class _RoutesStatusScreenState extends State<RoutesStatusScreen> {
   String _timeAgo(int timestamp) {
     final now = DateTime.now().millisecondsSinceEpoch;
     final diff = now - timestamp;
-    if (diff < 60000) return '${(diff / 1000).round()}s ago';
-    if (diff < 3600000) return '${(diff / 60000).round()}m ago';
-    if (diff < 86400000) return '${(diff / 3600000).round()}h ago';
-    return '${(diff / 86400000).round()}d ago';
+    if (diff < TimeFormatConfig.minuteMs) {
+      return '${(diff / TimeFormatConfig.secondMs).round()}s ago';
+    }
+    if (diff < TimeFormatConfig.hourMs) {
+      return '${(diff / TimeFormatConfig.minuteMs).round()}m ago';
+    }
+    if (diff < TimeFormatConfig.dayMs) {
+      return '${(diff / TimeFormatConfig.hourMs).round()}h ago';
+    }
+    return '${(diff / TimeFormatConfig.dayMs).round()}d ago';
   }
 
   String _reliability(mesh_route.Route route) {
@@ -96,9 +103,11 @@ class _RoutesStatusScreenState extends State<RoutesStatusScreen> {
                   itemCount: _routes.length,
                   itemBuilder: (context, index) {
                     final route = _routes[index];
-                    final destination = _peerName(appState, route.destinationPeerId);
+                    final destination =
+                        _peerName(appState, route.destinationPeerId);
                     final nextHop = _peerName(appState, route.nextHopPeerId);
-                    final isDirect = route.destinationPeerId == route.nextHopPeerId;
+                    final isDirect =
+                        route.destinationPeerId == route.nextHopPeerId;
                     final statusColor =
                         route.isStale ? AppTheme.warning : AppTheme.online;
 

@@ -5,6 +5,8 @@ import 'dart:typed_data';
 
 import '../models/peer.dart';
 import '../models/chat_message.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -671,7 +673,8 @@ class DBService {
         whereArgs: [peerId],
         limit: 1,
       );
-      final peer = peerRows.isNotEmpty ? peerRows.first : const <String, Object?>{};
+      final peer =
+          peerRows.isNotEmpty ? peerRows.first : const <String, Object?>{};
 
       rows.add({
         'peer_id': peerId,
@@ -710,7 +713,7 @@ class DBService {
 
   /// Get latest emergency broadcast messages (newest first).
   Future<List<Map<String, Object?>>> getBroadcastMessages({
-    int limit = 200,
+    int limit = BroadcastLimits.defaultQueryLimit,
   }) async {
     final d = await db;
     final rows = await d.query(
@@ -723,7 +726,7 @@ class DBService {
 
   /// Purge broadcast messages older than [maxAge].
   Future<int> purgeOldBroadcastMessages({
-    Duration maxAge = const Duration(hours: 24),
+    Duration maxAge = DatabaseTimerConfig.defaultBroadcastMaxAge,
   }) async {
     final d = await db;
     final cutoff =
@@ -800,9 +803,9 @@ class DBService {
   ///
   /// Returns counts for removed records.
   Future<Map<String, int>> cleanupStaleNetworkData({
-    Duration stalePeerAge = const Duration(minutes: 30),
-    Duration staleRouteAge = const Duration(minutes: 30),
-    Duration staleEndpointAge = const Duration(hours: 2),
+    Duration stalePeerAge = DatabaseTimerConfig.stalePeerAge,
+    Duration staleRouteAge = DatabaseTimerConfig.staleRouteAge,
+    Duration staleEndpointAge = DatabaseTimerConfig.staleEndpointAge,
     List<String> preservePeerIds = const [],
   }) async {
     final d = await db;

@@ -5,6 +5,9 @@ import 'crypto_service.dart';
 import '../models/peer.dart';
 import '../models/handshake_message.dart';
 import '../models/runtime_profile.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
+import '../config/identity_ui_config.dart';
 
 /// Manages peer connections and ID mappings
 /// Maps transport IDs (MAC addresses, endpoint IDs) to cryptographic peer IDs
@@ -26,7 +29,7 @@ class ConnectionManager extends ChangeNotifier {
   final Map<String, bool> _peerSupportsFileTransfer = {};
 
   // Display name for handshakes
-  String _displayName = 'PeerChat User';
+  String _displayName = IdentityUiConfig.defaultDisplayName;
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
 
   // Callback for sending handshake messages
@@ -49,7 +52,7 @@ class ConnectionManager extends ChangeNotifier {
     _runtimeProfile = profile;
     notifyListeners();
     unawaited(broadcastCapabilityUpdate());
-    Timer(const Duration(milliseconds: 700), () {
+    Timer(ConnectionManagerTimerConfig.capabilityRebroadcastDelay, () {
       if (_runtimeProfile == profile) {
         unawaited(broadcastCapabilityUpdate());
       }
@@ -111,7 +114,7 @@ class ConnectionManager extends ChangeNotifier {
 
     // Validate timestamp (not older than 5 minutes)
     final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - handshake.timestamp > 300000) {
+    if (now - handshake.timestamp > ConnectionLimits.handshakeMaxAgeMs) {
       debugPrint('Handshake rejected: too old');
       return;
     }
@@ -209,6 +212,9 @@ class ConnectionManager extends ChangeNotifier {
 
     if (peer != null) {
       final now = DateTime.now().millisecondsSinceEpoch;
+      final shortPeerId = peer.id.length >= IdentityUiConfig.shortIdLength
+          ? peer.id.substring(0, IdentityUiConfig.shortIdLength)
+          : peer.id;
       final updatedPeer = Peer(
         id: peer.id,
         displayName: peer.displayName,
@@ -218,11 +224,14 @@ class ConnectionManager extends ChangeNotifier {
       );
       await _db.upsertPeer(updatedPeer);
       debugPrint(
-          '✓ Updated peer activity: ${peer.displayName} (${peer.id.substring(0, 8)}) lastSeen=$now');
+          '✓ Updated peer activity: ${peer.displayName} ($shortPeerId) lastSeen=$now');
       notifyListeners(); // Notify listeners so AppState can react
     } else {
+      final shortCryptoId = cryptoId.length >= IdentityUiConfig.shortIdLength
+          ? cryptoId.substring(0, IdentityUiConfig.shortIdLength)
+          : cryptoId;
       debugPrint(
-          '⚠️ updatePeerActivity: Peer not found for crypto ID ${cryptoId.substring(0, 8)}');
+          '⚠️ updatePeerActivity: Peer not found for crypto ID $shortCryptoId');
     }
   }
 

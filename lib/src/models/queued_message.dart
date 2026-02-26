@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'mesh_message.dart';
+import '../config/limits_config.dart';
 
 class QueuedMessage {
   final MeshMessage message;
@@ -7,17 +8,20 @@ class QueuedMessage {
   final int queuedTimestamp;
   final int attemptCount;
   final int? lastAttemptTimestamp;
+
   /// When this message is next eligible for retry.
   /// Uses exponential backoff: nextRetryTime = now + base * 2^min(retryCount, 10)
   final int nextRetryTime;
+
   /// Absolute expiry timestamp in milliseconds (for DB-level pruning).
   /// 0 means fallback to duration-based check from [MeshMessage].
   final int expiryTime;
 
   /// Maximum retry attempts before dropping the message.
-  static const int maxRetries = 50;
+  static const int maxRetries = QueueLimits.maxRetries;
+
   /// Base retry interval in milliseconds (30 seconds).
-  static const int baseRetryInterval = 30000;
+  static const int baseRetryInterval = QueueLimits.baseRetryIntervalMs;
 
   QueuedMessage({
     required this.message,
@@ -46,8 +50,9 @@ class QueuedMessage {
       'attempt_count': attemptCount,
       'last_attempt_timestamp': lastAttemptTimestamp,
       'next_retry_time': nextRetryTime,
-      'expiry_time':
-          expiryTime > 0 ? expiryTime : (message.timestamp + message.expiryDuration),
+      'expiry_time': expiryTime > 0
+          ? expiryTime
+          : (message.timestamp + message.expiryDuration),
     };
   }
 
@@ -55,7 +60,7 @@ class QueuedMessage {
   static QueuedMessage fromMap(Map<String, Object?> map) {
     final messageData = map['message_data'] as Uint8List;
     final message = MeshMessage.fromBytes(messageData);
-    
+
     return QueuedMessage(
       message: message,
       nextHopPeerId: map['next_hop_peer_id'] as String,

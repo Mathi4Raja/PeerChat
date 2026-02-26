@@ -1,353 +1,374 @@
-Transport Layer Architecture
-Primary vs Fallback Connections
-There is NO primary/fallback hierarchy - instead, you have a multi-transport system that operates simultaneously:
+PeerChat Secure - System Architecture (Current)
 
-WiFi Direct (Nearby Connections) - High bandwidth, peer-to-peer
-Bluetooth Classic - Lower bandwidth, reliable for close range
-Both transports run concurrently. When sending a message, the MultiTransportService tries both transports and succeeds if either one works:
+Last updated: February 25, 2026
+Source of truth: current implementation in lib/src/** and Android host glue.
 
-// From transport_service.dart
-Future<bool> sendMessage(String peerId, Uint8List data) async {
-  for (final transport in _transports) {
-    if (await transport.sendMessage(peerId, data)) {
-      return true; // Success on ANY transport
-    }
-  }
-  return false; // Failed on ALL transports
-}
-This means:
+This document uses the original style: plain text and ASCII flow diagrams.
+No Mermaid blocks are used.
 
-If WiFi Direct works → message sent via WiFi Direct
-If WiFi Direct fails but Bluetooth works → message sent via Bluetooth
-If both fail → message queued for retry
-Complete Application Flow
-1. App Initialization
-App Start
-  ↓
+
+1) High-Level Architecture
+
+App UI Layer
+  |
+  |-- MainShell (global dialogs/toasts + tabs)
+  |-- Home / Chats / Chat / Peers / Emergency / Debug screens
+  |
+  v
+AppState (composition root + runtime orchestration)
+  |
+  |-- DBService (SQLite schema v13)
+  |-- DiscoveryService (mDNS + BT scan policy)
+  |-- MeshRouterService (mode selection + routing)
+  |-- ConnectionManager (transport <-> crypto identity + capability cache)
+  |-- MultiTransportService (WiFi + Bluetooth coordinator)
+  |-- FileTransferService (0xFE protocol)
+  |-- EmergencyBroadcastService
+  |-- BatteryStatusService
+
+Transport stack (both active concurrently)
+  |
+  |-- WiFiTransport (Nearby Connections)
+  |-- BluetoothTransport (Classic BT)
+
+Routing stack
+  |
+  |-- MessageManager
+  |-- MessageQueue (backoff + caps)
+  |-- RouteManager (route discovery/pruning)
+  |-- DeliveryAckHandler
+  |-- DeduplicationCache (seen/fingerprint/forwardedTo)
+
+
+2) Runtime Profiles and Session Classification
+
+Runtime profiles:
+- normalDirect
+- normalMesh
+- emergencyBattery
+
+Direct session requires ALL conditions:
+- local profile == normalDirect
+- remote profile (from handshake) == normalDirect
+- direct connection currently exists
+
+If any condition is false, session is treated as mesh.
+
+Decision flow:
+
+Peer selected
+  |
+  v
+local profile == normalDirect ?
+  |-- no --> Mesh session
+  '-- yes --> remote profile == normalDirect ?
+                 |-- no --> Mesh session
+                 '-- yes --> direct connection exists ?
+                                |-- no --> Mesh session
+                                '-- yes --> Direct session
+
+File transfer availability:
+- Allowed only when session is Direct AND remote supportsFileTransfer == true
+
+
+3) Startup and Composition Flow
+
+App start
+  |
+  v
 AppState.init()
-  ↓
-├─ Initialize Sodium (crypto library)
-├─ Open SQLite Database
-├─ Initialize MeshRouterService
-│   ↓
-│   ├─ CryptoService.init() → Generate/load keypairs
-│   ├─ Initialize core services (dedup, queue, routes, etc.)
-│   ├─ Initialize BluetoothTransport
-│   │   ↓
-│   │   ├─ Start Bluetooth discovery
-│   │   └─ Connect to bonded devices
-│   ├─ Initialize WiFiTransport
-│   │   ↓
-│   │   ├─ Load known endpoints from DB
-│   │   ├─ Start WiFi Direct advertising
-│   │   ├─ Start WiFi Direct discovery
-│   │   ├─ Start keepalive timer (15s)
-│   │   └─ Start health check timer (10s)
-│   └─ Start maintenance timers
-├─ Start DiscoveryService (mDNS)
-└─ Start peer refresh timer (10s)
-2. Peer Discovery Flow
-First-Time Discovery
-Step 1: Transport-Level Discovery
+  |
+  |-- Initialize Sodium libs
+  |-- Open DB + load peers + load runtime profile
+  |-- Compose core services:
+  |     CryptoService
+  |     DeduplicationCache
+  |     SignatureVerifier
+  |     MessageQueue
+  |     MultiTransportService
+  |     DeliveryAckHandler
+  |     ConnectionManager
+  |
+  |-- Compose higher layers:
+  |     FileTransferService
+  |     EmergencyBroadcastService
+  |     RouteManager
+  |     MessageManager
+  |     MeshRouterService
+  |
+  |-- meshRouter.setRuntimeProfile(...)
+  |-- meshRouter.init()
+  |-- fileTransferService.init() (resume incomplete transfers + temp cleanup)
+  |-- start battery monitoring + adaptive discovery policy
+  |-- start discovery service
+  '-- attach listeners (router changes, incoming messages, transfer updates)
 
-Device A                          Device B
-   |                                 |
-   |-- WiFi Direct Advertising ---->|
-   |<--- WiFi Direct Discovery ------|
-   |                                 |
-   |-- Bluetooth Discovery --------->|
-   |<--- Bluetooth Advertising ------|
-   |                                 |
-   |-- mDNS Broadcast -------------->|
-   |<--- mDNS Response ---------------|
-Step 2: Connection Establishment
 
-When WiFi Direct discovers a peer:
+4) Transport and Handshake Model
 
-Device A discovers endpoint "KZXX"
-  ↓
-onEndpointFound("KZXX", "Arctic Warrior 816")
-  ↓
-Check if known peer (from database)
-  ↓
-├─ If known → Auto-reconnect
-└─ If new → Request connection
-  ↓
-onConnectionInitiated("KZXX")
-  ↓
-Auto-accept connection
-  ↓
-onConnectionResult(Status.CONNECTED)
-  ↓
-├─ Add to _connectedPeers map
-├─ Save to known_wifi_endpoints table
-├─ Start keepalive exchange
-└─ Trigger onConnectionEstablished callback
-Step 3: Cryptographic Handshake
+Transport behavior:
+- MultiTransportService sends by trying registered transports sequentially.
+- Success on any transport = send success.
 
-Device A (Transport ID: KZXX)     Device B (Transport ID: EWDI)
-   |                                      |
-   |-- Connection Established ---------->|
-   |                                      |
-   |-- Handshake Message ---------------->|
-   |   {                                  |
-   |     peerId: "crypto_public_key_A",  |
-   |     displayName: "Cloud Tiger 343", |
-   |     publicKey: signing_key,         |
-   |     encryptionKey: encryption_key   |
-   |   }                                  |
-   |                                      |
-   |<----- Handshake Message -------------|
-   |   {                                  |
-   |     peerId: "crypto_public_key_B",  |
-   |     displayName: "Arctic Warrior",  |
-   |     publicKey: signing_key,         |
-   |     encryptionKey: encryption_key   |
-   |   }                                  |
-   |                                      |
-   |-- Handshake Complete --------------->|
-   |                                      |
-   |-- Create Mapping ------------------->|
-   |   Transport ID → Crypto ID          |
-   |   KZXX → crypto_public_key_B        |
-   |                                      |
-   |-- Add Direct Route ----------------->|
-   |   Destination: crypto_public_key_B  |
-   |   NextHop: crypto_public_key_B      |
-   |   HopCount: 1                        |
-   |                                      |
-   |-- Save Peer to Database ------------>|
-   |   ID: crypto_public_key_B           |
-   |   Name: "Arctic Warrior 816"        |
-   |   Keys: signing + encryption        |
-3. Message Sending Flow
-Direct Message (Peer Connected)
-User sends "Hello" to Arctic Warrior
-  ↓
-ChatScreen → AppState.meshRouter.sendMessage()
-  ↓
-MeshRouterService.sendMessage()
-  ↓
-├─ Get recipient's public key from DB
-├─ Encrypt content with recipient's encryption key
-├─ Create MeshMessage with encrypted content
-├─ Sign message with sender's signing key
-├─ Track pending ACK in DeliveryAckHandler
-└─ Forward message
-  ↓
-_forwardMessageViaTransport()
-  ↓
-├─ RouteManager.getNextHop(recipientPeerId)
-│   ↓
-│   └─ Query routes table → Find direct route
-│       NextHop: crypto_public_key_B (1 hop)
-│
-├─ ConnectionManager.getTransportId(crypto_public_key_B)
-│   ↓
-│   └─ Return: "KZXX" (WiFi Direct endpoint)
-│
-└─ MultiTransportService.sendMessage("KZXX", messageBytes)
-    ↓
-    ├─ Try BluetoothTransport.sendMessage("KZXX")
-    │   └─ FAILED (no Bluetooth connection to KZXX)
-    │
-    └─ Try WiFiTransport.sendMessage("KZXX")
-        ↓
-        └─ nearby.sendBytesPayload("KZXX", messageBytes)
-            └─ SUCCESS ✓
-Queued Message (Peer Not Connected)
-User sends "Hello" to offline peer
-  ↓
-MeshRouterService.sendMessage()
-  ↓
-├─ Create and sign message
-└─ _forwardMessageViaTransport()
-  ↓
-RouteManager.getNextHop(recipientPeerId)
-  ↓
-  └─ No route found → return null
-  ↓
-Queue message
-  ↓
-MessageQueue.enqueue(QueuedMessage)
-  ↓
-├─ Insert into message_queue table
-│   {
-│     message_id,
-│     next_hop_peer_id,
-│     message_data (encrypted),
-│     priority,
-│     queued_timestamp,
-│     attempt_count: 0
-│   }
-│
-└─ Initiate route discovery
-    ↓
-    RouteManager.discoverRoute(recipientPeerId)
-      ↓
-      Broadcast ROUTE_REQUEST to all connected peers
-4. Message Receiving Flow
-WiFi Direct receives bytes from endpoint "KZXX"
-  ↓
-WiFiTransport._handleIncomingPayload()
-  ↓
-├─ Check if keepalive (0xFF 0xFF)
-│   ↓
-│   ├─ Update activity timestamp
-│   └─ Forward to ConnectionManager.updatePeerActivity()
-│
-└─ Try parse as HandshakeMessage
-    ↓
-    ├─ If handshake → ConnectionManager.handleHandshake()
-    │   ↓
-    │   ├─ Store peer's crypto keys
-    │   ├─ Create transport→crypto mapping
-    │   ├─ Add direct route
-    │   └─ Save peer to database
-    │
-    └─ If mesh message → MeshRouterService.receiveMessage()
-        ↓
-        MeshMessage.fromBytes(rawMessage)
-          ↓
-        ├─ Learn reverse route (sender → immediate neighbor)
-        │
-        ├─ MessageManager.processMessage()
-        │   ↓
-        │   ├─ Check deduplication cache
-        │   ├─ Verify signature
-        │   ├─ Check if for me
-        │   │   ↓
-        │   │   ├─ If for me → ProcessResult.delivered
-        │   │   └─ If not for me → ProcessResult.forwarded
-        │   │
-        │   └─ Handle based on message type
-        │       ↓
-        │       ├─ DATA → Decrypt and deliver
-        │       ├─ ACK → Update message status
-        │       ├─ ROUTE_REQUEST → Send ROUTE_REPLY
-        │       └─ ROUTE_REPLY → Update routing table
-        │
-        └─ If delivered
-            ↓
-            _deliverToApplication()
-              ↓
-              ├─ Decrypt content
-              ├─ Save to chat_messages table
-              ├─ Publish to onMessageReceived stream
-              └─ ChatScreen updates UI
-5. Queue Processing Flow
-Timer fires every 10 seconds
-  ↓
+Handshake payload includes:
+- stable crypto peerId
+- signing public key
+- encryption public key
+- displayName
+- runtimeProfile
+- supportsFileTransfer
+
+Connection identity behavior:
+- transport IDs are unstable (endpoint/mac).
+- peer identity is stable crypto peerId.
+- ConnectionManager merges sessions by peerId on reconnect/transport switch.
+
+Capability propagation behavior:
+- local profile change rebroadcasts handshake capabilities immediately
+- a second rebroadcast occurs after ~700ms
+- remote caches update runtime profile + file transfer support quickly
+
+
+5) Message Send Flow (Direct / Mesh / Broadcast)
+
+User taps Send in Chat/Emergency UI
+  |
+  v
+MeshRouterService.sendMessage(recipient, content)
+  |
+  v
+selectMode(destination, connectedPeerIds)
+  |
+  |-- destination == BROADCAST_EMERGENCY
+  |     |
+  |     '-- EmergencyBroadcastService.broadcastMessage(...)
+  |
+  |-- mode == direct
+  |     |
+  |     '-- _sendDirect(message, recipient)
+  |            |
+  |            |-- transportId exists?
+  |            |     |-- yes --> transport.sendMessage(...)
+  |            |     |             |-- success --> SendResult.direct
+  |            |     |             '-- fail --> fallback mesh forward
+  |            |     '-- no --> fallback mesh forward
+  |            '-- on success: track pending ACK
+  |
+  '-- mode == mesh
+        |
+        '-- _forwardMessageViaTransport(message)
+               |
+               |-- route exists?
+               |     |-- yes --> resolve next hop transport + send
+               |     |             |-- success --> routed/direct result + track pending ACK
+               |     |             '-- fail --> queue + mark route failed
+               |     '-- no --> queue + route discovery
+               '-- notify stats/listeners
+
+
+6) Queue Processing Flow
+
+Timer every 10s OR route/handshake events trigger debounced processing
+  |
+  v
 MeshRouterService._processQueue()
-  ↓
-MessageQueue.getAllQueued()
-  ↓
-For each queued message:
-  ↓
-  ├─ Check if expired (TTL)
-  │   └─ If expired → dequeue and discard
-  │
-  ├─ Re-evaluate route
-  │   ↓
-  │   RouteManager.getNextHop(recipientPeerId)
-  │     ↓
-  │     ├─ If still no route → skip (wait for discovery)
-  │     └─ If route found → proceed
-  │
-  ├─ Get transport ID for next hop
-  │   ↓
-  │   ConnectionManager.getTransportId(nextHopCryptoId)
-  │     ↓
-  │     ├─ If no transport → skip (connection not ready)
-  │     └─ If transport found → proceed
-  │
-  └─ Try to send
-      ↓
-      MultiTransportService.sendMessage(transportId, messageBytes)
-        ↓
-        ├─ If SUCCESS
-        │   ↓
-        │   ├─ Dequeue message
-        │   └─ Mark route success
-        │
-        └─ If FAILED
-            ↓
-            ├─ Increment attempt_count
-            └─ Mark route failed
-6. Keepalive & Health Monitoring
-Every 15 seconds (keepalive timer):
-  ↓
-WiFiTransport._sendKeepalives()
-  ↓
-For each connected endpoint:
-  ↓
-  nearby.sendBytesPayload(endpointId, [0xFF, 0xFF])
-    ↓
-    Update local activity timestamp
+  |
+  v
+MessageQueue.getReadyMessages()  (next_retry_time <= now)
+  |
+  v
+for each queued message:
+  |
+  |-- if expired or over max retries -> dequeue
+  |-- get current next hop from RouteManager
+  |-- get transport id from ConnectionManager
+  |-- try transport send
+       |-- success:
+       |     |-- dequeue
+       |     |-- mark route success
+       |     '-- track ACK/status for local outgoing DATA
+       '-- fail:
+             |-- update attempt count + exponential backoff
+             '-- mark route failed
 
-Every 10 seconds (health check timer):
-  ↓
-WiFiTransport._checkConnectionHealth()
-  ↓
-For each connection:
-  ↓
-  Check time since last activity
-    ↓
-    ├─ If > 60 seconds → TIMEOUT
-    │   ↓
-    │   ├─ Remove from _connectedPeers
-    │   ├─ Call onConnectionLost()
-    │   └─ Disconnect endpoint
-    │
-    └─ If < 60 seconds → HEALTHY
-7. Auto-Reconnection Flow
-WiFi turned off → Connection lost
-  ↓
-onDisconnected("KZXX")
-  ↓
-├─ Remove from _connectedPeers
-├─ Reset reconnect attempts in DB
-└─ Call onConnectionLost()
+Queue policy highlights:
+- base retry interval: 30s
+- backoff: base * 2^min(attempt, 10)
+- max retries: 50
+- per-destination cap: 50 messages
+- global cap: 5000 messages
+- duration-based expiry via MeshMessage.expiryDuration / isExpired
 
-WiFi turned back on
-  ↓
-User pulls to refresh
-  ↓
-AppState.refreshDiscovery()
-  ↓
-MeshRouter.restartWiFiDirect()
-  ↓
-WiFiTransport.restartWiFiDirect()
-  ↓
-├─ Stop advertising/discovery
-├─ Wait 500ms
-└─ Restart advertising/discovery
-  ↓
-onEndpointFound("KZXX", "Arctic Warrior 816")
-  ↓
-_shouldAttemptReconnect("KZXX")
-  ↓
-├─ Check if in _knownPeers (from DB) → YES
-├─ Check if already connected → NO
-├─ Check reconnect attempts < 5 → YES
-└─ Check cooldown period → OK
-  ↓
-Auto-reconnect: Request connection
-  ↓
-onConnectionResult(Status.CONNECTED)
-  ↓
-├─ Save to known_wifi_endpoints
-├─ Reset reconnect attempts
-└─ Exchange handshakes again
-  ↓
-Connection restored!
-Key Design Principles
-Transport Agnostic: Messages don't care which transport they use
-Opportunistic Routing: Use whatever transport works
-Persistent Queuing: Messages survive app restarts
-Cryptographic Identity: Peers identified by public keys, not transport addresses
-Automatic Failover: If one transport fails, try another
-Route Learning: Build routing table from received messages
-Health Monitoring: Detect and handle stale connections
-Auto-Reconnection: Remember known peers and reconnect automatically
-This architecture provides resilience, security, and seamless multi-hop mesh networking!
+
+7) Message Receive Flow
+
+Incoming bytes from transport
+  |
+  |-- keepalive packet (0xFF 0xFF)?
+  |     '-- yes -> update activity and return
+  |
+  '-- no
+        |
+        |-- parse handshake?
+        |     |-- yes:
+        |     |     |-- ConnectionManager.handleHandshake(...)
+        |     |     |-- map transport <-> crypto peer id
+        |     |     |-- store peer keys/capabilities
+        |     |     '-- add/update direct route
+        |     '-- no:
+        |           |-- file-transfer marker (0xFE)?
+        |           |     '-- yes -> FileTransferService.dispatchRawMessage(...)
+        |           '-- no -> parse MeshMessage
+        |
+        '-- MeshMessage path:
+              |-- broadcast destination?
+              |     '-- yes -> EmergencyBroadcastService.handleIncomingBroadcast(...)
+              '-- regular message:
+                    |-- fingerprint dedup check
+                    |-- learn reverse route to sender via immediate neighbor
+                    |-- routeRequest/routeResponse handling via RouteManager
+                    '-- MessageManager.processMessage(...)
+                          |-- delivered -> decrypt + persist chat + emit stream
+                          |-- forwarded -> forwarded by manager/router path
+                          '-- queued -> opportunistic forward (2-3 peers) or queue
+
+
+8) Controlled Mesh Forwarding (No Route Case)
+
+When route is missing or relay returns queued:
+- opportunistic forward to random 2-3 connected peers (not flood-all)
+- skip sender/immediate source
+- skip peers already forwarded to for that message
+- max 3 opportunistic forwards per message per node
+- fingerprint key: messageId-senderId-hopCount
+
+This reduces collisions/loop amplification while still improving delivery chance.
+
+
+9) File Transfer Architecture (Direct Only)
+
+Protocol marker:
+- 0xFE at transport payload start
+
+Core behavior:
+- direct session + remote support required
+- 64KB chunks
+- sliding window max in-flight = 5
+- cumulative ACK model
+- sender-only pause/resume controls
+- receiver sees sender pause/resume status, can cancel
+- resume supported
+- SHA-256 integrity verification before final save
+- persisted state for crash recovery
+
+Flow:
+
+Sender picks file
+  |
+  |-- verify direct connection + remote supportsFileTransfer
+  |-- compute SHA-256
+  |-- split into chunks
+  '-- send FILE_META
+
+Receiver gets FILE_META
+  |
+  |-- global incoming request dialog (MainShell)
+  |-- reject -> FILE_REJECT
+  '-- accept -> FILE_ACCEPT
+
+After accept:
+  |
+  |-- sender streams CHUNK messages (window=5)
+  |-- receiver sends CHUNK_ACK(highestContiguous)
+  |-- retries on ACK timeout
+  '-- sender sends FILE_COMPLETE when done
+
+Receiver finalization:
+- verify SHA-256
+- move from temp to final path
+- cleanup partial artifacts on cancel/failure paths
+
+
+10) Emergency Broadcast Architecture
+
+Broadcast rules:
+- destination sentinel: BROADCAST_EMERGENCY
+- signed, not encrypted
+- initial TTL = 5
+- per-sender rate limit: 5 messages per minute
+- forward fanout: random 2-3 peers
+- probabilistic decay after hop > 2
+- 24h retention window in broadcast_messages table
+
+Send flow:
+
+User sends emergency text
+  |
+  |-- create signed MeshMessage (recipient=BROADCAST_EMERGENCY, ttl=5)
+  |-- enforce local sender rate limit
+  |-- persist local broadcast
+  '-- forward to random 2-3 connected peers
+
+Receive flow:
+
+Incoming broadcast
+  |
+  |-- dedup + signature verify + ttl check
+  |-- enforce sender rate limit
+  |-- persist and publish to Emergency UI
+  '-- if hopCount > 2 then probabilistic decay gate
+         |-- skip forwarding OR
+         '-- forward to random 2-3 peers (excluding source/already-forwarded)
+
+
+11) Discovery, Energy, and Health Loops
+
+DiscoveryService adaptive policy uses:
+- runtime profile
+- connected peer count
+- file transfer active state
+- battery low flag
+- jitter (0-3s)
+
+WiFiTransport health/reconnect loop:
+- keepalive interval: 8s
+- timeout threshold: 24s
+- health checks: every 10s
+- reconnect checks: every 8s
+- known endpoint persistence for auto-reconnect
+- location-related discovery failures surfaced to UI with settings shortcut
+
+
+12) Persistence Model (Schema v13)
+
+Core tables:
+- peers
+- chat_messages
+- message_queue (next_retry_time, expiry_time)
+- routes
+- deduplication_cache
+- blocked_peers
+- pending_acks
+- peer_keys
+- known_wifi_endpoints
+- file_transfers
+- broadcast_messages
+
+
+13) Current Gaps (Implemented Partially / Pending)
+
+- connectionUpgradeRequest/Response enums exist, but no full upgrade orchestration yet
+- abstract TransportService does not expose onConnectionLost/onConnectionRestored callbacks
+- routing stats exist, but adaptive TTL/queue tuning based on stats is not wired yet
+- ACK batching + explicit 5/15/45 minute retry hardening not fully implemented
+- dedicated Android foreground service module not implemented yet
+
+
+14) Design Principles in Current Code
+
+- Stable cryptographic identity over unstable transport IDs
+- Profile/capability-gated direct/mesh/file-transfer UX
+- Delay-tolerant delivery via persistent queue + route learning
+- Opportunistic multi-transport sending
+- Signed emergency broadcast channel
+- Recovery-first behavior for reconnects and interrupted transfers

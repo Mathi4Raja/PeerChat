@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
+import '../config/protocol_config.dart';
 import '../utils/file_size_formatter.dart';
 
 class ReceivedFilesHistoryScreen extends StatefulWidget {
@@ -32,7 +33,7 @@ class _ReceivedFilesHistoryScreenState
 
     final docsDir = await getApplicationDocumentsDirectory();
     final dir = Directory(
-      '${docsDir.path}${Platform.pathSeparator}peerchat_files',
+      '${docsDir.path}${Platform.pathSeparator}${FileTransferPathConfig.fallbackReceivedFolderName}',
     );
 
     final files = <File>[];

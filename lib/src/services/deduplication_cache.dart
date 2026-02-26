@@ -1,21 +1,23 @@
 import 'package:sqflite/sqflite.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 import 'db_service.dart';
 
 class DeduplicationCache {
   final DBService _db;
-  static const int maxCacheSize = 10000;
-  static const Duration absoluteMaxAge = Duration(days: 7);
+  static const int maxCacheSize = DeduplicationLimits.maxCacheSize;
 
   /// In-memory forwarding fingerprint cache.
   /// Key: "$messageId-$senderId-$hopCount"
   /// Prevents duplicate propagation across different nodes.
   final Set<String> _forwardingFingerprints = {};
-  static const int _maxFingerprints = 5000;
+  static const int _maxFingerprints = DeduplicationLimits.maxFingerprints;
 
   /// In-memory forwardedTo tracking per messageId.
   /// Tracks which peers we've already forwarded a specific message to.
   final Map<String, Set<String>> _forwardedTo = {};
-  static const int _maxForwardedToEntries = 2000;
+  static const int _maxForwardedToEntries =
+      DeduplicationLimits.maxForwardedToEntries;
 
   DeduplicationCache(this._db);
 
@@ -34,7 +36,7 @@ class DeduplicationCache {
   Future<void> markSeen(String messageId, int originalTimestamp) async {
     final database = await _db.db;
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    
+
     await database.insert(
       'deduplication_cache',
       {
@@ -49,7 +51,7 @@ class DeduplicationCache {
     final count = Sqflite.firstIntValue(
       await database.rawQuery('SELECT COUNT(*) FROM deduplication_cache'),
     );
-    
+
     if (count != null && count > maxCacheSize) {
       await evictOldest();
     }
@@ -58,8 +60,8 @@ class DeduplicationCache {
   // Remove oldest entries when cache exceeds size limit
   Future<void> evictOldest() async {
     final database = await _db.db;
-    final entriesToRemove = maxCacheSize ~/ 10; // Remove 10% of cache
-    
+    final entriesToRemove = maxCacheSize ~/ DeduplicationLimits.evictionDivisor;
+
     await database.rawDelete('''
       DELETE FROM deduplication_cache
       WHERE message_id IN (
@@ -74,9 +76,9 @@ class DeduplicationCache {
   Future<void> cleanup() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(absoluteMaxAge)
+        .subtract(DeduplicationTimerConfig.absoluteMaxAge)
         .millisecondsSinceEpoch;
-    
+
     await database.delete(
       'deduplication_cache',
       where: 'original_timestamp < ?',
@@ -85,11 +87,15 @@ class DeduplicationCache {
 
     // Trim in-memory caches
     if (_forwardingFingerprints.length > _maxFingerprints) {
-      final toRemove = _forwardingFingerprints.take(_maxFingerprints ~/ 2).toList();
+      final toRemove = _forwardingFingerprints
+          .take(_maxFingerprints ~/ DeduplicationLimits.trimDivisor)
+          .toList();
       _forwardingFingerprints.removeAll(toRemove);
     }
     if (_forwardedTo.length > _maxForwardedToEntries) {
-      final keysToRemove = _forwardedTo.keys.take(_maxForwardedToEntries ~/ 2).toList();
+      final keysToRemove = _forwardedTo.keys
+          .take(_maxForwardedToEntries ~/ DeduplicationLimits.trimDivisor)
+          .toList();
       for (final key in keysToRemove) {
         _forwardedTo.remove(key);
       }
@@ -130,9 +136,10 @@ class DeduplicationCache {
   Future<Map<String, int>> getStats() async {
     final database = await _db.db;
     final count = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM deduplication_cache'),
-    ) ?? 0;
-    
+          await database.rawQuery('SELECT COUNT(*) FROM deduplication_cache'),
+        ) ??
+        0;
+
     return {
       'total_entries': count,
       'max_size': maxCacheSize,

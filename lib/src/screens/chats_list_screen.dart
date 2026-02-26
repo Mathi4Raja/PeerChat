@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
+import '../config/identity_ui_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'chat_screen.dart';
@@ -209,11 +210,15 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(
-                      emptySubtitle,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        color: AppTheme.textSecondary,
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 18),
+                      child: Text(
+                        emptySubtitle,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          color: AppTheme.textSecondary,
+                        ),
                       ),
                     ),
                   ],
@@ -241,7 +246,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           final rawDisplayName = (row['display_name'] as String?) ?? '';
           String displayName = rawDisplayName.trim();
           if (displayName.isEmpty ||
-              displayName == 'PeerChat User' ||
+              displayName == IdentityUiConfig.defaultDisplayName ||
               (displayName.length > 40 && displayName == peerId)) {
             displayName = NameGenerator.generateShortName(peerId);
           }

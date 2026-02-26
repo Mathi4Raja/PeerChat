@@ -9,6 +9,9 @@ import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/file_transfer.dart';
+import '../config/limits_config.dart';
+import '../config/timer_config.dart';
+import '../config/protocol_config.dart';
 import 'db_service.dart';
 import 'transport_service.dart';
 import 'connection_manager.dart';
@@ -47,12 +50,6 @@ class FileTransferService extends ChangeNotifier {
 
   /// ACK timeout timers per file transfer.
   final Map<String, Timer> _ackTimers = {};
-
-  /// Stale transfer cleanup interval.
-  static const Duration staleThreshold = Duration(minutes: 10);
-
-  /// Temp file max age for cleanup.
-  static const Duration tempFileMaxAge = Duration(hours: 24);
 
   FileTransferService(
       this._db, this._transportService, this._connectionManager);
@@ -104,10 +101,20 @@ class FileTransferService extends ChangeNotifier {
     }
 
     final fileSize = await file.length();
+    if (fileSize > FileTransferLimits.maxSendFileSizeBytes) {
+      debugPrint(
+          'FileTransfer: Cannot send — file too large ($fileSize bytes > ${FileTransferLimits.maxSendFileSizeBytes} bytes)');
+      return null;
+    }
     final fileName = filePath.split(Platform.pathSeparator).last;
-    final prefix = peerId.length >= 8 ? peerId.substring(0, 8) : peerId;
+    final prefix = peerId.length >= MessageLimits.generatedIdSenderPrefixLength
+        ? peerId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
+        : peerId;
     // File transfer protocol reserves 36 chars for fileId on wire.
-    final compactUuid = const Uuid().v4().replaceAll('-', '').substring(0, 27);
+    final compactUuid = const Uuid()
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     final fileId = '${prefix}_$compactUuid';
 
     // Compute SHA-256 hash
@@ -204,7 +211,8 @@ class FileTransferService extends ChangeNotifier {
     // Disk pressure check
     final available = await _getAvailableStorage();
     final required = session.metadata.fileSize;
-    if (available < required * 1.2) {
+    if (available <
+        required * FileTransferLimits.minStorageHeadroomMultiplier) {
       debugPrint(
           'FileTransfer: Insufficient storage. Available: $available, Required: $required');
       session.state = FileTransferState.failed;
@@ -212,7 +220,7 @@ class FileTransferService extends ChangeNotifier {
         peerId: session.peerId,
         type: FileTransferMessageType.fileReject,
         fileId: fileId,
-        data: utf8.encode('INSUFFICIENT_STORAGE'),
+        data: utf8.encode(FileTransferProtocolConfig.insufficientStorageReason),
       );
       _transferUpdateController.add(session);
       notifyListeners();
@@ -355,6 +363,17 @@ class FileTransferService extends ChangeNotifier {
       String fromPeerId, String fileId, Uint8List data) async {
     final metadata = _decodeMetadata(fileId, data);
     if (metadata == null) return;
+    if (metadata.fileSize > FileTransferLimits.maxSendFileSizeBytes) {
+      debugPrint(
+          'FileTransfer: Rejecting incoming file too large (${metadata.fileSize} bytes > ${FileTransferLimits.maxSendFileSizeBytes} bytes)');
+      await _sendFileTransferMessage(
+        peerId: fromPeerId,
+        type: FileTransferMessageType.fileReject,
+        fileId: fileId,
+        data: utf8.encode(FileTransferProtocolConfig.fileTooLargeReason),
+      );
+      return;
+    }
 
     final session = FileTransferSession(
       fileId: fileId,
@@ -408,10 +427,10 @@ class FileTransferService extends ChangeNotifier {
     }
 
     // Parse chunk: first 4 bytes = index, rest = data
-    if (data.length < 4) return;
+    if (data.length < FileTransferLimits.chunkHeaderBytes) return;
     final chunkIndex =
         (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-    final chunkData = data.sublist(4);
+    final chunkData = data.sublist(FileTransferLimits.chunkHeaderBytes);
 
     // Skip if already received (dedup)
     if (session.chunkTracker.isReceived(chunkIndex)) return;
@@ -426,7 +445,7 @@ class FileTransferService extends ChangeNotifier {
 
     // Send cumulative ACK
     final highestContiguous = session.chunkTracker.highestContiguous;
-    final ackData = Uint8List(4)
+    final ackData = Uint8List(FileTransferLimits.chunkHeaderBytes)
       ..[0] = (highestContiguous >> 24) & 0xFF
       ..[1] = (highestContiguous >> 16) & 0xFF
       ..[2] = (highestContiguous >> 8) & 0xFF
@@ -445,7 +464,9 @@ class FileTransferService extends ChangeNotifier {
     }
 
     // Update persist state periodically (every 10 chunks)
-    if (session.chunkTracker.receivedCount % 10 == 0) {
+    if (session.chunkTracker.receivedCount %
+            FileTransferLimits.statePersistEveryNChunks ==
+        0) {
       await _persistTransferState(session);
     }
 
@@ -459,7 +480,7 @@ class FileTransferService extends ChangeNotifier {
       return;
     }
 
-    if (data.length < 4) return;
+    if (data.length < FileTransferLimits.chunkHeaderBytes) return;
     final highestContiguous =
         (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 
@@ -532,7 +553,7 @@ class FileTransferService extends ChangeNotifier {
       return;
     }
 
-    if (data.length < 4) return;
+    if (data.length < FileTransferLimits.chunkHeaderBytes) return;
     final resumeIndex =
         (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 
@@ -630,7 +651,7 @@ class FileTransferService extends ChangeNotifier {
 
         // Prepend chunk index (4 bytes)
         final payload = BytesBuilder();
-        payload.add(Uint8List(4)
+        payload.add(Uint8List(FileTransferLimits.chunkHeaderBytes)
           ..[0] = (chunkIndex >> 24) & 0xFF
           ..[1] = (chunkIndex >> 16) & 0xFF
           ..[2] = (chunkIndex >> 8) & 0xFF
@@ -660,7 +681,7 @@ class FileTransferService extends ChangeNotifier {
   void _startAckTimer(FileTransferSession session) {
     _ackTimers[session.fileId]?.cancel();
     _ackTimers[session.fileId] = Timer.periodic(
-      const Duration(seconds: 2),
+      FileTransferTimerConfig.ackCheckInterval,
       (_) => _checkAckTimeouts(session),
     );
   }
@@ -696,7 +717,8 @@ class FileTransferService extends ChangeNotifier {
     await _sendNextChunks(session);
 
     // Check for stale transfer (no activity for 10 minutes)
-    if (now - session.lastActivityTimestamp > staleThreshold.inMilliseconds) {
+    if (now - session.lastActivityTimestamp >
+        FileTransferTimerConfig.staleThreshold.inMilliseconds) {
       debugPrint('FileTransfer: Transfer ${session.fileId} stale, aborting');
       session.state = FileTransferState.failed;
       _ackTimers[session.fileId]?.cancel();
@@ -852,9 +874,10 @@ class FileTransferService extends ChangeNotifier {
     final now = DateTime.now();
 
     for (final entity in entities) {
-      if (entity.path.contains('peerchat_transfer_')) {
+      if (entity.path.contains(FileTransferPathConfig.transferTempPrefix)) {
         final stat = await entity.stat();
-        if (now.difference(stat.modified) > tempFileMaxAge) {
+        if (now.difference(stat.modified) >
+            FileTransferTimerConfig.tempFileMaxAge) {
           await entity.delete(recursive: true);
           debugPrint(
               'FileTransfer: Cleaned up old temp artifact: ${entity.path}');
@@ -870,14 +893,22 @@ class FileTransferService extends ChangeNotifier {
       final tempDir = await getTemporaryDirectory();
       final stat = await Process.run('df', ['-k', tempDir.path]);
       // Fallback: assume plenty of storage if we can't check
-      if (stat.exitCode != 0) return 1024 * 1024 * 1024; // 1GB
+      if (stat.exitCode != 0) {
+        return FileTransferLimits.fallbackAvailableStorageBytes;
+      }
       final lines = stat.stdout.toString().split('\n');
-      if (lines.length < 2) return 1024 * 1024 * 1024;
+      if (lines.length < 2) {
+        return FileTransferLimits.fallbackAvailableStorageBytes;
+      }
       final parts = lines[1].split(RegExp(r'\s+'));
-      if (parts.length < 4) return 1024 * 1024 * 1024;
-      return (int.tryParse(parts[3]) ?? (1024 * 1024 * 1024)) * 1024;
+      if (parts.length < 4) {
+        return FileTransferLimits.fallbackAvailableStorageBytes;
+      }
+      return (int.tryParse(parts[3]) ??
+              FileTransferLimits.fallbackAvailableStorageBytes) *
+          FileTransferLimits.dfBlocksToBytesMultiplier;
     } catch (_) {
-      return 1024 * 1024 * 1024; // Fallback: assume 1GB
+      return FileTransferLimits.fallbackAvailableStorageBytes;
     }
   }
 
@@ -885,14 +916,16 @@ class FileTransferService extends ChangeNotifier {
     final transportId = _connectionManager.getTransportId(peerId) ?? '';
     final looksBluetooth =
         transportId.contains(':') || transportId.startsWith('BT_');
-    return looksBluetooth ? 15000 : 10000;
+    return looksBluetooth
+        ? FileTransferLimits.ackTimeoutBluetoothMs
+        : FileTransferLimits.ackTimeoutWifiMs;
   }
 
   Future<void> _requestResumeFromSender(FileTransferSession session) async {
     if (session.direction != TransferDirection.receiving) return;
     await _ensureReceiverTempDir(session);
     final resumeIndex = session.chunkTracker.highestContiguous + 1;
-    final resumeData = Uint8List(4)
+    final resumeData = Uint8List(FileTransferLimits.chunkHeaderBytes)
       ..[0] = (resumeIndex >> 24) & 0xFF
       ..[1] = (resumeIndex >> 16) & 0xFF
       ..[2] = (resumeIndex >> 8) & 0xFF
@@ -921,7 +954,7 @@ class FileTransferService extends ChangeNotifier {
 
     // Protocol: [0xFE] [type:1] [fileId:36] [data...]
     final buffer = BytesBuilder();
-    buffer.addByte(0xFE); // File transfer protocol marker
+    buffer.addByte(FileTransferLimits.protocolMarker);
     buffer.addByte(type.index);
     buffer.add(utf8.encode(_wireFileId(fileId)));
     buffer.add(data);
@@ -962,16 +995,27 @@ class FileTransferService extends ChangeNotifier {
 
   /// Check if a raw transport message is a file transfer protocol message.
   static bool isFileTransferMessage(Uint8List data) {
-    return data.isNotEmpty && data[0] == 0xFE;
+    return data.isNotEmpty &&
+        data[FileTransferProtocolConfig.markerOffset] ==
+            FileTransferLimits.protocolMarker;
   }
 
   /// Parse and dispatch a file transfer protocol message.
   Future<void> dispatchRawMessage(String fromPeerId, Uint8List data) async {
-    if (data.length < 38) return; // 1 marker + 1 type + 36 fileId
+    const minHeaderLength = FileTransferProtocolConfig.prefixHeaderBytes +
+        FileTransferLimits.wireFileIdLength;
+    if (data.length < minHeaderLength) return;
 
-    final type = FileTransferMessageType.values[data[1]];
-    final fileId = utf8.decode(data.sublist(2, 38)).trim();
-    final payload = data.sublist(38);
+    final type = FileTransferMessageType
+        .values[data[FileTransferProtocolConfig.typeOffset]];
+    final fileId = utf8
+        .decode(data.sublist(
+            FileTransferProtocolConfig.prefixHeaderBytes,
+            FileTransferProtocolConfig.prefixHeaderBytes +
+                FileTransferLimits.wireFileIdLength))
+        .trim();
+    final payload = data.sublist(FileTransferProtocolConfig.prefixHeaderBytes +
+        FileTransferLimits.wireFileIdLength);
 
     await handleFileTransferMessage(
       fromPeerId: fromPeerId,
@@ -983,7 +1027,7 @@ class FileTransferService extends ChangeNotifier {
 
   Future<String> _transferTempDirPath(String fileId) async {
     final tempDir = await getTemporaryDirectory();
-    return '${tempDir.path}${Platform.pathSeparator}peerchat_transfer_$fileId';
+    return '${tempDir.path}${Platform.pathSeparator}${FileTransferPathConfig.transferTempPrefix}$fileId';
   }
 
   Future<String> _resolveReceivedFileDestination(
@@ -994,8 +1038,8 @@ class FileTransferService extends ChangeNotifier {
     }
 
     final docsDir = await getApplicationDocumentsDirectory();
-    final fallbackDir =
-        Directory('${docsDir.path}${Platform.pathSeparator}peerchat_files');
+    final fallbackDir = Directory(
+        '${docsDir.path}${Platform.pathSeparator}${FileTransferPathConfig.fallbackReceivedFolderName}');
     if (!await fallbackDir.exists()) {
       await fallbackDir.create(recursive: true);
     }
@@ -1020,7 +1064,8 @@ class FileTransferService extends ChangeNotifier {
     }
 
     final rootPath = normalized.substring(0, androidIndex);
-    final peerChatDir = Directory('$rootPath/PeerChat');
+    final peerChatDir = Directory(
+        '$rootPath/${FileTransferPathConfig.androidSharedFolderName}');
     if (!await peerChatDir.exists()) {
       await peerChatDir.create(recursive: true);
     }
@@ -1076,18 +1121,20 @@ class FileTransferService extends ChangeNotifier {
         .trim();
 
     if (sanitized.isEmpty) {
-      return 'received_${DateTime.now().millisecondsSinceEpoch}.bin';
+      return '${FileTransferPathConfig.defaultReceivedPrefix}${DateTime.now().millisecondsSinceEpoch}.bin';
     }
     return sanitized;
   }
 
   String _wireFileId(String fileId) {
-    if (fileId.length >= 36) return fileId.substring(0, 36);
-    return fileId.padRight(36);
+    if (fileId.length >= FileTransferLimits.wireFileIdLength) {
+      return fileId.substring(0, FileTransferLimits.wireFileIdLength);
+    }
+    return fileId.padRight(FileTransferLimits.wireFileIdLength);
   }
 
   String _chunkTempPath(String transferDirPath, int chunkIndex) {
-    return '$transferDirPath${Platform.pathSeparator}chunk_$chunkIndex.part';
+    return '$transferDirPath${Platform.pathSeparator}${FileTransferPathConfig.chunkPartPrefix}$chunkIndex${FileTransferPathConfig.chunkPartExtension}';
   }
 
   Future<String> _ensureReceiverTempDir(FileTransferSession session) async {

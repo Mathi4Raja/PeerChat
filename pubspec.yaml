@@ -24,9 +24,9 @@ dependencies:
   flutter_blue_classic: ^0.0.9
   nearby_connections: ^4.3.0
   permission_handler: ^12.0.1
-  google_fonts: ^6.2.1
+  google_fonts: ^8.0.2
   crypto: ^3.0.6
-  file_picker: ^8.3.5
+  file_picker: ^10.3.10
   open_filex: ^4.7.0
 
   mobile_scanner: ^7.2.0

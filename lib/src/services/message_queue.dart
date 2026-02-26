@@ -2,6 +2,8 @@ import 'package:sqflite/sqflite.dart';
 import 'db_service.dart';
 import '../models/queued_message.dart';
 import '../models/mesh_message.dart';
+import '../config/limits_config.dart';
+import '../config/protocol_config.dart';
 
 class QueueStats {
   final int totalMessages;
@@ -19,11 +21,11 @@ class QueueStats {
 
 class MessageQueue {
   final DBService _db;
-  static const int maxQueueSize = 5000;
+  static const int maxQueueSize = QueueLimits.maxQueueSize;
 
   /// Maximum messages per destination peer — prevents single unreachable peer
   /// from consuming the entire queue.
-  static const int maxMessagesPerPeer = 50;
+  static const int maxMessagesPerPeer = QueueLimits.maxMessagesPerPeer;
 
   MessageQueue(this._db);
 
@@ -106,7 +108,7 @@ class MessageQueue {
       WHERE next_retry_time <= ?
         AND (expiry_time = 0 OR expiry_time > ?)
       ORDER BY
-        (priority + CASE WHEN (? - queued_timestamp) >= 3600000 THEN 1 ELSE 0 END) DESC,
+        (priority + CASE WHEN (? - queued_timestamp) >= ${QueuePolicyConfig.stalePriorityBoostAgeMs} THEN 1 ELSE 0 END) DESC,
         queued_timestamp ASC
     ''', [now, now, now]);
 
@@ -162,7 +164,10 @@ class MessageQueue {
     // Exponential backoff: base * 2^min(retryCount, 10)
     // Caps at ~30s * 1024 ≈ 8.5 hours max delay
     final backoffMs = QueuedMessage.baseRetryInterval *
-        (1 << (newAttempts < 10 ? newAttempts : 10));
+        (1 <<
+            (newAttempts < QueueLimits.backoffExponentCap
+                ? newAttempts
+                : QueueLimits.backoffExponentCap));
     final nextRetryTime = now + backoffMs;
 
     await database.rawUpdate('''

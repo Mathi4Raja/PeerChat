@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
+import '../config/identity_ui_config.dart';
 import '../models/peer.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
@@ -42,7 +43,8 @@ class PeersList extends StatelessWidget {
                 ),
                 const SizedBox(width: 8),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: AppTheme.primary.withValues(alpha: 0.1),
                     borderRadius: BorderRadius.circular(8),
@@ -70,7 +72,8 @@ class PeersList extends StatelessWidget {
                 count: peersWithApp.length,
               ),
               const SizedBox(height: 8),
-              ...peersWithApp.map((p) => _buildPeerTile(context, p, connectedIds.contains(p.id))),
+              ...peersWithApp.map((p) =>
+                  _buildPeerTile(context, p, connectedIds.contains(p.id))),
               const SizedBox(height: 16),
             ],
 
@@ -120,7 +123,10 @@ class PeersList extends StatelessWidget {
   }
 
   Widget _buildSectionHeader(BuildContext context,
-      {required String title, required IconData icon, required Color color, required int count}) {
+      {required String title,
+      required IconData icon,
+      required Color color,
+      required int count}) {
     return Row(
       children: [
         Container(
@@ -152,14 +158,15 @@ class PeersList extends StatelessWidget {
   Widget _buildPeerTile(BuildContext context, Peer peer, bool isConnected) {
     final bool isVerified = peer.hasApp;
     String displayName = peer.displayName;
-    if (displayName == 'PeerChat User' || 
-       (displayName.length > 40 && displayName == peer.id)) {
+    if (displayName == IdentityUiConfig.defaultDisplayName ||
+        (displayName.length > 40 && displayName == peer.id)) {
       displayName = NameGenerator.generateShortName(peer.id);
     }
     final initials = NameGenerator.generateInitials(peer.id);
 
     final bool isWiFi = peer.address.contains('.') || peer.address == 'mDNS';
-    final bool isBT = peer.address.contains(':') || peer.address.startsWith('00:');
+    final bool isBT =
+        peer.address.contains(':') || peer.address.startsWith('00:');
 
     final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
     final avatarColor = isConnected
@@ -202,7 +209,8 @@ class PeersList extends StatelessWidget {
               ),
             ),
             if (isWiFi) _buildTransportBadge(Icons.wifi_rounded, Colors.blue),
-            if (isBT) _buildTransportBadge(Icons.bluetooth_rounded, Colors.indigo),
+            if (isBT)
+              _buildTransportBadge(Icons.bluetooth_rounded, Colors.indigo),
           ],
         ),
         subtitle: Text(
@@ -215,8 +223,12 @@ class PeersList extends StatelessWidget {
         ),
         trailing: isVerified
             ? Icon(
-                isConnected ? Icons.check_circle_rounded : Icons.chevron_right_rounded,
-                color: isConnected ? AppTheme.online : AppTheme.textSecondary.withValues(alpha: 0.4),
+                isConnected
+                    ? Icons.check_circle_rounded
+                    : Icons.chevron_right_rounded,
+                color: isConnected
+                    ? AppTheme.online
+                    : AppTheme.textSecondary.withValues(alpha: 0.4),
                 size: 18,
               )
             : Text(

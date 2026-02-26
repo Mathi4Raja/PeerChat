@@ -11,6 +11,8 @@ import 'dart:async';
 import 'models/peer.dart';
 import 'models/file_transfer.dart';
 import 'models/runtime_profile.dart';
+import 'config/timer_config.dart';
+import 'config/network_config.dart';
 import 'services/db_service.dart';
 import 'services/discovery_service.dart';
 import 'services/mesh_router_service.dart';
@@ -45,7 +47,10 @@ class AppState extends ChangeNotifier {
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   final BatteryStatusService _batteryStatusService = BatteryStatusService();
   static const String _runtimeProfileStorageKey = 'runtime_profile';
+  static const String _lastNormalRuntimeProfileStorageKey =
+      'last_normal_runtime_profile';
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
+  RuntimeProfile _lastNormalRuntimeProfile = RuntimeProfile.normalDirect;
   bool _batteryLow = false;
   bool _isCharging = false;
   int _batteryLevel = 100;
@@ -61,6 +66,7 @@ class AppState extends ChangeNotifier {
   bool get isCharging => _isCharging;
   int get batteryLevel => _batteryLevel;
   RuntimeProfile get runtimeProfile => _runtimeProfile;
+  RuntimeProfile get preferredNormalRuntimeProfile => _lastNormalRuntimeProfile;
   bool get allowsFileTransfers =>
       _runtimeProfile == RuntimeProfile.normalDirect;
   bool get forceMeshRouting => _runtimeProfile != RuntimeProfile.normalDirect;
@@ -91,33 +97,36 @@ class AppState extends ChangeNotifier {
   // Get peers with PeerChat app installed (discovered via mDNS)
   List<Peer> get peersWithApp {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final fiveMinutesAgo = now - (5 * 60 * 1000); // 5 minutes
+    final activeWindowStart =
+        now - AppStateTimerConfig.activePeerWindow.inMilliseconds;
 
     // Only show peers seen in the last 5 minutes, excluding self
     return peers
-        .where(
-            (p) => p.hasApp && p.lastSeen > fiveMinutesAgo && p.id != publicKey)
+        .where((p) =>
+            p.hasApp && p.lastSeen > activeWindowStart && p.id != publicKey)
         .toList();
   }
 
   // Get peers without app (Bluetooth-only discovery)
   List<Peer> get peersWithoutApp {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final fiveMinutesAgo = now - (5 * 60 * 1000); // 5 minutes
+    final activeWindowStart =
+        now - AppStateTimerConfig.activePeerWindow.inMilliseconds;
 
     // Only show peers seen in the last 5 minutes, excluding self
     return peers
         .where((p) =>
-            !p.hasApp && p.lastSeen > fiveMinutesAgo && p.id != publicKey)
+            !p.hasApp && p.lastSeen > activeWindowStart && p.id != publicKey)
         .toList();
   }
 
   // Get all active peers (seen in last 5 minutes, excluding self)
   List<Peer> get activePeers {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final fiveMinutesAgo = now - (5 * 60 * 1000);
+    final activeWindowStart =
+        now - AppStateTimerConfig.activePeerWindow.inMilliseconds;
     final active = peers
-        .where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey)
+        .where((p) => p.lastSeen > activeWindowStart && p.id != publicKey)
         .toList();
     debugPrint(
         'AppState.activePeers: ${active.length} of ${peers.length} peers are active');
@@ -173,6 +182,11 @@ class AppState extends ChangeNotifier {
       debugPrint('AppState.init: Opening Database...');
       peers = await _db.allPeers();
       _runtimeProfile = await _loadRuntimeProfile();
+      _lastNormalRuntimeProfile = await _loadLastNormalRuntimeProfile();
+      if (_runtimeProfile != RuntimeProfile.emergencyBattery) {
+        _lastNormalRuntimeProfile = _runtimeProfile;
+        await _persistLastNormalRuntimeProfile(_lastNormalRuntimeProfile);
+      }
 
       debugPrint('AppState.init: Composing P2P Services...');
       final cryptoService = CryptoService(_sodium);
@@ -265,9 +279,9 @@ class AppState extends ChangeNotifier {
       await _startBatteryMonitoring();
 
       final cleanupStats = await clearStaleNetworkData(
-        stalePeerAge: const Duration(minutes: 30),
-        staleRouteAge: const Duration(minutes: 30),
-        staleEndpointAge: const Duration(hours: 2),
+        stalePeerAge: DatabaseTimerConfig.stalePeerAge,
+        staleRouteAge: DatabaseTimerConfig.staleRouteAge,
+        staleEndpointAge: DatabaseTimerConfig.staleEndpointAge,
       );
       debugPrint(
           'AppState.init: stale cleanup peers=${cleanupStats['removed_peers']} routes=${(cleanupStats['removed_routes_by_age'] ?? 0) + (cleanupStats['removed_routes_via_stale_peers'] ?? 0)} queue=${cleanupStats['removed_queue_via_stale_peers']} endpoints=${cleanupStats['removed_known_endpoints']}');
@@ -285,7 +299,8 @@ class AppState extends ChangeNotifier {
         final activeCount = peers
             .where((p) =>
                 p.id != publicKey &&
-                (now - p.lastSeen) <= const Duration(minutes: 5).inMilliseconds)
+                (now - p.lastSeen) <=
+                    AppStateTimerConfig.activePeerWindow.inMilliseconds)
             .length;
         debugPrint(
             'AppState: Reloaded ${peers.length} peers (was $oldCount), active=$activeCount');
@@ -300,7 +315,7 @@ class AppState extends ChangeNotifier {
         await refreshUnreadCounts();
       });
 
-      // start discovery (use default port 9000 for now)
+      // Start discovery using configured local service port.
       _discovery.onPeerFound.listen((p) async {
         await _db.upsertPeer(p);
         peers = await _db.allPeers();
@@ -312,9 +327,10 @@ class AppState extends ChangeNotifier {
         // Discovery can hang on some Android builds (mDNS socket/reusePort issues).
         // Do not block full app startup on this path.
         await _discovery
-            .start(publicKey ?? 'unknown', 9000, name: displayName)
+            .start(publicKey ?? 'unknown', NetworkConfig.discoveryPort,
+                name: displayName)
             .timeout(
-          const Duration(seconds: 2),
+          AppStateTimerConfig.discoveryStartupTimeout,
           onTimeout: () {
             debugPrint(
                 'AppState.init: Discovery startup timed out (continuing)');
@@ -336,8 +352,9 @@ class AppState extends ChangeNotifier {
 
   void _startPeerRefresh() {
     _peerRefreshTimer =
-        Timer.periodic(const Duration(seconds: 10), (timer) async {
-      debugPrint('AppState: Periodic peer refresh (10s timer)');
+        Timer.periodic(AppStateTimerConfig.peerRefreshInterval, (timer) async {
+      debugPrint(
+          'AppState: Periodic peer refresh (${AppStateTimerConfig.peerRefreshInterval.inSeconds}s timer)');
       final oldCount = peers.length;
       peers = await _db.allPeers();
       debugPrint(
@@ -345,9 +362,10 @@ class AppState extends ChangeNotifier {
 
       // Log active peers count
       final now = DateTime.now().millisecondsSinceEpoch;
-      final fiveMinutesAgo = now - (5 * 60 * 1000);
+      final activeWindowStart =
+          now - AppStateTimerConfig.activePeerWindow.inMilliseconds;
       final activeCount = peers
-          .where((p) => p.lastSeen > fiveMinutesAgo && p.id != publicKey)
+          .where((p) => p.lastSeen > activeWindowStart && p.id != publicKey)
           .length;
       debugPrint('AppState: $activeCount active peers (seen in last 5 min)');
 
@@ -361,7 +379,8 @@ class AppState extends ChangeNotifier {
   Future<void> _startBatteryMonitoring() async {
     await _refreshBatteryStatus();
     _batteryPollTimer?.cancel();
-    _batteryPollTimer = Timer.periodic(const Duration(minutes: 1), (_) async {
+    _batteryPollTimer =
+        Timer.periodic(AppStateTimerConfig.batteryPollInterval, (_) async {
       await _refreshBatteryStatus();
     });
   }
@@ -429,13 +448,64 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  Future<RuntimeProfile> _loadLastNormalRuntimeProfile() async {
+    try {
+      final raw =
+          await _secureStorage.read(key: _lastNormalRuntimeProfileStorageKey);
+      final parsed = runtimeProfileFromStorage(raw);
+      if (parsed == RuntimeProfile.emergencyBattery) {
+        return RuntimeProfile.normalDirect;
+      }
+      return parsed;
+    } catch (_) {
+      return RuntimeProfile.normalDirect;
+    }
+  }
+
+  Future<void> _persistLastNormalRuntimeProfile(RuntimeProfile profile) async {
+    if (profile == RuntimeProfile.emergencyBattery) return;
+    try {
+      await _secureStorage.write(
+        key: _lastNormalRuntimeProfileStorageKey,
+        value: profile.storageValue,
+      );
+    } catch (_) {
+      // Ignore persistence errors; runtime behavior still applies.
+    }
+  }
+
   Future<void> setRuntimeProfile(RuntimeProfile profile) async {
     if (_runtimeProfile == profile) return;
+    final previousProfile = _runtimeProfile;
+
+    if (profile == RuntimeProfile.emergencyBattery) {
+      if (previousProfile != RuntimeProfile.emergencyBattery) {
+        _lastNormalRuntimeProfile = previousProfile;
+        await _persistLastNormalRuntimeProfile(_lastNormalRuntimeProfile);
+      }
+    } else {
+      _lastNormalRuntimeProfile = profile;
+      await _persistLastNormalRuntimeProfile(_lastNormalRuntimeProfile);
+    }
+
     _runtimeProfile = profile;
     meshRouter.setRuntimeProfile(profile);
     await _persistRuntimeProfile(profile);
     _applyDiscoveryPolicy();
     notifyListeners();
+  }
+
+  Future<void> setNormalRuntimeProfile(RuntimeProfile profile) async {
+    if (profile == RuntimeProfile.emergencyBattery) return;
+    await setRuntimeProfile(profile);
+  }
+
+  Future<void> enableBatterySaver() async {
+    await setRuntimeProfile(RuntimeProfile.emergencyBattery);
+  }
+
+  Future<void> disableBatterySaver() async {
+    await setRuntimeProfile(_lastNormalRuntimeProfile);
   }
 
   Future<void> _requestBatteryOptimizationExemption() async {
@@ -491,7 +561,9 @@ class AppState extends ChangeNotifier {
 
       // Restart mDNS discovery service
       await _discovery.stop();
-      await _discovery.start(publicKey ?? 'unknown', 9000, name: displayName);
+      await _discovery.start(
+          publicKey ?? 'unknown', NetworkConfig.discoveryPort,
+          name: displayName);
 
       // Restart WiFi Direct advertising and discovery
       await meshRouter.restartWiFiDirect();
@@ -515,9 +587,9 @@ class AppState extends ChangeNotifier {
 
   /// Utility to purge stale peers/routes/endpoints from the local DB.
   Future<Map<String, int>> clearStaleNetworkData({
-    Duration stalePeerAge = const Duration(minutes: 30),
-    Duration staleRouteAge = const Duration(minutes: 30),
-    Duration staleEndpointAge = const Duration(hours: 2),
+    Duration stalePeerAge = DatabaseTimerConfig.stalePeerAge,
+    Duration staleRouteAge = DatabaseTimerConfig.staleRouteAge,
+    Duration staleEndpointAge = DatabaseTimerConfig.staleEndpointAge,
   }) async {
     final keepIds = <String>[];
     final id = publicKey;

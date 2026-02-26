@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../config/protocol_config.dart';
 
 /// Lightweight battery status fetcher without external dependencies.
 class BatteryStatusService {
@@ -56,5 +57,6 @@ class BatteryStatus {
     required this.isCharging,
   });
 
-  bool get isLow => !isCharging && level <= 20;
+  bool get isLow =>
+      !isCharging && level <= BatteryPolicyConfig.lowBatteryThresholdPercent;
 }

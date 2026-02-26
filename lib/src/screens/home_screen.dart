@@ -71,10 +71,11 @@ class HomeScreen extends StatelessWidget {
               child: InkWell(
                 borderRadius: BorderRadius.circular(18),
                 onTap: () async {
-                  final nextProfile = appState.isEmergencyBatteryProfile
-                      ? RuntimeProfile.normalDirect
-                      : RuntimeProfile.emergencyBattery;
-                  await appState.setRuntimeProfile(nextProfile);
+                  if (appState.isEmergencyBatteryProfile) {
+                    await appState.disableBatterySaver();
+                  } else {
+                    await appState.enableBatterySaver();
+                  }
                 },
                 child: Padding(
                   padding: const EdgeInsets.all(6),
@@ -233,6 +234,11 @@ class _RuntimeProfileSection extends StatelessWidget {
   Widget build(BuildContext context) {
     return Consumer<AppState>(
       builder: (context, appState, _) {
+        final isBatterySaver = appState.isEmergencyBatteryProfile;
+        final selectedProfile = isBatterySaver
+            ? RuntimeProfile.normalMesh
+            : appState.runtimeProfile;
+
         return Container(
           decoration: AppTheme.glassCard(),
           padding: const EdgeInsets.all(14),
@@ -274,17 +280,21 @@ class _RuntimeProfileSection extends StatelessWidget {
                   RuntimeProfile.normalDirect,
                   RuntimeProfile.normalMesh,
                 ].map((profile) {
-                  final selected = appState.runtimeProfile == profile;
+                  final selected = selectedProfile == profile;
                   return ChoiceChip(
                     label: Text(profile.shortLabel),
                     selected: selected,
-                    onSelected: (_) => appState.setRuntimeProfile(profile),
+                    onSelected: isBatterySaver
+                        ? null
+                        : (_) => appState.setNormalRuntimeProfile(profile),
                   );
                 }).toList(),
               ),
               const SizedBox(height: 8),
               Text(
-                appState.runtimeProfile.description,
+                isBatterySaver
+                    ? 'Battery Saver active. Network profile selection is disabled and routing stays on Mesh (passive). Disable Battery Saver to switch Direct/Mesh.'
+                    : appState.runtimeProfile.description,
                 style: GoogleFonts.inter(
                   fontSize: 11,
                   color: AppTheme.textSecondary,

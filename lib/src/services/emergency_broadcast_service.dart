@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:math';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
-import 'package:sqflite/sqflite.dart' show ConflictAlgorithm;
+import 'package:sqflite/sqflite.dart' show ConflictAlgorithm, Database;
 import '../models/mesh_message.dart';
 import '../models/communication_mode.dart';
+import '../models/runtime_profile.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 import 'crypto_service.dart';
 import 'connection_manager.dart';
 import 'transport_service.dart';
@@ -20,13 +23,20 @@ class EmergencyBroadcastService {
   final SignatureVerifier _signatureVerifier;
   final DBService _db;
   final StreamController<Map<String, Object?>> _broadcastStreamController =
-      StreamController<Map<String, Object?>>.broadcast();
+      StreamController<Map<String, Object?>>.broadcast(sync: true);
 
-  static const int _maxBroadcastsPerMinute = 5;
+  static const int _maxBroadcastsPerMinute = BroadcastLimits.maxPerMinute;
+  static const int _maxGlobalBroadcastRows = BroadcastLimits.maxGlobalRows;
+  static const int _maxBroadcastRowsPerSender =
+      BroadcastLimits.maxRowsPerSender;
   final Map<String, List<int>> _senderBroadcastTimestamps = {};
+  RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
 
   Stream<Map<String, Object?>> get onBroadcastMessage =>
       _broadcastStreamController.stream;
+  int get maxBroadcastsPerMinute => _maxBroadcastsPerMinute;
+  EmergencyBroadcastTiming get _timing =>
+      TimerConfig.emergencyBroadcast(_runtimeProfile);
 
   EmergencyBroadcastService({
     required CryptoService cryptoService,
@@ -40,7 +50,13 @@ class EmergencyBroadcastService {
         _transportService = transportService,
         _deduplicationCache = deduplicationCache,
         _signatureVerifier = signatureVerifier,
-        _db = db;
+        _db = db {
+    unawaited(_pruneStoredBroadcasts());
+  }
+
+  void setRuntimeProfile(RuntimeProfile profile) {
+    _runtimeProfile = profile;
+  }
 
   Future<bool> broadcastMessage({
     required String messageId,
@@ -56,19 +72,19 @@ class EmergencyBroadcastService {
       type: MessageType.data,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: broadcastEmergencyDestination,
-      ttl: 5,
+      ttl: BroadcastLimits.messageTtl,
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: DateTime.now().millisecondsSinceEpoch,
       encryptedContent: Uint8List.fromList(utf8.encode(content)),
       signature: Uint8List(0),
-      expiryDuration: const Duration(hours: 24).inMilliseconds,
+      expiryDuration: TimerConfig.emergencyRetentionWindow.inMilliseconds,
     );
     final signed = message.copyWithSignature(
       _cryptoService.signMessage(message.toBytesForSigning()),
     );
     await _persistBroadcast(signed);
-    return _forwardBroadcast(signed, null);
+    return _forwardBroadcastWithQueueWindow(signed);
   }
 
   Future<bool> handleIncomingBroadcast(
@@ -95,7 +111,8 @@ class EmergencyBroadcastService {
     if (message.ttl <= 0) return false;
 
     // Probabilistic decay after hop 2 to dampen dense-network amplification.
-    if (message.hopCount > 2 && Random().nextDouble() > 0.5) {
+    if (message.hopCount > BroadcastLimits.probabilisticDecayHopThreshold &&
+        Random().nextDouble() > BroadcastLimits.probabilisticDecayDropChance) {
       return false;
     }
 
@@ -117,8 +134,12 @@ class EmergencyBroadcastService {
 
     final rng = Random();
     candidates.shuffle(rng);
-    final count =
-        candidates.length < 3 ? candidates.length : (2 + rng.nextInt(2));
+    final fanoutRange =
+        BroadcastLimits.fanoutMax - BroadcastLimits.fanoutMin + 1;
+    final targetFanout = BroadcastLimits.fanoutMin + rng.nextInt(fanoutRange);
+    final count = candidates.length < BroadcastLimits.fanoutMax
+        ? candidates.length
+        : targetFanout;
     var sentAny = false;
 
     for (final peerId in candidates.take(count)) {
@@ -133,6 +154,31 @@ class EmergencyBroadcastService {
     }
 
     return sentAny;
+  }
+
+  /// Try sending broadcast immediately, then keep retrying for a short queue
+  /// window to catch transient transport recoveries before declaring failure.
+  Future<bool> _forwardBroadcastWithQueueWindow(MeshMessage message) async {
+    if (await _forwardBroadcast(message, null)) {
+      return true;
+    }
+
+    final timing = _timing;
+    final deadline = DateTime.now().add(timing.queueWindow);
+    debugPrint(
+        'EmergencyBroadcast: queued for retry window (${timing.queueWindow.inSeconds}s), retry every ${timing.retryInterval.inSeconds}s');
+
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(timing.retryInterval);
+      if (await _forwardBroadcast(message, null)) {
+        debugPrint('EmergencyBroadcast: delivered during retry window');
+        return true;
+      }
+    }
+
+    debugPrint(
+        'EmergencyBroadcast: retry window exhausted, marking send as failed');
+    return false;
   }
 
   Future<void> _persistBroadcast(MeshMessage message) async {
@@ -157,14 +203,54 @@ class EmergencyBroadcastService {
       'signature': message.signature,
     });
 
+    await _enforceRetentionPolicy(database);
+  }
+
+  Future<void> _pruneStoredBroadcasts() async {
+    final database = await _db.db;
+    await _enforceRetentionPolicy(database);
+  }
+
+  Future<void> _enforceRetentionPolicy(Database database) async {
     final cutoff = DateTime.now()
-        .subtract(const Duration(hours: 24))
+        .subtract(TimerConfig.emergencyRetentionWindow)
         .millisecondsSinceEpoch;
     await database.delete(
       'broadcast_messages',
       where: 'timestamp < ?',
       whereArgs: [cutoff],
     );
+
+    // Enforce per-sender hard cap for all senders.
+    final senderRows = await database.rawQuery('''
+      SELECT DISTINCT sender_id
+      FROM broadcast_messages
+    ''');
+    for (final row in senderRows) {
+      final sender = row['sender_id'] as String?;
+      if (sender == null || sender.isEmpty) continue;
+      await database.rawDelete('''
+        DELETE FROM broadcast_messages
+        WHERE sender_id = ?
+          AND id NOT IN (
+            SELECT id
+            FROM broadcast_messages
+            WHERE sender_id = ?
+            ORDER BY timestamp DESC
+            LIMIT ?
+          )
+      ''', [sender, sender, _maxBroadcastRowsPerSender]);
+    }
+
+    await database.rawDelete('''
+      DELETE FROM broadcast_messages
+      WHERE id NOT IN (
+        SELECT id
+        FROM broadcast_messages
+        ORDER BY timestamp DESC
+        LIMIT ?
+      )
+    ''', [_maxGlobalBroadcastRows]);
   }
 
   bool _allowBroadcastFromSender(String senderId) {
@@ -186,8 +272,10 @@ class EmergencyBroadcastService {
 
   List<int> _activeTimestampsForSender(String senderId) {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final windowStart = now - const Duration(minutes: 1).inMilliseconds;
-    final timestamps = _senderBroadcastTimestamps.putIfAbsent(senderId, () => []);
+    final windowStart = now -
+        EmergencyBroadcastPolicyConfig.senderRateLimitWindow.inMilliseconds;
+    final timestamps =
+        _senderBroadcastTimestamps.putIfAbsent(senderId, () => []);
     timestamps.removeWhere((ts) => ts < windowStart);
     return timestamps;
   }

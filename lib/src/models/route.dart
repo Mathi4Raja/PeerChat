@@ -1,4 +1,5 @@
 import 'dart:math';
+import '../config/limits_config.dart';
 
 class Route {
   final String destinationPeerId;
@@ -22,23 +23,25 @@ class Route {
   // Calculate route preference score
   double get preferenceScore {
     // Hop count penalty (exponential)
-    final hopPenalty = pow(1.5, hopCount);
-    
+    final hopPenalty = pow(RouteLimits.hopPenaltyBase, hopCount);
+
     // Success rate bonus
     final totalAttempts = successCount + failureCount;
     final successRate = totalAttempts > 0 ? successCount / totalAttempts : 0.5;
-    
+
     // Recency bonus (routes used in last 5 minutes get bonus)
     final age = DateTime.now().millisecondsSinceEpoch - lastUsedTimestamp;
-    final recencyBonus = age < 300000 ? 1.2 : 1.0;
-    
+    final recencyBonus = age < RouteLimits.recencyBonusWindowMs
+        ? RouteLimits.recencyBonusMultiplier
+        : 1.0;
+
     return (successRate * recencyBonus) / hopPenalty;
   }
 
   // Check if route is stale (not used in 30 minutes)
   bool get isStale {
     final age = DateTime.now().millisecondsSinceEpoch - lastUsedTimestamp;
-    return age > 1800000; // 30 minutes in milliseconds
+    return age > RouteLimits.staleAgeMs;
   }
 
   // Serialize for database storage

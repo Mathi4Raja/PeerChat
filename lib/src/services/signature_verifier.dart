@@ -3,16 +3,20 @@ import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'crypto_service.dart';
 import 'db_service.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 import '../models/mesh_message.dart';
 import '../models/route_discovery.dart';
 
 class SignatureVerifier {
   final CryptoService _cryptoService;
   final DBService _db;
-  
-  static const int maxInvalidSignatures = 3;
-  static const Duration blockDuration = Duration(minutes: 10);
-  static const Duration detectionWindow = Duration(minutes: 5);
+
+  static const int maxInvalidSignatures = SecurityLimits.maxInvalidSignatures;
+  static const Duration blockDuration =
+      SecurityTimerConfig.invalidSignatureBlockDuration;
+  static const Duration detectionWindow =
+      SecurityTimerConfig.invalidSignatureDetectionWindow;
 
   SignatureVerifier(this._cryptoService, this._db);
 
@@ -66,7 +70,7 @@ class SignatureVerifier {
     // First try to get from database
     final key = await _db.getPeerPublicKey(peerId);
     if (key != null) return key;
-    
+
     // Fallback: try to decode peer ID as public key (identity = signing key)
     try {
       return Uint8List.fromList(base64.decode(peerId));
@@ -162,11 +166,12 @@ class SignatureVerifier {
     final now = DateTime.now().millisecondsSinceEpoch;
 
     final blockedCount = Sqflite.firstIntValue(
-      await database.rawQuery(
-        'SELECT COUNT(*) FROM blocked_peers WHERE blocked_until_timestamp > ? AND invalid_signature_count >= ?',
-        [now, maxInvalidSignatures],
-      ),
-    ) ?? 0;
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM blocked_peers WHERE blocked_until_timestamp > ? AND invalid_signature_count >= ?',
+            [now, maxInvalidSignatures],
+          ),
+        ) ??
+        0;
 
     return {
       'blocked_peers': blockedCount,

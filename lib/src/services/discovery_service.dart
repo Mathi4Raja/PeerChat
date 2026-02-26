@@ -7,6 +7,9 @@ import 'package:flutter_blue_classic/flutter_blue_classic.dart';
 import 'package:nsd/nsd.dart';
 import '../models/peer.dart';
 import '../models/runtime_profile.dart';
+import '../config/timer_config.dart';
+import '../config/network_config.dart';
+import '../config/protocol_config.dart';
 
 class DiscoveryService {
   final MDnsClient _mdns = MDnsClient();
@@ -55,8 +58,8 @@ class DiscoveryService {
             Service(
               name:
                   'PeerChat', // Name will be appended with unique ID by OS usually
-              type: '_peerchat._tcp',
-              port: 9000, // We listen on port 9000
+              type: NetworkConfig.mdnsServiceType,
+              port: NetworkConfig.discoveryPort,
               txt: {
                 'id': Uint8List.fromList(utf8.encode(myId)),
                 'name': Uint8List.fromList(utf8.encode(name)),
@@ -73,7 +76,7 @@ class DiscoveryService {
       // Browse for _peerchat._tcp local services
       _mdns
           .lookup<PtrResourceRecord>(
-              ResourceRecordQuery.serverPointer('_peerchat._tcp.local'))
+              ResourceRecordQuery.serverPointer(NetworkConfig.mdnsServiceQuery))
           .listen((ptr) async {
         final String domainName = ptr.domainName;
         // resolve SRV
@@ -140,7 +143,7 @@ class DiscoveryService {
         // Try to enable Bluetooth
         _bluetooth.turnOn();
         // Wait a bit for Bluetooth to turn on
-        await Future.delayed(const Duration(seconds: 2));
+        await Future.delayed(DiscoveryTimerConfig.bluetoothEnableDelay);
       }
 
       _bluetoothScanning = true;
@@ -210,76 +213,22 @@ class DiscoveryService {
   }
 
   Duration _nextScanIntervalWithJitter() {
-    Duration base;
-    switch (_runtimeProfile) {
-      case RuntimeProfile.normalMesh:
-        if (_connectedPeerCount <= 0) {
-          base = const Duration(seconds: 5);
-        } else if (_connectedPeerCount <= 2) {
-          base = const Duration(seconds: 7);
-        } else {
-          base = const Duration(seconds: 10);
-        }
-        break;
-      case RuntimeProfile.emergencyBattery:
-        if (_connectedPeerCount <= 0) {
-          base = const Duration(seconds: 20);
-        } else if (_connectedPeerCount <= 2) {
-          base = const Duration(seconds: 35);
-        } else {
-          base = const Duration(seconds: 60);
-        }
-        break;
-      case RuntimeProfile.normalDirect:
-        if (_fileTransferActive) {
-          base = const Duration(seconds: 5);
-        } else if (_connectedPeerCount <= 0) {
-          base = const Duration(seconds: 5);
-        } else if (_connectedPeerCount <= 2) {
-          base = const Duration(seconds: 15);
-        } else {
-          base = const Duration(seconds: 30);
-        }
-        break;
-    }
-
-    if (_batteryLow && _runtimeProfile != RuntimeProfile.emergencyBattery) {
-      base = Duration(milliseconds: base.inMilliseconds * 2);
-    }
-
-    final jitterMs = _scanJitterRandom.nextInt(3001); // 0-3000ms
-    return Duration(milliseconds: base.inMilliseconds + jitterMs);
+    return DiscoveryTimerConfig.nextScanIntervalWithJitter(
+      runtimeProfile: _runtimeProfile,
+      connectedPeerCount: _connectedPeerCount,
+      fileTransferActive: _fileTransferActive,
+      batteryLow: _batteryLow,
+      random: _scanJitterRandom,
+    );
   }
 
   Duration _activeScanDuration() {
-    if (_runtimeProfile == RuntimeProfile.emergencyBattery) {
-      return _batteryLow
-          ? const Duration(seconds: 2)
-          : const Duration(seconds: 3);
-    }
-
-    if (_runtimeProfile == RuntimeProfile.normalMesh) {
-      if (_connectedPeerCount <= 0) {
-        return const Duration(seconds: 10);
-      }
-      if (_connectedPeerCount <= 2) {
-        return const Duration(seconds: 8);
-      }
-      return const Duration(seconds: 6);
-    }
-
-    if (_fileTransferActive) {
-      return const Duration(seconds: 10);
-    }
-    if (_connectedPeerCount <= 0) {
-      return const Duration(seconds: 8);
-    }
-    if (_connectedPeerCount <= 2) {
-      return const Duration(seconds: 6);
-    }
-    return _batteryLow
-        ? const Duration(seconds: 3)
-        : const Duration(seconds: 4);
+    return DiscoveryTimerConfig.activeScanDuration(
+      runtimeProfile: _runtimeProfile,
+      connectedPeerCount: _connectedPeerCount,
+      fileTransferActive: _fileTransferActive,
+      batteryLow: _batteryLow,
+    );
   }
 
   void _addBluetoothPeer(BluetoothDevice device) {
@@ -349,42 +298,25 @@ class DiscoveryService {
     final name = device.name?.toLowerCase() ?? '';
 
     // Exclude audio devices
-    if (name.contains('headphone') ||
-        name.contains('earbuds') ||
-        name.contains('airpods') ||
-        name.contains('buds') ||
-        name.contains('speaker') ||
-        name.contains('soundbar') ||
-        name.contains('audio') ||
-        name.contains('beats') ||
-        name.contains('bose') ||
-        name.contains('sony wh') ||
-        name.contains('jbl')) {
+    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshAudioKeywords)) {
       return false;
     }
 
     // Exclude wearables
-    if (name.contains('watch') ||
-        name.contains('band') ||
-        name.contains('fit') ||
-        name.contains('tracker')) {
+    if (_containsAnyKeyword(
+        name, DeviceHeuristicConfig.nonMeshWearableKeywords)) {
       return false;
     }
 
     // Exclude car systems
-    if (name.contains('car') ||
-        name.contains('auto') ||
-        name.contains('vehicle')) {
+    if (_containsAnyKeyword(
+        name, DeviceHeuristicConfig.nonMeshVehicleKeywords)) {
       return false;
     }
 
     // Exclude IoT devices
-    if (name.contains('tv') ||
-        name.contains('remote') ||
-        name.contains('controller') ||
-        name.contains('gamepad') ||
-        name.contains('keyboard') ||
-        name.contains('mouse')) {
+    if (_containsAnyKeyword(
+        name, DeviceHeuristicConfig.nonMeshPeripheralKeywords)) {
       return false;
     }
 
@@ -396,6 +328,13 @@ class DiscoveryService {
     // If device type is classic or dual, and name doesn't match exclusions, include it
     // This will catch most phones, tablets, and computers
     return true;
+  }
+
+  bool _containsAnyKeyword(String value, List<String> keywords) {
+    for (final keyword in keywords) {
+      if (value.contains(keyword)) return true;
+    }
+    return false;
   }
 
   Future<void> stop() async {

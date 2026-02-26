@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../models/file_transfer.dart';
+import '../config/limits_config.dart';
+import '../config/identity_ui_config.dart';
+import '../config/timer_config.dart';
 import '../theme.dart';
 import '../utils/file_size_formatter.dart';
 import '../utils/name_generator.dart';
@@ -26,9 +29,11 @@ class _MainShellState extends State<MainShell> {
   bool _isLocationDialogOpen = false;
   bool _isIncomingTransferDialogOpen = false;
   bool _incomingTransferListenerAttached = false;
+  int _emergencyUnreadCount = 0;
   final List<FileTransferSession> _pendingIncomingTransfers = [];
   StreamSubscription<FileTransferSession>? _incomingTransferSubscription;
   StreamSubscription<FileTransferSession>? _transferUpdateSubscription;
+  StreamSubscription<Map<String, Object?>>? _broadcastBadgeSubscription;
   final Set<String> _shownSenderTransferToasts = {};
   final Map<String, FileTransferState> _lastTransferStateByFileId = {};
   String? _activeIncomingDialogFileId;
@@ -153,12 +158,25 @@ class _MainShellState extends State<MainShell> {
       }
       _lastTransferStateByFileId.remove(session.fileId);
     });
+    _broadcastBadgeSubscription =
+        appState.emergencyBroadcastService.onBroadcastMessage.listen((event) {
+      if (!mounted) return;
+      final senderId = (event['sender_id'] as String?) ?? '';
+      final localPeerId = appState.publicKey ?? '';
+      if (senderId.isEmpty) return;
+      if (localPeerId.isNotEmpty && senderId == localPeerId) return;
+      if (_currentIndex == 3) return;
+      setState(() {
+        _emergencyUnreadCount++;
+      });
+    });
   }
 
   @override
   void dispose() {
     _incomingTransferSubscription?.cancel();
     _transferUpdateSubscription?.cancel();
+    _broadcastBadgeSubscription?.cancel();
     super.dispose();
   }
 
@@ -248,7 +266,8 @@ class _MainShellState extends State<MainShell> {
     for (final peer in appState.peers) {
       if (peer.id != peerId) continue;
       final displayName = peer.displayName.trim();
-      if (displayName.isNotEmpty && displayName != 'PeerChat User') {
+      if (displayName.isNotEmpty &&
+          displayName != IdentityUiConfig.defaultDisplayName) {
         return displayName;
       }
       break;
@@ -321,73 +340,88 @@ class _MainShellState extends State<MainShell> {
     final int totalUnread =
         appState.unreadCounts.values.fold(0, (sum, count) => sum + count);
 
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _screens,
-      ),
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppTheme.bgCard,
-          border: Border(
-            top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
-          ),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withValues(alpha: 0.3),
-              blurRadius: 12,
-              offset: const Offset(0, -2),
-            ),
-          ],
+    return PopScope(
+      canPop: _currentIndex == 0,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        if (_currentIndex != 0) {
+          setState(() => _currentIndex = 0);
+        }
+      },
+      child: Scaffold(
+        body: IndexedStack(
+          index: _currentIndex,
+          children: _screens,
         ),
-        child: SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-            child: Row(
-              children: [
-                Expanded(
-                  child: _NavItem(
-                    icon: Icons.home_rounded,
-                    label: 'Home',
-                    isActive: _currentIndex == 0,
-                    onTap: () => setState(() => _currentIndex = 0),
+        bottomNavigationBar: Container(
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard,
+            border: Border(
+              top: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.3),
+                blurRadius: 12,
+                offset: const Offset(0, -2),
+              ),
+            ],
+          ),
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: _NavItem(
+                      icon: Icons.home_rounded,
+                      label: 'Home',
+                      isActive: _currentIndex == 0,
+                      onTap: () => setState(() => _currentIndex = 0),
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    icon: Icons.chat_rounded,
-                    label: 'Messages',
-                    isActive: _currentIndex == 1,
-                    badge: totalUnread > 0 ? totalUnread : null,
-                    onTap: () => setState(() => _currentIndex = 1),
+                  Expanded(
+                    child: _NavItem(
+                      icon: Icons.chat_rounded,
+                      label: 'Messages',
+                      isActive: _currentIndex == 1,
+                      badge: totalUnread > 0 ? totalUnread : null,
+                      onTap: () => setState(() => _currentIndex = 1),
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    icon: Icons.radar_rounded,
-                    label: 'Peers',
-                    isActive: _currentIndex == 2,
-                    onTap: () => setState(() => _currentIndex = 2),
+                  Expanded(
+                    child: _NavItem(
+                      icon: Icons.radar_rounded,
+                      label: 'Peers',
+                      isActive: _currentIndex == 2,
+                      onTap: () => setState(() => _currentIndex = 2),
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    icon: Icons.sos_rounded,
-                    label: 'Emergency',
-                    isActive: _currentIndex == 3,
-                    onTap: () => setState(() => _currentIndex = 3),
+                  Expanded(
+                    child: _NavItem(
+                      icon: Icons.sos_rounded,
+                      label: 'Emergency',
+                      isActive: _currentIndex == 3,
+                      badge: _emergencyUnreadCount > 0
+                          ? _emergencyUnreadCount
+                          : null,
+                      onTap: () => setState(() {
+                        _currentIndex = 3;
+                        _emergencyUnreadCount = 0;
+                      }),
+                    ),
                   ),
-                ),
-                Expanded(
-                  child: _NavItem(
-                    icon: Icons.developer_board_rounded,
-                    label: 'Debug',
-                    isActive: _currentIndex == 4,
-                    onTap: () => setState(() => _currentIndex = 4),
+                  Expanded(
+                    child: _NavItem(
+                      icon: Icons.developer_board_rounded,
+                      label: 'Debug',
+                      isActive: _currentIndex == 4,
+                      onTap: () => setState(() => _currentIndex = 4),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -413,11 +447,17 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final badgeLabel = badge == null
+        ? null
+        : (badge! > UiLimits.badgeDisplayCap
+            ? '${UiLimits.badgeDisplayCap}+'
+            : '${badge!}');
+
     return InkWell(
       borderRadius: BorderRadius.circular(14),
       onTap: onTap,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
+        duration: UiTimerConfig.navItemAnimation,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
           color: isActive
@@ -437,13 +477,13 @@ class _NavItem extends StatelessWidget {
                   size: 22,
                   color: isActive ? AppTheme.primary : AppTheme.textSecondary,
                 ),
-                if (badge != null)
+                if (badgeLabel != null)
                   Positioned(
                     right: -8,
                     top: -4,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 1),
+                          horizontal: 6, vertical: 1),
                       decoration: BoxDecoration(
                         color: AppTheme.danger,
                         borderRadius: BorderRadius.circular(8),
@@ -455,7 +495,7 @@ class _NavItem extends StatelessWidget {
                         ],
                       ),
                       child: Text(
-                        '$badge',
+                        badgeLabel,
                         style: GoogleFonts.inter(
                           fontSize: 9,
                           fontWeight: FontWeight.w700,

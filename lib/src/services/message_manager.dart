@@ -6,6 +6,7 @@ import 'message_queue.dart';
 import 'deduplication_cache.dart';
 import 'signature_verifier.dart';
 import 'delivery_ack_handler.dart';
+import '../config/limits_config.dart';
 import '../models/mesh_message.dart';
 import '../models/queued_message.dart';
 import 'package:uuid/uuid.dart';
@@ -30,7 +31,7 @@ class MessageManager {
   final _uuid = const Uuid();
   final _random = Random.secure();
 
-  static const int maxMessageSize = 65536; // 64 KB
+  static const int maxMessageSize = MessageLimits.maxContentBytes;
 
   final Future<bool> Function(String peerId, Uint8List data)
       sendTransportMessage;
@@ -62,12 +63,19 @@ class MessageManager {
 
     // Keep wire-compatible message IDs (<= 36 chars).
     final localId = _cryptoService.localPeerId;
-    final shortSenderId = localId.length >= 8 ? localId.substring(0, 8) : localId;
-    final compactUuid = _uuid.v4().replaceAll('-', '').substring(0, 27);
+    final shortSenderId =
+        localId.length >= MessageLimits.generatedIdSenderPrefixLength
+            ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
+            : localId;
+    final compactUuid = _uuid
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     final id = messageId ?? '${shortSenderId}_$compactUuid';
 
-    // Random TTL between 8-16 hops
-    final ttl = 8 + _random.nextInt(9);
+    // Random TTL between configured min/max hops.
+    final ttlRange = MessageLimits.ttlMax - MessageLimits.ttlMin + 1;
+    final ttl = MessageLimits.ttlMin + _random.nextInt(ttlRange);
 
     // Get recipient's encryption public key
     final recipientEncryptionKey =
@@ -136,7 +144,7 @@ class MessageManager {
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
     // Future tolerance: 5 minutes (clock skew guard)
-    if (age < -300000 || message.isExpired) {
+    if (age < -MessageLimits.futureClockSkewToleranceMs || message.isExpired) {
       debugPrint('Message hard-expired or from future: $age ms');
       return ProcessResult.expired;
     }

@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import '../config/limits_config.dart';
 
 /// State machine for file transfer lifecycle.
 enum FileTransferState {
@@ -73,7 +74,7 @@ class FileMetadata {
   final int totalChunks;
 
   /// Chunk size in bytes (default 64KB).
-  static const int chunkSize = 65536;
+  static const int chunkSize = FileTransferLimits.chunkSizeBytes;
 
   FileMetadata({
     required this.fileId,
@@ -167,11 +168,11 @@ class FileTransferSession {
 
   /// Sliding window: indices of chunks currently in-flight (sent but not ACKed).
   final Set<int> inFlightChunks = {};
-  static const int maxInFlight = 5;
+  static const int maxInFlight = FileTransferLimits.maxInFlightChunks;
 
   /// Retry count per chunk for ACK timeouts.
   final Map<int, int> chunkRetryCount = {};
-  static const int maxChunkRetries = 5;
+  static const int maxChunkRetries = FileTransferLimits.maxChunkRetries;
 
   /// Timestamps for ACK timeout tracking.
   final Map<int, int> chunkSentTimestamp = {};
@@ -194,7 +195,7 @@ class FileTransferSession {
     this.rejectedByPeer = false,
     this.cancelledByPeer = false,
     this.filePath,
-    this.ackTimeoutMs = 10000, // Default 10s for WiFi
+    this.ackTimeoutMs = FileTransferLimits.ackTimeoutWifiMs,
     int? lastActivityTimestamp,
     int? startTimestamp,
   })  : chunkTracker = ChunkTracker(metadata.totalChunks),

@@ -10,6 +10,8 @@ import '../models/chat_message.dart';
 import '../models/file_transfer.dart';
 import '../models/peer.dart';
 import '../models/runtime_profile.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
 import 'file_transfer_screen.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
@@ -66,7 +68,7 @@ class _ChatScreenState extends State<ChatScreen> {
           if (_scrollController.hasClients) {
             _scrollController.animateTo(
               _scrollController.position.maxScrollExtent,
-              duration: const Duration(milliseconds: 300),
+              duration: UiTimerConfig.chatAutoScrollAnimation,
               curve: Curves.easeOut,
             );
           }
@@ -181,9 +183,14 @@ class _ChatScreenState extends State<ChatScreen> {
     final appState = Provider.of<AppState>(context, listen: false);
     final content = _messageController.text.trim();
     final localPeerId = appState.publicKey ?? 'localpeer';
-    final prefix =
-        localPeerId.length >= 8 ? localPeerId.substring(0, 8) : localPeerId;
-    final compactUuid = const Uuid().v4().replaceAll('-', '').substring(0, 27);
+    final prefix = localPeerId.length >=
+            MessageLimits.generatedIdSenderPrefixLength
+        ? localPeerId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
+        : localPeerId;
+    final compactUuid = const Uuid()
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     final messageId = '${prefix}_$compactUuid';
 
     // Create chat message
@@ -211,7 +218,7 @@ class _ChatScreenState extends State<ChatScreen> {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
-          duration: const Duration(milliseconds: 300),
+          duration: UiTimerConfig.chatAutoScrollAnimation,
           curve: Curves.easeOut,
         );
       }

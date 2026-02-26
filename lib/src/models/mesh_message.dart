@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 import 'dart:convert';
+import '../config/limits_config.dart';
 
 enum MessageType {
   data,
@@ -28,13 +29,15 @@ class MeshMessage {
   final int timestamp;
   final Uint8List? encryptedContent;
   final Uint8List signature;
+
   /// Duration in milliseconds before this message expires.
   /// Uses duration-based checking (clock-independent):
   ///   age = now - timestamp; if (age > expiryDuration) → expired
   final int expiryDuration;
 
   /// Default expiry: 7 days in milliseconds.
-  static const int defaultExpiryDuration = 604800000;
+  static const int defaultExpiryDuration =
+      MessageLimits.defaultExpiryDurationMs;
 
   MeshMessage({
     required this.messageId,
@@ -75,35 +78,35 @@ class MeshMessage {
   // Serialize to bytes for transmission
   Uint8List toBytes() {
     final buffer = BytesBuilder();
-    
-    // Message ID (36 bytes for UUID string)
+
+    // Message ID (fixed-width wire ID)
     buffer.add(utf8.encode(_fixedWidthId(messageId)));
-    
+
     // Type (1 byte)
     buffer.addByte(type.index);
-    
+
     // Sender peer ID length (2 bytes) + sender peer ID
     final senderBytes = utf8.encode(senderPeerId);
     buffer.add(_uint16ToBytes(senderBytes.length));
     buffer.add(senderBytes);
-    
+
     // Recipient peer ID length (2 bytes) + recipient peer ID
     final recipientBytes = utf8.encode(recipientPeerId);
     buffer.add(_uint16ToBytes(recipientBytes.length));
     buffer.add(recipientBytes);
-    
+
     // TTL (1 byte)
     buffer.addByte(ttl);
-    
+
     // Hop count (1 byte)
     buffer.addByte(hopCount);
-    
+
     // Priority (1 byte)
     buffer.addByte(priority.index);
-    
+
     // Timestamp (8 bytes)
     buffer.add(_uint64ToBytes(timestamp));
-    
+
     // Encrypted content length (4 bytes) + encrypted content
     if (encryptedContent != null) {
       buffer.add(_uint32ToBytes(encryptedContent!.length));
@@ -111,57 +114,61 @@ class MeshMessage {
     } else {
       buffer.add(_uint32ToBytes(0));
     }
-    
+
     // Signature length (2 bytes) + signature
     buffer.add(_uint16ToBytes(signature.length));
     buffer.add(signature);
-    
+
     // Expiry duration (8 bytes) — appended at end for backward compatibility
     buffer.add(_uint64ToBytes(expiryDuration));
-    
+
     return buffer.toBytes();
   }
 
   // Deserialize from bytes
   static MeshMessage fromBytes(Uint8List bytes) {
     int offset = 0;
-    
-    // Message ID (36 bytes)
-    final messageId = utf8.decode(bytes.sublist(offset, offset + 36)).trim();
-    offset += 36;
-    
+
+    // Message ID (fixed-width wire ID)
+    final messageId = utf8
+        .decode(bytes.sublist(offset, offset + MessageLimits.wireIdLength))
+        .trim();
+    offset += MessageLimits.wireIdLength;
+
     // Type (1 byte)
     final type = MessageType.values[bytes[offset]];
     offset += 1;
-    
+
     // Sender peer ID
     final senderLength = _bytesToUint16(bytes.sublist(offset, offset + 2));
     offset += 2;
-    final senderPeerId = utf8.decode(bytes.sublist(offset, offset + senderLength));
+    final senderPeerId =
+        utf8.decode(bytes.sublist(offset, offset + senderLength));
     offset += senderLength;
-    
+
     // Recipient peer ID
     final recipientLength = _bytesToUint16(bytes.sublist(offset, offset + 2));
     offset += 2;
-    final recipientPeerId = utf8.decode(bytes.sublist(offset, offset + recipientLength));
+    final recipientPeerId =
+        utf8.decode(bytes.sublist(offset, offset + recipientLength));
     offset += recipientLength;
-    
+
     // TTL (1 byte)
     final ttl = bytes[offset];
     offset += 1;
-    
+
     // Hop count (1 byte)
     final hopCount = bytes[offset];
     offset += 1;
-    
+
     // Priority (1 byte)
     final priority = MessagePriority.values[bytes[offset]];
     offset += 1;
-    
+
     // Timestamp (8 bytes)
     final timestamp = _bytesToUint64(bytes.sublist(offset, offset + 8));
     offset += 8;
-    
+
     // Encrypted content
     final contentLength = _bytesToUint32(bytes.sublist(offset, offset + 4));
     offset += 4;
@@ -170,20 +177,20 @@ class MeshMessage {
       encryptedContent = bytes.sublist(offset, offset + contentLength);
       offset += contentLength;
     }
-    
+
     // Signature
     final signatureLength = _bytesToUint16(bytes.sublist(offset, offset + 2));
     offset += 2;
     final signature = bytes.sublist(offset, offset + signatureLength);
     offset += signatureLength;
-    
+
     // Expiry duration (8 bytes, optional for backward compatibility)
     int expiryDuration = MeshMessage.defaultExpiryDuration;
     if (offset + 8 <= bytes.length) {
       expiryDuration = _bytesToUint64(bytes.sublist(offset, offset + 8));
       // offset += 8; // no more fields after this
     }
-    
+
     return MeshMessage(
       messageId: messageId,
       type: type,
@@ -202,30 +209,30 @@ class MeshMessage {
   // Create bytes for signing (excludes signature field)
   Uint8List toBytesForSigning() {
     final buffer = BytesBuilder();
-    
+
     buffer.add(utf8.encode(_fixedWidthId(messageId)));
     buffer.addByte(type.index);
-    
+
     final senderBytes = utf8.encode(senderPeerId);
     buffer.add(_uint16ToBytes(senderBytes.length));
     buffer.add(senderBytes);
-    
+
     final recipientBytes = utf8.encode(recipientPeerId);
     buffer.add(_uint16ToBytes(recipientBytes.length));
     buffer.add(recipientBytes);
-    
+
     buffer.addByte(ttl);
     buffer.addByte(hopCount);
     buffer.addByte(priority.index);
     buffer.add(_uint64ToBytes(timestamp));
-    
+
     if (encryptedContent != null) {
       buffer.add(_uint32ToBytes(encryptedContent!.length));
       buffer.add(encryptedContent!);
     } else {
       buffer.add(_uint32ToBytes(0));
     }
-    
+
     return buffer.toBytes();
   }
 
@@ -294,7 +301,9 @@ class MeshMessage {
 
   /// Mesh wire format currently expects fixed-width 36-char IDs.
   static String _fixedWidthId(String id) {
-    if (id.length >= 36) return id.substring(0, 36);
-    return id.padRight(36);
+    if (id.length >= MessageLimits.wireIdLength) {
+      return id.substring(0, MessageLimits.wireIdLength);
+    }
+    return id.padRight(MessageLimits.wireIdLength);
   }
 }

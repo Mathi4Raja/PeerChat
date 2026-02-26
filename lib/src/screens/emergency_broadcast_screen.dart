@@ -5,6 +5,8 @@ import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../models/communication_mode.dart';
 import '../models/mesh_message.dart';
+import '../config/limits_config.dart';
+import '../config/timer_config.dart';
 import '../services/mesh_router_service.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
@@ -32,9 +34,9 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     _loadMessages();
     final appState = Provider.of<AppState>(context, listen: false);
     _broadcastSubscription =
-        appState.emergencyBroadcastService.onBroadcastMessage.listen((_) async {
-      await _loadMessages();
-    });
+        appState.emergencyBroadcastService.onBroadcastMessage.listen(
+      _upsertIncomingBroadcast,
+    );
   }
 
   @override
@@ -47,7 +49,8 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
 
   Future<void> _loadMessages() async {
     final appState = Provider.of<AppState>(context, listen: false);
-    final rows = await appState.db.getBroadcastMessages(limit: 300);
+    final rows = await appState.db
+        .getBroadcastMessages(limit: BroadcastLimits.screenHistoryLimit);
     if (!mounted) return;
     setState(() {
       _messages = rows;
@@ -55,16 +58,50 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     });
   }
 
+  void _upsertIncomingBroadcast(Map<String, Object?> event) {
+    if (!mounted) return;
+    final id = (event['id'] as String?) ?? '';
+    final senderId = (event['sender_id'] as String?) ?? '';
+    final content = (event['content'] as String?) ?? '';
+    final timestamp = event['timestamp'] as int?;
+
+    if (id.isEmpty ||
+        senderId.isEmpty ||
+        content.isEmpty ||
+        timestamp == null) {
+      return;
+    }
+
+    setState(() {
+      final updated = List<Map<String, Object?>>.from(_messages);
+      updated.removeWhere((row) => (row['id'] as String?) == id);
+      updated.insert(0, {
+        'id': id,
+        'sender_id': senderId,
+        'content': content,
+        'timestamp': timestamp,
+        'signature': event['signature'],
+      });
+      if (updated.length > BroadcastLimits.screenHistoryLimit) {
+        updated.removeRange(BroadcastLimits.screenHistoryLimit, updated.length);
+      }
+      _messages = updated;
+      _loading = false;
+    });
+  }
+
   Future<void> _sendBroadcast() async {
     final appState = Provider.of<AppState>(context, listen: false);
     final content = _inputController.text.trim();
+    final maxPerMinute =
+        appState.emergencyBroadcastService.maxBroadcastsPerMinute;
     if (content.isEmpty || _sending) return;
 
     if (!appState.emergencyBroadcastService.canLocalSenderBroadcast()) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Rate limit reached: max 5 emergency messages per minute.',
+            'Rate limit reached: max $maxPerMinute emergency messages per minute.',
           ),
         ),
       );
@@ -86,14 +123,14 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           0,
-          duration: const Duration(milliseconds: 250),
+          duration: UiTimerConfig.emergencyAutoScrollAnimation,
           curve: Curves.easeOut,
         );
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Broadcast send failed. Try again.'),
+          content: Text('failed to save locally.'),
         ),
       );
     }
@@ -102,8 +139,15 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
+    final maxPerMinute =
+        appState.emergencyBroadcastService.maxBroadcastsPerMinute;
     final remainingQuota = appState.emergencyBroadcastService
         .remainingQuotaForSender(appState.publicKey ?? '');
+    final connectedPeerCount = appState.meshRouter.getConnectedPeerIds().length;
+    final onlineInChannel = connectedPeerCount + 1; // include local user
+    final onlineLabel = onlineInChannel > UiLimits.onlineCountDisplayCap
+        ? '${UiLimits.onlineCountDisplayCap}+'
+        : '$onlineInChannel';
 
     return Scaffold(
       appBar: AppBar(
@@ -149,12 +193,26 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
                     ),
                   ),
                 ),
-                Text(
-                  '$remainingQuota/5',
-                  style: GoogleFonts.inter(
-                    color: AppTheme.warning,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '$remainingQuota/$maxPerMinute',
+                      style: GoogleFonts.inter(
+                        color: AppTheme.warning,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'Online: $onlineLabel',
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: AppTheme.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -195,65 +253,96 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
                                   (row['sender_id'] as String?) ?? '';
                               final content = (row['content'] as String?) ?? '';
                               final timestamp = (row['timestamp'] as int?) ?? 0;
-                              final time =
-                                  DateTime.fromMillisecondsSinceEpoch(timestamp);
-                              final senderLabel = senderId.isEmpty
-                                  ? 'Unknown'
-                                  : NameGenerator.generateShortName(senderId);
+                              final time = DateTime.fromMillisecondsSinceEpoch(
+                                  timestamp);
+                              final localPeerId = appState.publicKey ?? '';
+                              final isMe = localPeerId.isNotEmpty &&
+                                  senderId == localPeerId;
+                              final senderLabel = isMe
+                                  ? 'You'
+                                  : (senderId.isEmpty
+                                      ? 'Unknown'
+                                      : NameGenerator.generateShortName(
+                                          senderId,
+                                        ));
 
-                              return Container(
-                                margin: const EdgeInsets.only(bottom: 8),
-                                padding: const EdgeInsets.all(12),
-                                decoration: BoxDecoration(
-                                  color: AppTheme.danger.withValues(alpha: 0.08),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color:
-                                        AppTheme.danger.withValues(alpha: 0.25),
+                              return Align(
+                                alignment: isMe
+                                    ? Alignment.centerRight
+                                    : Alignment.centerLeft,
+                                child: ConstrainedBox(
+                                  constraints: BoxConstraints(
+                                    maxWidth:
+                                        MediaQuery.of(context).size.width *
+                                            0.88,
                                   ),
-                                ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
+                                  child: Container(
+                                    margin: const EdgeInsets.only(bottom: 8),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: isMe
+                                          ? AppTheme.primary
+                                              .withValues(alpha: 0.14)
+                                          : AppTheme.danger
+                                              .withValues(alpha: 0.08),
+                                      borderRadius: BorderRadius.circular(12),
+                                      border: Border.all(
+                                        color: isMe
+                                            ? AppTheme.primary
+                                                .withValues(alpha: 0.32)
+                                            : AppTheme.danger
+                                                .withValues(alpha: 0.25),
+                                      ),
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
-                                        Icon(
-                                          Icons.verified_rounded,
-                                          size: 14,
-                                          color: AppTheme.online,
-                                        ),
-                                        const SizedBox(width: 6),
-                                        Expanded(
-                                          child: Text(
-                                            senderLabel,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: GoogleFonts.inter(
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w700,
-                                              color: AppTheme.textPrimary,
+                                        Row(
+                                          children: [
+                                            Icon(
+                                              isMe
+                                                  ? Icons.person_rounded
+                                                  : Icons.verified_rounded,
+                                              size: 14,
+                                              color: isMe
+                                                  ? AppTheme.primary
+                                                  : AppTheme.online,
                                             ),
-                                          ),
+                                            const SizedBox(width: 6),
+                                            Expanded(
+                                              child: Text(
+                                                senderLabel,
+                                                maxLines: 1,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w700,
+                                                  color: AppTheme.textPrimary,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            Text(
+                                              '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 11,
+                                                color: AppTheme.textSecondary,
+                                              ),
+                                            ),
+                                          ],
                                         ),
-                                        const SizedBox(width: 8),
+                                        const SizedBox(height: 8),
                                         Text(
-                                          '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}',
+                                          content,
                                           style: GoogleFonts.inter(
-                                            fontSize: 11,
-                                            color: AppTheme.textSecondary,
+                                            fontSize: 14,
+                                            color: AppTheme.textPrimary,
                                           ),
                                         ),
                                       ],
                                     ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      content,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        color: AppTheme.textPrimary,
-                                      ),
-                                    ),
-                                  ],
+                                  ),
                                 ),
                               );
                             },

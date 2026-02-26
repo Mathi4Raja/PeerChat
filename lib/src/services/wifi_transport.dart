@@ -2,6 +2,9 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
+import '../config/timer_config.dart';
+import '../config/identity_ui_config.dart';
+import '../config/protocol_config.dart';
 import 'transport_service.dart';
 import 'db_service.dart';
 
@@ -25,12 +28,8 @@ class WiFiTransport implements TransportService {
   // Keepalive mechanism
   Timer? _keepaliveTimer;
   Timer? _healthCheckTimer;
-  // Faster reconnect feel for normal usage.
-  static const Duration keepAliveInterval = Duration(seconds: 8);
-  static const Duration connectionTimeout =
-      Duration(seconds: 24); // ~3x keepalive interval
   static final Uint8List keepAlivePacket =
-      Uint8List.fromList([0xFF, 0xFF]); // Special keepalive marker
+      Uint8List.fromList(ProtocolConfig.keepAlivePacket);
 
   // Track last activity per connection
   final Map<String, int> _lastActivity = {}; // endpointId -> timestamp
@@ -39,7 +38,6 @@ class WiFiTransport implements TransportService {
   Set<String> _knownPeers =
       {}; // endpointIds we've successfully connected to before
   final Map<String, int> _lastReconnectAttempt = {}; // endpointId -> timestamp
-  static const Duration reconnectCooldown = Duration(seconds: 5);
 
   String? _localName;
   bool _isAdvertising = false;
@@ -47,13 +45,8 @@ class WiFiTransport implements TransportService {
   final Set<String> _pendingConnectionAttempts = {};
   final Map<String, int> _pendingAttemptStartedAt = {};
   final Map<String, int> _lastConnectionAttempt = {};
-  static const Duration connectionAttemptCooldown = Duration(seconds: 2);
-  static const Duration pendingAttemptTimeout = Duration(seconds: 12);
-  static const Duration reconnectCheckInterval = Duration(seconds: 8);
   int _lastDiscoveryRefreshTimestamp = 0;
-  static const Duration discoveryRefreshCooldown = Duration(seconds: 12);
   int _lastDiscoveryFailureNoticeAt = 0;
-  static const Duration discoveryFailureNoticeCooldown = Duration(seconds: 45);
 
   WiFiTransport({this.onPeerDiscovered});
 
@@ -90,7 +83,7 @@ class WiFiTransport implements TransportService {
 
   void _startReconnectionCheck() {
     // Periodically check reconnect state and refresh discovery if needed.
-    Timer.periodic(reconnectCheckInterval, (timer) async {
+    Timer.periodic(WiFiTimerConfig.reconnectCheckInterval, (timer) async {
       debugPrint('=== RECONNECTION CHECK ===');
       debugPrint('Known peers: ${_knownPeers.length}');
       debugPrint('Connected peers: ${_connectedPeers.length}');
@@ -98,7 +91,8 @@ class WiFiTransport implements TransportService {
 
       // Reset reconnect attempts for peers that have been disconnected for a while
       final now = DateTime.now().millisecondsSinceEpoch;
-      final resetThreshold = Duration(minutes: 5).inMilliseconds;
+      final resetThreshold =
+          WiFiTimerConfig.reconnectAttemptResetThreshold.inMilliseconds;
 
       for (final endpointId in _knownPeers) {
         if (!_connectedPeers.containsKey(endpointId)) {
@@ -119,7 +113,7 @@ class WiFiTransport implements TransportService {
       if (_knownPeers.isNotEmpty && _connectedPeers.isEmpty) {
         final nowMs = DateTime.now().millisecondsSinceEpoch;
         final elapsed = nowMs - _lastDiscoveryRefreshTimestamp;
-        if (elapsed > discoveryRefreshCooldown.inMilliseconds) {
+        if (elapsed > WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
           _lastDiscoveryRefreshTimestamp = nowMs;
           debugPrint('No active peers. Proactively refreshing WiFi Direct...');
           await restartWiFiDirect();
@@ -131,15 +125,17 @@ class WiFiTransport implements TransportService {
   }
 
   void _startKeepalive() {
-    _keepaliveTimer = Timer.periodic(keepAliveInterval, (timer) {
+    _keepaliveTimer =
+        Timer.periodic(WiFiTimerConfig.keepAliveInterval, (timer) {
       _sendKeepalives();
     });
     debugPrint(
-        'WiFi Direct keepalive started (every ${keepAliveInterval.inSeconds}s)');
+        'WiFi Direct keepalive started (every ${WiFiTimerConfig.keepAliveInterval.inSeconds}s)');
   }
 
   void _startHealthCheck() {
-    _healthCheckTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
+    _healthCheckTimer =
+        Timer.periodic(WiFiTimerConfig.healthCheckInterval, (timer) {
       _checkConnectionHealth();
     });
     debugPrint('WiFi Direct health check started');
@@ -147,7 +143,7 @@ class WiFiTransport implements TransportService {
 
   void _checkConnectionHealth() {
     final now = DateTime.now().millisecondsSinceEpoch;
-    final timeoutMs = connectionTimeout.inMilliseconds;
+    final timeoutMs = WiFiTimerConfig.connectionTimeout.inMilliseconds;
     final staleConnections = <String>[];
     final orphanedActivity = <String>[];
 
@@ -170,7 +166,7 @@ class WiFiTransport implements TransportService {
 
       if (timeSinceActivity > timeoutMs) {
         debugPrint(
-            '  ⚠️ TIMEOUT: ${entry.key} (${secondsSinceActivity}s > ${connectionTimeout.inSeconds}s)');
+            '  ⚠️ TIMEOUT: ${entry.key} (${secondsSinceActivity}s > ${WiFiTimerConfig.connectionTimeout.inSeconds}s)');
         staleConnections.add(entry.key);
       }
     }
@@ -270,7 +266,7 @@ class WiFiTransport implements TransportService {
       }
 
       // Wait a moment for cleanup
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(WiFiTimerConfig.restartDelay);
 
       // Restart advertising and discovery
       await _startAdvertising();
@@ -289,7 +285,7 @@ class WiFiTransport implements TransportService {
       _isAdvertising = false;
 
       // Wait a moment
-      await Future.delayed(const Duration(milliseconds: 500));
+      await Future.delayed(WiFiTimerConfig.restartDelay);
 
       // Start with new name
       await _startAdvertising();
@@ -334,7 +330,7 @@ class WiFiTransport implements TransportService {
 
     try {
       final strategy = Strategy.P2P_CLUSTER;
-      final userName = _localName ?? 'PeerChat User';
+      final userName = _localName ?? IdentityUiConfig.defaultDisplayName;
 
       await _nearby.startAdvertising(
         userName,
@@ -356,7 +352,7 @@ class WiFiTransport implements TransportService {
 
     try {
       final strategy = Strategy.P2P_CLUSTER;
-      final userName = _localName ?? 'PeerChat User';
+      final userName = _localName ?? IdentityUiConfig.defaultDisplayName;
 
       await _nearby.startDiscovery(
         userName,
@@ -379,7 +375,7 @@ class WiFiTransport implements TransportService {
   void _emitDiscoveryFailure(WiFiDiscoveryFailure failure) {
     final now = DateTime.now().millisecondsSinceEpoch;
     if (now - _lastDiscoveryFailureNoticeAt <
-        discoveryFailureNoticeCooldown.inMilliseconds) {
+        WiFiTimerConfig.discoveryFailureNoticeCooldown.inMilliseconds) {
       return;
     }
     _lastDiscoveryFailureNoticeAt = now;
@@ -396,7 +392,8 @@ class WiFiTransport implements TransportService {
         stale.add(endpointId);
         continue;
       }
-      if (now - startedAt > pendingAttemptTimeout.inMilliseconds) {
+      if (now - startedAt >
+          WiFiTimerConfig.pendingAttemptTimeout.inMilliseconds) {
         stale.add(endpointId);
       }
     }
@@ -450,7 +447,8 @@ class WiFiTransport implements TransportService {
     final now = DateTime.now().millisecondsSinceEpoch;
     final lastAttempt = _lastConnectionAttempt[endpointId];
     if (lastAttempt != null &&
-        (now - lastAttempt) < connectionAttemptCooldown.inMilliseconds) {
+        (now - lastAttempt) <
+            WiFiTimerConfig.connectionAttemptCooldown.inMilliseconds) {
       return;
     }
 
@@ -466,7 +464,7 @@ class WiFiTransport implements TransportService {
     }
 
     // Request connection
-    final userName = _localName ?? 'PeerChat User';
+    final userName = _localName ?? IdentityUiConfig.defaultDisplayName;
     _pendingConnectionAttempts.add(endpointId);
     _pendingAttemptStartedAt[endpointId] = now;
     _lastConnectionAttempt[endpointId] = now;
@@ -514,9 +512,12 @@ class WiFiTransport implements TransportService {
     if (lastAttempt != null) {
       final timeSinceLastAttempt =
           DateTime.now().millisecondsSinceEpoch - lastAttempt;
-      if (timeSinceLastAttempt < reconnectCooldown.inMilliseconds) {
+      if (timeSinceLastAttempt <
+          WiFiTimerConfig.reconnectCooldown.inMilliseconds) {
         final remainingSeconds =
-            ((reconnectCooldown.inMilliseconds - timeSinceLastAttempt) / 1000)
+            ((WiFiTimerConfig.reconnectCooldown.inMilliseconds -
+                        timeSinceLastAttempt) /
+                    1000)
                 .round();
         debugPrint(
             'Reconnect cooldown active for $endpointId ($remainingSeconds seconds remaining)');
@@ -614,7 +615,7 @@ class WiFiTransport implements TransportService {
     // Promptly refresh discovery/advertising for quicker reconnection.
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (nowMs - _lastDiscoveryRefreshTimestamp >
-        discoveryRefreshCooldown.inMilliseconds) {
+        WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
       _lastDiscoveryRefreshTimestamp = nowMs;
       await restartWiFiDirect();
     }
@@ -626,7 +627,9 @@ class WiFiTransport implements TransportService {
         final bytes = Uint8List.fromList(payload.bytes!);
 
         // Check if it's a keepalive packet
-        if (bytes.length == 2 && bytes[0] == 0xFF && bytes[1] == 0xFF) {
+        if (bytes.length == ProtocolConfig.keepAlivePacketLength &&
+            bytes[0] == ProtocolConfig.keepAliveByte &&
+            bytes[1] == ProtocolConfig.keepAliveByte) {
           // Only process keepalive if this endpoint is in our connected peers
           if (_connectedPeers.containsKey(endpointId)) {
             _updateActivity(endpointId);
@@ -744,20 +747,29 @@ class WiFiDiscoveryFailure {
   static WiFiDiscoveryFailure? fromError(String rawError) {
     final upper = rawError.toUpperCase();
 
-    if (upper.contains('MISSING_PERMISSION_ACCESS_COARSE_LOCATION') ||
-        upper.contains('ACCESS_COARSE_LOCATION') ||
-        upper.contains('ACCESS_FINE_LOCATION') ||
-        upper.contains('MISSING_PERMISSION') ||
-        upper.contains('8034')) {
+    var hasMissingPermissionToken = false;
+    for (final token in WiFiDiscoveryErrorConfig.missingPermissionTokens) {
+      if (upper.contains(token)) {
+        hasMissingPermissionToken = true;
+        break;
+      }
+    }
+    if (hasMissingPermissionToken ||
+        upper.contains(WiFiDiscoveryErrorConfig.missingPermissionCode)) {
       return WiFiDiscoveryFailure(
         code: WiFiDiscoveryFailureCode.locationPermissionMissing,
         details: rawError,
       );
     }
 
-    if (upper.contains('LOCATION_SETTINGS') ||
-        upper.contains('LOCATION IS TURNED OFF') ||
-        upper.contains('LOCATION_DISABLED')) {
+    var hasLocationDisabledToken = false;
+    for (final token in WiFiDiscoveryErrorConfig.locationDisabledTokens) {
+      if (upper.contains(token)) {
+        hasLocationDisabledToken = true;
+        break;
+      }
+    }
+    if (hasLocationDisabledToken) {
       return WiFiDiscoveryFailure(
         code: WiFiDiscoveryFailureCode.locationServiceDisabled,
         details: rawError,

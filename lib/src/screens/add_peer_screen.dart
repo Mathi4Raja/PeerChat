@@ -4,6 +4,7 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 import '../app_state.dart';
+import '../config/identity_ui_config.dart';
 import '../models/peer.dart';
 import '../theme.dart';
 
@@ -29,7 +30,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-    
+
     if (_showScanner) {
       return Scaffold(
         appBar: AppBar(
@@ -82,7 +83,8 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
               right: 0,
               child: Center(
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
                   decoration: BoxDecoration(
                     color: AppTheme.bgDeep.withValues(alpha: 0.8),
                     borderRadius: BorderRadius.circular(20),
@@ -102,7 +104,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
         ),
       );
     }
-    
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -126,7 +128,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                
+
                 // ─── Scan QR Button ───
                 Container(
                   decoration: BoxDecoration(
@@ -154,7 +156,8 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.qr_code_scanner_rounded, color: AppTheme.bgDeep),
+                            const Icon(Icons.qr_code_scanner_rounded,
+                                color: AppTheme.bgDeep),
                             const SizedBox(width: 10),
                             Text(
                               'Scan QR Code',
@@ -170,7 +173,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                     ),
                   ),
                 ),
-                
+
                 const SizedBox(height: 28),
 
                 // ─── Divider ───
@@ -204,7 +207,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                 ),
 
                 const SizedBox(height: 20),
-                
+
                 // ─── Manual Key Entry ───
                 Container(
                   decoration: AppTheme.glassCard(),
@@ -254,7 +257,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                 ),
 
                 const SizedBox(height: 28),
-                
+
                 // ─── Your QR Code ───
                 Container(
                   decoration: AppTheme.accentBorderCard(),
@@ -300,13 +303,15 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                               width: 2,
                             ),
                           ),
-                          child: QrImageView(data: appState.publicKey!, size: 180),
+                          child:
+                              QrImageView(data: appState.publicKey!, size: 180),
                         )
                       else
                         const SizedBox(
                           height: 180,
                           child: Center(
-                            child: CircularProgressIndicator(color: AppTheme.primary),
+                            child: CircularProgressIndicator(
+                                color: AppTheme.primary),
                           ),
                         ),
                     ],
@@ -320,31 +325,31 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
       ),
     );
   }
-  
+
   void _handleScannedKey(String key, AppState appState) async {
     // Validate the key (should be base64 encoded)
-    if (key.isEmpty || key.length < 20) {
+    if (key.isEmpty || key.length < IdentityUiConfig.manualPeerKeyMinLength) {
       _showMessage('Invalid peer key', isError: true);
       return;
     }
-    
+
     // Create a peer entry
     final peer = Peer(
       id: key,
-      displayName: 'Manually Added Peer',
+      displayName: IdentityUiConfig.manualAddedPeerLabel,
       address: 'manual',
       lastSeen: DateTime.now().millisecondsSinceEpoch,
       hasApp: true, // Assume they have the app if sharing QR code
     );
-    
+
     // Save to database
     await appState.db.upsertPeer(peer);
-    
+
     // Reload peers
     appState.peers = await appState.db.allPeers();
-    
+
     _showMessage('Peer added successfully!');
-    
+
     // Close scanner or clear text field
     if (_showScanner) {
       setState(() {
@@ -354,7 +359,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
       _peerKeyController.clear();
     }
   }
-  
+
   void _showMessage(String message, {bool isError = false}) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(

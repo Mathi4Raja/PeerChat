@@ -4,6 +4,9 @@ import 'package:sqflite/sqflite.dart';
 import 'db_service.dart';
 import 'crypto_service.dart';
 import 'signature_verifier.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
+import '../config/identity_ui_config.dart';
 import '../models/mesh_message.dart';
 import '../models/chat_message.dart';
 import 'package:uuid/uuid.dart';
@@ -17,7 +20,7 @@ class DeliveryAckHandler {
   Function(String messageId)? onStatusChanged;
 
   DeliveryAckHandler(this._db, this._cryptoService);
-  
+
   /// Set the signature verifier (called after all services are initialized)
   void setSignatureVerifier(SignatureVerifier verifier) {
     _signatureVerifier = verifier;
@@ -26,8 +29,14 @@ class DeliveryAckHandler {
   // Generate acknowledgment for delivered message
   Future<MeshMessage> createAcknowledgment(MeshMessage originalMessage) async {
     final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final shortSenderId = _cryptoService.localPeerId.substring(0, 8);
-    final shortUuid = _uuid.v4().substring(0, 8);
+    final senderId = _cryptoService.localPeerId;
+    final shortSenderId = senderId.length >= IdentityUiConfig.shortIdLength
+        ? senderId.substring(0, IdentityUiConfig.shortIdLength)
+        : senderId;
+    final rawUuid = _uuid.v4();
+    final shortUuid = rawUuid.length >= IdentityUiConfig.shortIdLength
+        ? rawUuid.substring(0, IdentityUiConfig.shortIdLength)
+        : rawUuid;
     final ackId = '${timestamp}_${shortSenderId}_$shortUuid';
 
     // Create acknowledgment message with original message ID in content
@@ -42,7 +51,7 @@ class DeliveryAckHandler {
       type: MessageType.acknowledgment,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: originalMessage.senderPeerId,
-      ttl: 8,
+      ttl: MessageLimits.acknowledgmentTtl,
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: timestamp,
@@ -51,14 +60,15 @@ class DeliveryAckHandler {
     );
 
     // Sign the acknowledgment
-    final signature = _cryptoService.signMessage(ackMessage.toBytesForSigning());
-    
+    final signature =
+        _cryptoService.signMessage(ackMessage.toBytesForSigning());
+
     return MeshMessage(
       messageId: ackId,
       type: MessageType.acknowledgment,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: originalMessage.senderPeerId,
-      ttl: 8,
+      ttl: MessageLimits.acknowledgmentTtl,
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: timestamp,
@@ -70,7 +80,8 @@ class DeliveryAckHandler {
   // Process received acknowledgment
   Future<void> handleAcknowledgment(MeshMessage ackMessage) async {
     // Decrypt acknowledgment content
-    final senderPublicKey = await _getEncryptionKeyFromPeerId(ackMessage.senderPeerId);
+    final senderPublicKey =
+        await _getEncryptionKeyFromPeerId(ackMessage.senderPeerId);
     final ackContent = _cryptoService.decryptContent(
       ackMessage.encryptedContent!,
       senderPublicKey,
@@ -116,8 +127,9 @@ class DeliveryAckHandler {
   Future<void> notifyDeliveryConfirmed(String messageId) async {
     // Update chat message status in database to 'delivered'
     await _db.updateMessageStatus(messageId, MessageStatus.delivered);
-    debugPrint('Message $messageId delivery confirmed — status updated to delivered');
-    
+    debugPrint(
+        'Message $messageId delivery confirmed — status updated to delivered');
+
     // We don't have direct access to status controller here easily without passing it.
     // Instead, MeshRouter will listen for DB changes if needed, or we just notify.
   }
@@ -153,7 +165,7 @@ class DeliveryAckHandler {
   Future<void> cleanupOldAcks() async {
     final database = await _db.db;
     final cutoffTimestamp = DateTime.now()
-        .subtract(const Duration(days: 7))
+        .subtract(DeliveryAckTimerConfig.pendingAckMaxAge)
         .millisecondsSinceEpoch;
 
     await database.delete(
@@ -192,10 +204,11 @@ class DeliveryAckHandler {
   // Get statistics
   Future<Map<String, int>> getStats() async {
     final database = await _db.db;
-    
+
     final pendingCount = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM pending_acks'),
-    ) ?? 0;
+          await database.rawQuery('SELECT COUNT(*) FROM pending_acks'),
+        ) ??
+        0;
 
     return {
       'pending_acks': pendingCount,
@@ -210,7 +223,7 @@ class DeliveryAckHandler {
     if (key != null) {
       return key;
     }
-    
+
     // Fallback: This is technically risky if we are strict about key types,
     // but if the system previously conflated them, we might have legacy data.
     // Ideally, we should throw or return null if not found, but for now we try decoding.

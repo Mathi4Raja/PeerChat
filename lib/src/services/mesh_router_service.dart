@@ -14,6 +14,10 @@ import '../models/handshake_message.dart';
 import '../models/route.dart' as mesh_route;
 import '../models/route_discovery.dart';
 import '../models/runtime_profile.dart';
+import '../config/timer_config.dart';
+import '../config/limits_config.dart';
+import '../config/identity_ui_config.dart';
+import '../config/protocol_config.dart';
 import 'message_manager.dart';
 import 'route_manager.dart';
 import 'message_queue.dart';
@@ -154,6 +158,7 @@ class MeshRouterService extends ChangeNotifier {
   void setRuntimeProfile(RuntimeProfile profile) {
     _runtimeProfile = profile;
     _connectionManager.setRuntimeProfile(profile);
+    _emergencyBroadcastService.setRuntimeProfile(profile);
   }
 
   // Handle incoming transport message (could be handshake or mesh message)
@@ -162,10 +167,9 @@ class MeshRouterService extends ChangeNotifier {
       // Update peer activity for any received data
       await _connectionManager.updatePeerActivity(transportMsg.fromPeerId);
 
-      // Check if it's a keepalive packet (2 bytes: 0xFF 0xFF)
-      if (transportMsg.data.length == 2 &&
-          transportMsg.data[0] == 0xFF &&
-          transportMsg.data[1] == 0xFF) {
+      if (transportMsg.data.length == ProtocolConfig.keepAlivePacketLength &&
+          transportMsg.data[0] == ProtocolConfig.keepAliveByte &&
+          transportMsg.data[1] == ProtocolConfig.keepAliveByte) {
         return;
       }
 
@@ -216,19 +220,11 @@ class MeshRouterService extends ChangeNotifier {
   Future<void> init() async {
     await _cryptoService.init();
     final localId = _cryptoService.localPeerId;
-    final shortId = localId.length >= 4 ? localId.substring(0, 4) : localId;
-    final initialName = 'PeerChat $shortId';
+    final shortId = localId.length >= IdentityUiConfig.localNameSuffixLength
+        ? localId.substring(0, IdentityUiConfig.localNameSuffixLength)
+        : localId;
+    final initialName = '${IdentityUiConfig.localDisplayNamePrefix} $shortId';
     _connectionManager.setDisplayName(initialName);
-
-    // Create Bluetooth transport
-    final bluetoothTransport = BluetoothTransport();
-    bluetoothTransport.onConnectionEstablished = (transportId) {
-      _connectionManager.onConnectionEstablished(transportId);
-    };
-    bluetoothTransport.onConnectionLost = (transportId) {
-      _connectionManager.onConnectionLost(transportId);
-    };
-    _transportService.addTransport(bluetoothTransport);
 
     // Create WiFi transport
     final wifiTransport = WiFiTransport(
@@ -248,6 +244,16 @@ class MeshRouterService extends ChangeNotifier {
     wifiTransport.setLocalIdentity(_cryptoService.localPeerId, initialName);
     _transportService.addTransport(wifiTransport);
     _wifiTransport = wifiTransport;
+
+    // Create Bluetooth transport (fallback after WiFi)
+    final bluetoothTransport = BluetoothTransport();
+    bluetoothTransport.onConnectionEstablished = (transportId) {
+      _connectionManager.onConnectionEstablished(transportId);
+    };
+    bluetoothTransport.onConnectionLost = (transportId) {
+      _connectionManager.onConnectionLost(transportId);
+    };
+    _transportService.addTransport(bluetoothTransport);
 
     await _transportService.init();
 
@@ -274,10 +280,15 @@ class MeshRouterService extends ChangeNotifier {
   /// Generate a globally unique, sender-prefixed message ID.
   String _generateMessageId() {
     final localId = _cryptoService.localPeerId;
-    final prefix = localId.length >= 8 ? localId.substring(0, 8) : localId;
+    final prefix = localId.length >= MessageLimits.generatedIdSenderPrefixLength
+        ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
+        : localId;
     // MeshMessage wire format currently reserves 36 bytes for messageId.
     // Keep IDs <= 36 chars: "<8-char-prefix>_<27-char-uuid-fragment>"
-    final compactUuid = const Uuid().v4().replaceAll('-', '').substring(0, 27);
+    final compactUuid = const Uuid()
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     return '${prefix}_$compactUuid';
   }
 
@@ -401,7 +412,7 @@ class MeshRouterService extends ChangeNotifier {
         type: MessageType.readReceipt,
         senderPeerId: _cryptoService.localPeerId,
         recipientPeerId: recipientPeerId,
-        ttl: 12,
+        ttl: MessageLimits.readReceiptTtl,
         hopCount: 0,
         priority: MessagePriority.normal,
         timestamp: DateTime.now().millisecondsSinceEpoch,
@@ -557,7 +568,9 @@ class MeshRouterService extends ChangeNotifier {
     if (message.ttl <= 0) return 0;
     final alreadyForwarded =
         _deduplicationCache.getForwardCount(message.messageId);
-    if (alreadyForwarded >= 3) return 0;
+    if (alreadyForwarded >= MeshForwardingLimits.opportunisticMaxForwardCount) {
+      return 0;
+    }
 
     final connectedPeers = getConnectedPeerIds();
     final fromCryptoId = fromPeerAddress == null
@@ -577,9 +590,17 @@ class MeshRouterService extends ChangeNotifier {
 
     final rng = Random();
     candidates.shuffle(rng);
-    final remainingBudget = 3 - alreadyForwarded;
+    final remainingBudget =
+        MeshForwardingLimits.opportunisticMaxForwardCount - alreadyForwarded;
+    final fanoutRange = MeshForwardingLimits.opportunisticFanoutMax -
+        MeshForwardingLimits.opportunisticFanoutMin +
+        1;
+    final targetFanout =
+        MeshForwardingLimits.opportunisticFanoutMin + rng.nextInt(fanoutRange);
     final desired =
-        candidates.length < 3 ? candidates.length : (2 + rng.nextInt(2));
+        candidates.length < MeshForwardingLimits.opportunisticFanoutMax
+            ? candidates.length
+            : targetFanout;
     final maxForward = desired < remainingBudget ? desired : remainingBudget;
 
     var forwardedCount = 0;
@@ -605,15 +626,15 @@ class MeshRouterService extends ChangeNotifier {
 
   void _scheduleQueueProcessing() {
     _queueDebounceTimer?.cancel();
-    _queueDebounceTimer = Timer(const Duration(seconds: 2), () async {
+    _queueDebounceTimer = Timer(MeshRouterTimerConfig.queueDebounce, () async {
       await _processQueue();
       notifyListeners();
     });
   }
 
   void _startMaintenanceTasks() {
-    _maintenanceTimer =
-        Timer.periodic(const Duration(minutes: 5), (timer) async {
+    _maintenanceTimer = Timer.periodic(
+        MeshRouterTimerConfig.maintenanceInterval, (timer) async {
       try {
         await _routeManager.expireStaleRoutes();
         await _messageQueue.removeExpired();
@@ -628,8 +649,8 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   void _startQueueProcessing() {
-    _queueProcessingTimer =
-        Timer.periodic(const Duration(seconds: 10), (timer) async {
+    _queueProcessingTimer = Timer.periodic(
+        MeshRouterTimerConfig.queueProcessInterval, (timer) async {
       try {
         await _processQueue();
       } catch (e) {

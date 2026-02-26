@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../services/mesh_router_service.dart';
+import '../../config/identity_ui_config.dart';
 import '../../theme.dart';
 import '../../utils/name_generator.dart';
 
@@ -14,7 +15,8 @@ class QueuedMessagesStatusScreen extends StatefulWidget {
       _QueuedMessagesStatusScreenState();
 }
 
-class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen> {
+class _QueuedMessagesStatusScreenState
+    extends State<QueuedMessagesStatusScreen> {
   bool _isLoading = true;
   List<QueuedMessageDetail> _items = [];
 
@@ -51,8 +53,8 @@ class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen>
   }
 
   String _short(String value) {
-    if (value.length <= 12) return value;
-    return '${value.substring(0, 6)}…${value.substring(value.length - 4)}';
+    if (value.length <= IdPreviewConfig.fullDisplayThreshold) return value;
+    return '${value.substring(0, IdPreviewConfig.leadingChars)}…${value.substring(value.length - IdPreviewConfig.statusTrailingChars)}';
   }
 
   Color _priorityColor(int index) {
@@ -78,7 +80,8 @@ class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen>
 
   Future<void> _deletePeerSet(String peerId) async {
     final appState = Provider.of<AppState>(context, listen: false);
-    final removed = await appState.meshRouter.removeQueuedMessagesForPeer(peerId);
+    final removed =
+        await appState.meshRouter.removeQueuedMessagesForPeer(peerId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Removed $removed queued message(s)')),
@@ -148,7 +151,8 @@ class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen>
                           horizontal: 12,
                           vertical: 4,
                         ),
-                        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                        childrenPadding:
+                            const EdgeInsets.fromLTRB(12, 0, 12, 12),
                         title: Text(
                           _peerName(appState, peerId),
                           maxLines: 1,
@@ -196,17 +200,20 @@ class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen>
                                     width: 8,
                                     height: 8,
                                     decoration: BoxDecoration(
-                                      color: _priorityColor(message.priority.index),
+                                      color: _priorityColor(
+                                          message.priority.index),
                                       shape: BoxShape.circle,
                                     ),
                                   ),
                                   const SizedBox(width: 10),
                                   Expanded(
                                     child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
                                       children: [
                                         Text(
-                                          message.contentPreview ?? '[Encrypted message]',
+                                          message.contentPreview ??
+                                              '[Encrypted message]',
                                           maxLines: 1,
                                           overflow: TextOverflow.ellipsis,
                                           style: GoogleFonts.inter(
@@ -227,7 +234,8 @@ class _QueuedMessagesStatusScreenState extends State<QueuedMessagesStatusScreen>
                                   ),
                                   IconButton(
                                     tooltip: 'Delete',
-                                    onPressed: () => _deleteMessage(message.messageId),
+                                    onPressed: () =>
+                                        _deleteMessage(message.messageId),
                                     icon: const Icon(
                                       Icons.delete_outline_rounded,
                                       color: AppTheme.danger,
