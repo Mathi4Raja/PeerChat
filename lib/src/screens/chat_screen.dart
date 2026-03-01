@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../app_state.dart';
@@ -1129,3 +1129,4 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
+

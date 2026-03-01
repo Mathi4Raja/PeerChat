@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../config/identity_ui_config.dart';
@@ -263,3 +263,4 @@ class PeersList extends StatelessWidget {
     );
   }
 }
+

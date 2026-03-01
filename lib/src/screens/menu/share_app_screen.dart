@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 
 class ShareAppScreen extends StatelessWidget {
@@ -109,3 +109,4 @@ class ShareAppScreen extends StatelessWidget {
     );
   }
 }
+

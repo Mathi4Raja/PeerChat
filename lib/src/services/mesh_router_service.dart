@@ -161,8 +161,13 @@ class MeshRouterService extends ChangeNotifier {
         // Ensure reciprocal handshake for peers that sent us one before our
         // connection-established callback fired.
         if (!wasComplete) {
-          await _connectionManager
-              .onConnectionEstablished(transportMsg.fromPeerId);
+          // Force one reciprocal handshake on first inbound handshake.
+          // This covers cases where an earlier outbound handshake was dropped.
+          await _connectionManager.sendHandshake(
+            transportId: transportMsg.fromPeerId,
+            reason: 'reciprocal_after_inbound',
+            force: true,
+          );
         }
 
         final cryptoPeerId = handshake.peerId;
@@ -626,11 +631,10 @@ class MeshRouterService extends ChangeNotifier {
         if (isLocalOutgoingData) {
           final isDirectSession =
               _isDirectSessionWithPeer(queuedMessage.message.recipientPeerId);
-          final messageStatus =
-              isDirectSession &&
-                      currentNextHop == queuedMessage.message.recipientPeerId
-                  ? MessageStatus.sent
-                  : MessageStatus.routing;
+          final messageStatus = isDirectSession &&
+                  currentNextHop == queuedMessage.message.recipientPeerId
+              ? MessageStatus.sent
+              : MessageStatus.routing;
           await _db.updateMessageStatus(
             queuedMessage.message.messageId,
             messageStatus,
@@ -765,7 +769,6 @@ class MeshRouterService extends ChangeNotifier {
     notifyListeners();
     return ids.length;
   }
-
 
   RouteManager get routeManager => _routeManager;
   MessageQueue get messageQueue => _messageQueue;

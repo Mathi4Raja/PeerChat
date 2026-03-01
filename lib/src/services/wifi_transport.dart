@@ -45,7 +45,12 @@ class WiFiTransport implements TransportService {
   final Set<String> _pendingConnectionAttempts = {};
   final Map<String, int> _pendingAttemptStartedAt = {};
   final Map<String, int> _lastConnectionAttempt = {};
+  final Map<String, Timer> _waitForInitiatorTimers = {};
+  final Map<String, Timer> _quickRetryTimers = {};
+  final Map<String, int> _quickRetryCounts = {};
+  final Map<String, String> _endpointNamesById = {};
   int _lastDiscoveryRefreshTimestamp = 0;
+  int _lastEndpointFoundTimestamp = 0;
   int _lastDiscoveryFailureNoticeAt = 0;
 
   WiFiTransport({this.onPeerDiscovered});
@@ -112,8 +117,15 @@ class WiFiTransport implements TransportService {
       // to shorten reconnect latency after abrupt app restarts.
       if (_knownPeers.isNotEmpty && _connectedPeers.isEmpty) {
         final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final hasRecentEndpointActivity = _lastEndpointFoundTimestamp > 0 &&
+            (nowMs - _lastEndpointFoundTimestamp) <
+                WiFiTimerConfig
+                    .endpointDiscoveryIdleBeforeRestart.inMilliseconds;
+        final hasPendingAttempts = _pendingConnectionAttempts.isNotEmpty;
         final elapsed = nowMs - _lastDiscoveryRefreshTimestamp;
-        if (elapsed > WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
+        if (!hasPendingAttempts &&
+            !hasRecentEndpointActivity &&
+            elapsed > WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
           _lastDiscoveryRefreshTimestamp = nowMs;
           debugPrint('No active peers. Proactively refreshing WiFi Direct...');
           await restartWiFiDirect();
@@ -248,6 +260,16 @@ class WiFiTransport implements TransportService {
       _pendingConnectionAttempts.clear();
       _pendingAttemptStartedAt.clear();
       _lastConnectionAttempt.clear();
+      for (final timer in _waitForInitiatorTimers.values) {
+        timer.cancel();
+      }
+      _waitForInitiatorTimers.clear();
+      for (final timer in _quickRetryTimers.values) {
+        timer.cancel();
+      }
+      _quickRetryTimers.clear();
+      _quickRetryCounts.clear();
+      _endpointNamesById.clear();
 
       // Stop current advertising and discovery
       if (_isAdvertising) {
@@ -271,6 +293,7 @@ class WiFiTransport implements TransportService {
       // Restart advertising and discovery
       await _startAdvertising();
       await _startDiscovery();
+      _lastEndpointFoundTimestamp = DateTime.now().millisecondsSinceEpoch;
 
       debugPrint('WiFi Direct restarted successfully');
     } catch (e) {
@@ -420,6 +443,8 @@ class WiFiTransport implements TransportService {
       String endpointId, String endpointName, String serviceId) async {
     debugPrint('WiFi Direct endpoint found: $endpointId ($endpointName)');
     _cleanupStalePendingAttempts();
+    _lastEndpointFoundTimestamp = DateTime.now().millisecondsSinceEpoch;
+    _endpointNamesById[endpointId] = endpointName;
 
     // Notify discovery service about the peer
     if (onPeerDiscovered != null) {
@@ -430,6 +455,7 @@ class WiFiTransport implements TransportService {
     if (_connectedPeers.containsKey(endpointId)) {
       debugPrint(
           'Already connected to $endpointId, skipping connection request');
+      _cancelWaitForInitiator(endpointId);
       return;
     }
     if (_pendingConnectionAttempts.contains(endpointId)) {
@@ -438,13 +464,88 @@ class WiFiTransport implements TransportService {
     }
 
     if (_shouldWaitForRemoteInitiator(endpointName)) {
-      debugPrint(
-          'Waiting for remote initiator for $endpointId to avoid collision');
+      if (!_waitForInitiatorTimers.containsKey(endpointId)) {
+        debugPrint(
+            'Waiting for remote initiator for $endpointId to avoid collision');
+        _waitForInitiatorTimers[endpointId] =
+            Timer(WiFiTimerConfig.initiatorWaitTimeout, () async {
+          _waitForInitiatorTimers.remove(endpointId);
+          if (_connectedPeers.containsKey(endpointId) ||
+              _pendingConnectionAttempts.contains(endpointId)) {
+            return;
+          }
+          debugPrint(
+              'Remote initiator wait timed out for $endpointId, self-initiating');
+          await _attemptConnection(endpointId, endpointName);
+        });
+      }
+      return;
+    }
+    _cancelWaitForInitiator(endpointId);
+    await _attemptConnection(endpointId, endpointName);
+  }
+
+  void _cancelWaitForInitiator(String endpointId) {
+    final timer = _waitForInitiatorTimers.remove(endpointId);
+    timer?.cancel();
+  }
+
+  void _clearQuickRetryState(String endpointId) {
+    final timer = _quickRetryTimers.remove(endpointId);
+    timer?.cancel();
+    _quickRetryCounts.remove(endpointId);
+  }
+
+  void _scheduleQuickRetry(
+    String endpointId, {
+    required String reason,
+    String? endpointName,
+  }) {
+    if (_connectedPeers.containsKey(endpointId) ||
+        _pendingConnectionAttempts.contains(endpointId)) {
+      return;
+    }
+    if (_quickRetryTimers.containsKey(endpointId)) {
       return;
     }
 
-    // Simple attempt cooldown to avoid request storms.
+    final retriesDone = _quickRetryCounts[endpointId] ?? 0;
+    if (retriesDone >= WiFiTimerConfig.connectionFailureMaxQuickRetries) {
+      return;
+    }
+
+    final delay = Duration(
+      milliseconds: WiFiTimerConfig
+              .connectionFailureRetryInitialDelay.inMilliseconds +
+          (WiFiTimerConfig.connectionFailureRetryBackoffStep.inMilliseconds *
+              retriesDone),
+    );
+    _quickRetryCounts[endpointId] = retriesDone + 1;
+    final retryName = endpointName ?? _endpointNamesById[endpointId] ?? '';
+
+    debugPrint(
+        'Scheduling quick retry #${retriesDone + 1} for $endpointId in ${delay.inMilliseconds}ms ($reason)');
+
+    _quickRetryTimers[endpointId] = Timer(delay, () async {
+      _quickRetryTimers.remove(endpointId);
+      if (_connectedPeers.containsKey(endpointId) ||
+          _pendingConnectionAttempts.contains(endpointId)) {
+        return;
+      }
+      await _attemptConnection(endpointId, retryName);
+    });
+  }
+
+  Future<void> _attemptConnection(
+      String endpointId, String endpointName) async {
+    // Skip if already connected or currently trying.
+    if (_connectedPeers.containsKey(endpointId) ||
+        _pendingConnectionAttempts.contains(endpointId)) {
+      return;
+    }
+
     final now = DateTime.now().millisecondsSinceEpoch;
+    // Simple attempt cooldown to avoid request storms.
     final lastAttempt = _lastConnectionAttempt[endpointId];
     if (lastAttempt != null &&
         (now - lastAttempt) <
@@ -489,9 +590,21 @@ class WiFiTransport implements TransportService {
         _updateActivity(endpointId);
         _knownPeers.add(endpointId);
         await _db.saveKnownWiFiEndpoint(endpointId);
-        if (onConnectionEstablished != null) {
-          onConnectionEstablished!(endpointId);
-        }
+        // Delay fallback handshake slightly; this path can happen before the
+        // remote side has finished wiring payload callbacks.
+        Timer(WiFiTimerConfig.alreadyConnectedHandshakeDelay, () {
+          if (!_connectedPeers.containsKey(endpointId)) return;
+          if (onConnectionEstablished != null) {
+            onConnectionEstablished!(endpointId);
+          }
+        });
+        _clearQuickRetryState(endpointId);
+      } else if (message.contains('STATUS_ENDPOINT_IO_ERROR')) {
+        _scheduleQuickRetry(
+          endpointId,
+          endpointName: endpointName,
+          reason: 'request_connection_io_error',
+        );
       }
     }
   }
@@ -533,6 +646,9 @@ class WiFiTransport implements TransportService {
     if (endpointId != null) {
       _pendingConnectionAttempts.remove(endpointId);
       _pendingAttemptStartedAt.remove(endpointId);
+      _cancelWaitForInitiator(endpointId);
+      _clearQuickRetryState(endpointId);
+      _endpointNamesById.remove(endpointId);
     }
     // NOTE: Don't remove from _connectedPeers here!
     // onEndpointLost means the endpoint stopped advertising, not that the connection dropped.
@@ -558,6 +674,7 @@ class WiFiTransport implements TransportService {
   void _onConnectionResult(String endpointId, Status status) async {
     _pendingConnectionAttempts.remove(endpointId);
     _pendingAttemptStartedAt.remove(endpointId);
+    _cancelWaitForInitiator(endpointId);
     if (status == Status.CONNECTED) {
       debugPrint('WiFi Direct connected: $endpointId');
       _connectedPeers[endpointId] =
@@ -576,6 +693,7 @@ class WiFiTransport implements TransportService {
       if (onConnectionEstablished != null) {
         onConnectionEstablished!(endpointId);
       }
+      _clearQuickRetryState(endpointId);
     } else {
       debugPrint(
           'WiFi Direct connection failed: $endpointId (status: $status)');
@@ -589,6 +707,10 @@ class WiFiTransport implements TransportService {
         debugPrint(
             'Reconnect attempt failed for $endpointId (attempts=$attempts)');
       }
+      _scheduleQuickRetry(
+        endpointId,
+        reason: 'on_connection_result_$status',
+      );
     }
   }
 
@@ -598,6 +720,8 @@ class WiFiTransport implements TransportService {
     _lastActivity.remove(endpointId);
     _pendingConnectionAttempts.remove(endpointId);
     _pendingAttemptStartedAt.remove(endpointId);
+    _cancelWaitForInitiator(endpointId);
+    _clearQuickRetryState(endpointId);
 
     // Mark as known peer for auto-reconnection (if it was successfully connected before)
     if (_knownPeers.contains(endpointId)) {
@@ -706,6 +830,16 @@ class WiFiTransport implements TransportService {
   Future<void> dispose() async {
     _keepaliveTimer?.cancel();
     _healthCheckTimer?.cancel();
+    for (final timer in _waitForInitiatorTimers.values) {
+      timer.cancel();
+    }
+    for (final timer in _quickRetryTimers.values) {
+      timer.cancel();
+    }
+    _waitForInitiatorTimers.clear();
+    _quickRetryTimers.clear();
+    _quickRetryCounts.clear();
+    _endpointNamesById.clear();
     if (_isAdvertising) {
       await _nearby.stopAdvertising();
       _isAdvertising = false;

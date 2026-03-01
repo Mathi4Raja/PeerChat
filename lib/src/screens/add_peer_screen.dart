@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
@@ -369,3 +369,4 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
     );
   }
 }
+

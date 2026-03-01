@@ -30,7 +30,7 @@ import 'services/battery_status_service.dart';
 import 'services/wifi_transport.dart';
 import 'utils/name_generator.dart';
 
-class AppState extends ChangeNotifier {
+class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final Sodium _sodium;
   final DBService _db = DBService();
   final DiscoveryService _discovery = DiscoveryService();
@@ -55,6 +55,8 @@ class AppState extends ChangeNotifier {
   int _batteryLevel = 100;
   WiFiDiscoveryFailure? _pendingDiscoveryFailure;
   int _pendingDiscoveryFailureVersion = 0;
+  int _lastResumeDiscoveryKickMs = 0;
+  static final RegExp _nearbyEndpointIdPattern = RegExp(r'^[A-Z0-9]{4}$');
 
   List<Peer> peers = [];
   Map<String, int> unreadCounts = {};
@@ -175,6 +177,7 @@ class AppState extends ChangeNotifier {
 
   Future<void> init() async {
     try {
+      WidgetsBinding.instance.addObserver(this);
       debugPrint('AppState.init: Initializing Sodium...');
       _sodium = await sodium_libs.SodiumInit.init();
 
@@ -312,6 +315,7 @@ class AppState extends ChangeNotifier {
 
       // Start discovery using configured local service port.
       _discovery.onPeerFound.listen((p) async {
+        await _dedupeTransientWiFiDiscoveryPeers(p);
         await _db.upsertPeer(p);
         peers = await _db.allPeers();
         notifyListeners();
@@ -334,6 +338,7 @@ class AppState extends ChangeNotifier {
       } catch (e) {
         debugPrint('AppState.init: Discovery failed (non-fatal): $e');
       }
+      _kickFastDiscoveryBurst(reason: 'startup');
 
       // Start periodic peer list refresh (every 10 seconds)
       _startPeerRefresh();
@@ -537,7 +542,67 @@ class AppState extends ChangeNotifier {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    if (now - _lastResumeDiscoveryKickMs <
+        AppStateTimerConfig.resumeDiscoveryKickCooldown.inMilliseconds) {
+      return;
+    }
+    _lastResumeDiscoveryKickMs = now;
+    _kickFastDiscoveryBurst(reason: 'resume', kickWiFiDirect: true);
+  }
+
+  void _kickFastDiscoveryBurst({
+    required String reason,
+    bool kickWiFiDirect = false,
+  }) {
+    if (_runtimeProfile == RuntimeProfile.emergencyBattery) {
+      return;
+    }
+
+    _discovery.startFastDiscoveryBurst();
+    debugPrint('Discovery fast burst triggered ($reason)');
+
+    if (!kickWiFiDirect) return;
+    if (!_hasEmergencyBroadcastService) return;
+    if (meshRouter.getConnectedPeerIds().isNotEmpty) return;
+
+    unawaited(() async {
+      try {
+        await meshRouter.restartWiFiDirect();
+      } catch (e) {
+        debugPrint('WiFi Direct resume kick failed: $e');
+      }
+    }());
+  }
+
+  Future<void> _dedupeTransientWiFiDiscoveryPeers(Peer incoming) async {
+    if (!(incoming.hasApp && incoming.isWiFi)) return;
+    if (!_nearbyEndpointIdPattern.hasMatch(incoming.id)) return;
+
+    final normalizedName = incoming.displayName.trim().toLowerCase();
+    if (normalizedName.isEmpty) return;
+
+    final existing = await _db.allPeers();
+    final duplicates = existing
+        .where((peer) =>
+            peer.id != incoming.id &&
+            peer.hasApp &&
+            peer.isWiFi &&
+            _nearbyEndpointIdPattern.hasMatch(peer.id) &&
+            peer.displayName.trim().toLowerCase() == normalizedName)
+        .map((peer) => peer.id)
+        .toList();
+
+    for (final peerId in duplicates) {
+      await _db.deletePeer(peerId);
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _peerRefreshTimer?.cancel();
     _batteryPollTimer?.cancel();
     _transferPolicySubscription?.cancel();

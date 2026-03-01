@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 
 class AboutScreen extends StatelessWidget {
@@ -142,3 +142,4 @@ class _LinkCard extends StatelessWidget {
     );
   }
 }
+

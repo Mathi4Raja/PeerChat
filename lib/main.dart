@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'src/app_state.dart';
 import 'src/screens/main_shell.dart';
@@ -7,6 +8,7 @@ import 'src/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  GoogleFonts.config.allowRuntimeFetching = false;
 
   // Immersive dark status/nav bars
   SystemChrome.setSystemUIOverlayStyle(const SystemUiOverlayStyle(
@@ -53,3 +55,4 @@ class MyApp extends StatelessWidget {
     );
   }
 }
+

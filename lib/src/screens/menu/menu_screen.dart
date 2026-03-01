@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 import 'about_screen.dart';
 import 'account_settings_screen.dart';
@@ -133,3 +133,4 @@ class _MenuTile extends StatelessWidget {
     );
   }
 }
+

@@ -23,6 +23,7 @@ class ConnectionManager extends ChangeNotifier {
 
   // Track which peers have completed handshake
   final Set<String> _handshakeComplete = {};
+  final Set<String> _initialHandshakeSent = {};
 
   // Peer capability cache keyed by crypto peer ID.
   final Map<String, RuntimeProfile> _peerRuntimeProfiles = {};
@@ -74,10 +75,31 @@ class ConnectionManager extends ChangeNotifier {
     return _handshakeComplete.contains(transportId);
   }
 
+  bool hasSentInitialHandshake(String transportId) {
+    return _initialHandshakeSent.contains(transportId);
+  }
+
+  Future<void> sendHandshake({
+    required String transportId,
+    required String reason,
+    bool force = false,
+  }) async {
+    if (!force && !_initialHandshakeSent.add(transportId)) {
+      return;
+    }
+    if (force) {
+      _initialHandshakeSent.add(transportId);
+    }
+    debugPrint('Sending handshake to $transportId ($reason)');
+    await _sendHandshake(transportId);
+  }
+
   /// Handle new connection - send handshake
   Future<void> onConnectionEstablished(String transportId) async {
-    debugPrint('Connection established with $transportId, sending handshake');
-    await _sendHandshake(transportId);
+    await sendHandshake(
+      transportId: transportId,
+      reason: 'connection_established',
+    );
   }
 
   Future<void> _sendHandshake(String transportId) async {
@@ -111,6 +133,8 @@ class ConnectionManager extends ChangeNotifier {
       String transportId, HandshakeMessage handshake) async {
     debugPrint(
         'Received handshake from $transportId: ${handshake.displayName}');
+    final wasComplete = _handshakeComplete.contains(transportId);
+    final previousPeerId = _transportToCrypto[transportId];
 
     // Validate timestamp (not older than 5 minutes)
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -151,7 +175,9 @@ class ConnectionManager extends ChangeNotifier {
     );
 
     debugPrint('Handshake complete: ${handshake.peerId} <-> $transportId');
-    onHandshakeComplete?.call(handshake.peerId);
+    if (!wasComplete || previousPeerId != handshake.peerId) {
+      onHandshakeComplete?.call(handshake.peerId);
+    }
     notifyListeners();
   }
 
@@ -193,6 +219,7 @@ class ConnectionManager extends ChangeNotifier {
     }
     _transportToCrypto.remove(transportId);
     _handshakeComplete.remove(transportId);
+    _initialHandshakeSent.remove(transportId);
 
     notifyListeners();
   }

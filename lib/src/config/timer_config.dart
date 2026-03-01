@@ -101,6 +101,32 @@ class WiFiTimerConfig {
 
   /// Cooldown to avoid spamming repeated discovery failure notices.
   static const Duration discoveryFailureNoticeCooldown = Duration(seconds: 45);
+
+  /// How long a higher-name peer waits for the other side to initiate before
+  /// falling back to self-initiation.
+  static const Duration initiatorWaitTimeout = Duration(seconds: 4);
+
+  /// Minimum idle time since last endpoint discovery before proactive restart.
+  /// Prevents churn while discovery events are still actively coming in.
+  static const Duration endpointDiscoveryIdleBeforeRestart =
+      Duration(seconds: 45);
+
+  /// Delay before sending fallback handshake when Nearby reports
+  /// STATUS_ALREADY_CONNECTED_TO_ENDPOINT.
+  static const Duration alreadyConnectedHandshakeDelay =
+      Duration(milliseconds: 1200);
+
+  /// Base delay for quick retry after transient requestConnection failures.
+  static const Duration connectionFailureRetryInitialDelay =
+      Duration(milliseconds: 1200);
+
+  /// Linear step added to each quick retry attempt delay.
+  static const Duration connectionFailureRetryBackoffStep =
+      Duration(milliseconds: 1500);
+
+  /// Maximum quick retries per endpoint before waiting for fresh discovery
+  /// signals.
+  static const int connectionFailureMaxQuickRetries = 2;
 }
 
 /// Adaptive discovery scan timing.
@@ -110,6 +136,15 @@ class DiscoveryTimerConfig {
 
   /// Maximum random jitter added to scan interval to avoid synchronized scans.
   static const int scanJitterMaxMs = 3000;
+
+  /// Duration of temporary aggressive discovery right after app start/resume.
+  static const Duration fastBurstWindow = Duration(seconds: 40);
+
+  /// Bluetooth active scan window during fast discovery burst.
+  static const Duration fastBurstActiveScanDuration = Duration(seconds: 12);
+
+  /// Gap between scan cycles during fast discovery burst.
+  static const Duration fastBurstRestartInterval = Duration(seconds: 1);
 
   static Duration nextScanBase({
     required RuntimeProfile runtimeProfile,
@@ -207,6 +242,9 @@ class AppStateTimerConfig {
 
   /// Interval for battery status polling.
   static const Duration batteryPollInterval = Duration(minutes: 1);
+
+  /// Minimum spacing between consecutive resume-triggered discovery kicks.
+  static const Duration resumeDiscoveryKickCooldown = Duration(seconds: 12);
 }
 
 /// File transfer maintenance timers.

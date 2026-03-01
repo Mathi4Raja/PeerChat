@@ -18,6 +18,8 @@ class DiscoveryService {
   bool _advertising = false;
   bool _bluetoothScanning = false;
   StreamSubscription? _scanSubscription;
+  Timer? _scanStopTimer;
+  Timer? _scanRestartTimer;
   Registration? _nsdRegistration;
   String? _localId;
   String? _localName;
@@ -31,6 +33,7 @@ class DiscoveryService {
   bool _fileTransferActive = false;
   bool _batteryLow = false;
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
+  int _fastBurstUntilTimestamp = 0;
   String _lastPolicySignature = '';
 
   Stream<Peer> get onPeerFound => _foundController.stream;
@@ -43,6 +46,29 @@ class DiscoveryService {
 
     // Start Bluetooth discovery
     await _startBluetoothDiscovery(myId, name);
+  }
+
+  /// Temporarily use aggressive Bluetooth discovery intervals.
+  /// Ignored in Battery Saver profile by design.
+  void startFastDiscoveryBurst({
+    Duration window = DiscoveryTimerConfig.fastBurstWindow,
+  }) {
+    if (_runtimeProfile == RuntimeProfile.emergencyBattery) return;
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final burstUntil = now + window.inMilliseconds;
+    if (burstUntil > _fastBurstUntilTimestamp) {
+      _fastBurstUntilTimestamp = burstUntil;
+    }
+
+    final localId = _localId;
+    final localName = _localName;
+    if (localId == null || localName == null) return;
+
+    // If we are currently waiting for the next cycle, start immediately.
+    _scanRestartTimer?.cancel();
+    if (!_bluetoothScanning) {
+      _startBluetoothDiscovery(localId, localName);
+    }
   }
 
   Future<void> _startMdnsDiscovery(String myId, int port, String name) async {
@@ -147,6 +173,8 @@ class DiscoveryService {
       }
 
       _bluetoothScanning = true;
+      _scanRestartTimer?.cancel();
+      _scanStopTimer?.cancel();
 
       // Get bonded (paired) devices first
       final bondedDevices = await _bluetooth.bondedDevices;
@@ -165,22 +193,24 @@ class DiscoveryService {
       });
 
       // Stop scan after adaptive active window and restart
-      Future.delayed(_activeScanDuration(), () async {
+      _scanStopTimer = Timer(_activeScanDuration(), () async {
         await _scanSubscription?.cancel();
+        _scanSubscription = null;
         _bluetooth.stopScan();
         _bluetoothScanning = false;
-        // Restart discovery after adaptive delay.
-        Future.delayed(_nextScanIntervalWithJitter(), () {
-          _startBluetoothDiscovery(myId, name);
-        });
+        _scheduleBluetoothRestart(myId, name);
       });
     } catch (e) {
       _bluetoothScanning = false;
-      // Try again later on failures to keep discovery alive.
-      Future.delayed(_nextScanIntervalWithJitter(), () {
-        _startBluetoothDiscovery(myId, name);
-      });
+      _scheduleBluetoothRestart(myId, name);
     }
+  }
+
+  void _scheduleBluetoothRestart(String myId, String name) {
+    _scanRestartTimer?.cancel();
+    _scanRestartTimer = Timer(_nextScanIntervalWithJitter(), () {
+      _startBluetoothDiscovery(myId, name);
+    });
   }
 
   /// Update adaptive discovery policy.
@@ -213,6 +243,9 @@ class DiscoveryService {
   }
 
   Duration _nextScanIntervalWithJitter() {
+    if (_isFastBurstActive) {
+      return DiscoveryTimerConfig.fastBurstRestartInterval;
+    }
     return DiscoveryTimerConfig.nextScanIntervalWithJitter(
       runtimeProfile: _runtimeProfile,
       connectedPeerCount: _connectedPeerCount,
@@ -223,12 +256,22 @@ class DiscoveryService {
   }
 
   Duration _activeScanDuration() {
+    if (_isFastBurstActive) {
+      return DiscoveryTimerConfig.fastBurstActiveScanDuration;
+    }
     return DiscoveryTimerConfig.activeScanDuration(
       runtimeProfile: _runtimeProfile,
       connectedPeerCount: _connectedPeerCount,
       fileTransferActive: _fileTransferActive,
       batteryLow: _batteryLow,
     );
+  }
+
+  bool get _isFastBurstActive {
+    if (_runtimeProfile == RuntimeProfile.emergencyBattery) {
+      return false;
+    }
+    return DateTime.now().millisecondsSinceEpoch < _fastBurstUntilTimestamp;
   }
 
   void _addBluetoothPeer(BluetoothDevice device) {
@@ -347,6 +390,8 @@ class DiscoveryService {
     _advertising = false;
 
     // Stop Bluetooth scanning
+    _scanStopTimer?.cancel();
+    _scanRestartTimer?.cancel();
     await _scanSubscription?.cancel();
     _bluetooth.stopScan();
     _bluetoothScanning = false;

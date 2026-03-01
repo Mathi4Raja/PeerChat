@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 
 class SupportScreen extends StatelessWidget {
@@ -99,3 +99,4 @@ class SupportScreen extends StatelessWidget {
     );
   }
 }
+

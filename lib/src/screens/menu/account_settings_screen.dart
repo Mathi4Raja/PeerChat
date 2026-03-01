@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
+import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 
 class AccountSettingsScreen extends StatefulWidget {
@@ -148,3 +148,4 @@ class _AccountSettingsScreenState extends State<AccountSettingsScreen> {
     );
   }
 }
+
