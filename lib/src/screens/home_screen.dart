@@ -9,7 +9,6 @@ import '../theme.dart';
 import 'menu/menu_screen.dart';
 import 'mesh/routes_status_screen.dart';
 import 'mesh/queued_messages_status_screen.dart';
-import 'mesh/pending_acks_status_screen.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({super.key});
@@ -491,15 +490,15 @@ class _MeshStatusSection extends StatelessWidget {
                         child: _MeshStat(
                           icon: Icons.schedule_send_rounded,
                           label: 'Queued',
-                          value: stats.queuedMessages.toString(),
-                          color: stats.queuedMessages > 0
+                          value: stats.localQueuedMessages.toString(),
+                          color: stats.localQueuedMessages > 0
                               ? AppTheme.warning
                               : AppTheme.textSecondary,
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
                                 builder: (_) =>
-                                    const QueuedMessagesStatusScreen(),
+                                    const QueuedMessagesStatusScreen.local(),
                               ),
                             );
                           },
@@ -508,16 +507,17 @@ class _MeshStatusSection extends StatelessWidget {
                       const SizedBox(width: 8),
                       Expanded(
                         child: _MeshStat(
-                          icon: Icons.check_circle_outline_rounded,
-                          label: 'Pending ACK',
-                          value: stats.pendingAcks.toString(),
-                          color: stats.pendingAcks > 0
-                              ? AppTheme.accent
+                          icon: Icons.hub_rounded,
+                          label: 'Relayed',
+                          value: stats.meshQueuedMessages.toString(),
+                          color: stats.meshQueuedMessages > 0
+                              ? AppTheme.warning
                               : AppTheme.textSecondary,
                           onTap: () {
                             Navigator.of(context).push(
                               MaterialPageRoute(
-                                builder: (_) => const PendingAcksStatusScreen(),
+                                builder: (_) =>
+                                    const QueuedMessagesStatusScreen.mesh(),
                               ),
                             );
                           },
@@ -526,19 +526,9 @@ class _MeshStatusSection extends StatelessWidget {
                     ],
                   ),
 
-                  if (stats.blockedPeers > 0) ...[
-                    const SizedBox(height: 8),
-                    _MeshStat(
-                      icon: Icons.block_rounded,
-                      label: 'Blocked',
-                      value: stats.blockedPeers.toString(),
-                      color: AppTheme.danger,
-                    ),
-                  ],
-
                   const SizedBox(height: 10),
                   Text(
-                    'Queued: not sent yet. Pending ACK: sent, waiting for delivery confirmation.',
+                    'Queued: local messages waiting for route/connection. Relayed: mesh-origin messages waiting for next hop.',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       color: AppTheme.textSecondary,

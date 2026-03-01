@@ -5,7 +5,6 @@ import 'route_manager.dart';
 import 'message_queue.dart';
 import 'deduplication_cache.dart';
 import 'signature_verifier.dart';
-import 'delivery_ack_handler.dart';
 import '../config/limits_config.dart';
 import '../models/mesh_message.dart';
 import '../models/queued_message.dart';
@@ -26,7 +25,6 @@ class MessageManager {
   final MessageQueue _messageQueue;
   final DeduplicationCache _deduplicationCache;
   final SignatureVerifier _signatureVerifier;
-  final DeliveryAckHandler _deliveryAckHandler;
 
   final _uuid = const Uuid();
   final _random = Random.secure();
@@ -42,7 +40,6 @@ class MessageManager {
     this._messageQueue,
     this._deduplicationCache,
     this._signatureVerifier,
-    this._deliveryAckHandler,
     this.sendTransportMessage,
   );
 
@@ -151,17 +148,6 @@ class MessageManager {
 
     // Check deduplication
     if (await _deduplicationCache.hasSeen(message.messageId)) {
-      // If receiver already saw this DATA message, re-ACK it so sender can clear
-      // pending state when the original ACK was lost.
-      if (message.recipientPeerId == _cryptoService.localPeerId &&
-          message.type == MessageType.data) {
-        try {
-          final ack = await _deliveryAckHandler.createAcknowledgment(message);
-          await forwardMessage(ack);
-        } catch (_) {
-          // Best-effort ACK on duplicate.
-        }
-      }
       return ProcessResult.duplicate;
     }
 
@@ -175,17 +161,11 @@ class MessageManager {
 
     // Check if we are the destination
     if (message.recipientPeerId == _cryptoService.localPeerId) {
-      // Deliver to local user
       if (message.type == MessageType.data) {
-        // Generate acknowledgment
-        final ack = await _deliveryAckHandler.createAcknowledgment(message);
-        await forwardMessage(ack);
-      } else if (message.type == MessageType.acknowledgment) {
-        await _deliveryAckHandler.handleAcknowledgment(message);
-      } else if (message.type == MessageType.readReceipt) {
-        // No special direct logic here, just mark as delivered to pass to router
+        return ProcessResult.delivered;
       }
-      return ProcessResult.delivered;
+      // Ignore legacy delivery/read control messages.
+      return ProcessResult.duplicate;
     }
 
     // We are a relay - forward the message
@@ -206,6 +186,7 @@ class MessageManager {
         message: message,
         nextHopPeerId: message.recipientPeerId,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: _queueOriginFor(message),
       );
       await _messageQueue.enqueue(queuedMessage);
 
@@ -225,6 +206,7 @@ class MessageManager {
         message: message,
         nextHopPeerId: nextHop,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: _queueOriginFor(message),
       );
       await _messageQueue.enqueue(queuedMessage);
       return false;
@@ -261,5 +243,11 @@ class MessageManager {
       debugPrint('Decryption error: $e');
       return null;
     }
+  }
+
+  QueueOrigin _queueOriginFor(MeshMessage message) {
+    return message.senderPeerId == _cryptoService.localPeerId
+        ? QueueOrigin.local
+        : QueueOrigin.mesh;
   }
 }

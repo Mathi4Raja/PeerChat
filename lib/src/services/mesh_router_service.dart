@@ -24,7 +24,6 @@ import 'message_queue.dart';
 import 'file_transfer_service.dart';
 import 'deduplication_cache.dart';
 import 'signature_verifier.dart';
-import 'delivery_ack_handler.dart';
 import 'connection_manager.dart';
 import 'transport_service.dart';
 import 'wifi_transport.dart';
@@ -41,7 +40,6 @@ class MeshRouterService extends ChangeNotifier {
   final SignatureVerifier _signatureVerifier;
   final MessageQueue _messageQueue;
   final RouteManager _routeManager;
-  final DeliveryAckHandler _deliveryAckHandler;
   final MessageManager _messageManager;
   final MultiTransportService _transportService;
   final ConnectionManager _connectionManager;
@@ -58,11 +56,9 @@ class MeshRouterService extends ChangeNotifier {
   StreamSubscription? _routeUpdateSubscription;
 
   int _messagesSent = 0;
-  int _messagesDelivered = 0;
+  final int _messagesDelivered = 0;
   int _messagesFailed = 0;
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
-  final Set<String> _countedDeliveredMessageIds = {};
-  final Set<String> _countedFailedMessageIds = {};
 
   // Stream for incoming messages — ChatScreen listens to this
   final StreamController<ChatMessage> _incomingMessageController =
@@ -88,7 +84,6 @@ class MeshRouterService extends ChangeNotifier {
     required SignatureVerifier signatureVerifier,
     required MessageQueue messageQueue,
     required RouteManager routeManager,
-    required DeliveryAckHandler deliveryAckHandler,
     required MessageManager messageManager,
     required MultiTransportService transportService,
     required ConnectionManager connectionManager,
@@ -101,30 +96,11 @@ class MeshRouterService extends ChangeNotifier {
         _signatureVerifier = signatureVerifier,
         _messageQueue = messageQueue,
         _routeManager = routeManager,
-        _deliveryAckHandler = deliveryAckHandler,
         _messageManager = messageManager,
         _transportService = transportService,
         _connectionManager = connectionManager,
         _fileTransferService = fileTransferService,
         _emergencyBroadcastService = emergencyBroadcastService {
-    _deliveryAckHandler.onStatusChanged = (id) async {
-      _statusUpdateController.add(id);
-      final updatedMessage = await _db.getChatMessageById(id);
-      if (updatedMessage == null) return;
-
-      if ((updatedMessage.status == MessageStatus.delivered ||
-              updatedMessage.status == MessageStatus.seen) &&
-          !_countedDeliveredMessageIds.contains(id)) {
-        _countedDeliveredMessageIds.add(id);
-        _messagesDelivered++;
-      }
-      if (updatedMessage.status == MessageStatus.failed &&
-          !_countedFailedMessageIds.contains(id)) {
-        _countedFailedMessageIds.add(id);
-        _messagesFailed++;
-      }
-      notifyListeners();
-    };
     _connectionManager.onHandshakeComplete = (peerId) async {
       debugPrint('Handshake complete for $peerId - processing full queue');
       _scheduleQueueProcessing();
@@ -335,20 +311,11 @@ class MeshRouterService extends ChangeNotifier {
       switch (effectiveMode) {
         case CommunicationMode.direct:
           final result = await _sendDirect(message, recipientPeerId);
-          if (result == SendResult.direct || result == SendResult.routed) {
-            await _deliveryAckHandler.trackPendingAck(
-                message.messageId, recipientPeerId);
-          }
           _recordSendAttempt(result);
           notifyListeners();
           return result;
         case CommunicationMode.mesh:
           final forwarded = await _forwardMessageViaTransport(message);
-          if (forwarded == SendResult.direct ||
-              forwarded == SendResult.routed) {
-            await _deliveryAckHandler.trackPendingAck(
-                message.messageId, recipientPeerId);
-          }
           _recordSendAttempt(forwarded);
           notifyListeners();
           return forwarded;
@@ -388,47 +355,6 @@ class MeshRouterService extends ChangeNotifier {
     }
   }
 
-  Future<void> sendReadReceipt({
-    required String recipientPeerId,
-    required List<String> messageIds,
-  }) async {
-    if (messageIds.isEmpty) return;
-    try {
-      final recipientPublicKey =
-          await _signatureVerifier.getPeerPublicKey(recipientPeerId);
-      if (recipientPublicKey == null) return;
-
-      final content = 'READ:${messageIds.join(',')}';
-      final recipientEncryptionKey =
-          await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
-      if (recipientEncryptionKey == null) return;
-
-      final encryptedContent =
-          _cryptoService.encryptContent(content, recipientEncryptionKey);
-      final messageId = _generateMessageId();
-
-      final message = MeshMessage(
-        messageId: messageId,
-        type: MessageType.readReceipt,
-        senderPeerId: _cryptoService.localPeerId,
-        recipientPeerId: recipientPeerId,
-        ttl: MessageLimits.readReceiptTtl,
-        hopCount: 0,
-        priority: MessagePriority.normal,
-        timestamp: DateTime.now().millisecondsSinceEpoch,
-        encryptedContent: encryptedContent,
-        signature: Uint8List(0),
-      );
-
-      final signature = _cryptoService.signMessage(message.toBytesForSigning());
-      final signedMessage = message.copyWithSignature(signature);
-
-      await _forwardMessageViaTransport(signedMessage);
-    } catch (e) {
-      debugPrint('Error sending read receipt: $e');
-    }
-  }
-
   Future<SendResult> _forwardMessageViaTransport(MeshMessage message) async {
     final nextHopCryptoId =
         await _routeManager.getNextHop(message.recipientPeerId);
@@ -439,6 +365,7 @@ class MeshRouterService extends ChangeNotifier {
         message: message,
         nextHopPeerId: message.recipientPeerId,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: QueueOrigin.local,
       );
       await _messageQueue.enqueue(queuedMessage);
       _routeManager.discoverRoute(message.recipientPeerId);
@@ -451,6 +378,7 @@ class MeshRouterService extends ChangeNotifier {
         message: message,
         nextHopPeerId: nextHopCryptoId,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: QueueOrigin.local,
       );
       await _messageQueue.enqueue(queuedMessage);
       return SendResult.queued;
@@ -470,11 +398,12 @@ class MeshRouterService extends ChangeNotifier {
         message: message,
         nextHopPeerId: nextHopCryptoId,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: QueueOrigin.local,
       );
       await _messageQueue.enqueue(queuedMessage);
       await _routeManager.markRouteFailed(
           message.recipientPeerId, nextHopCryptoId);
-      return SendResult.failed;
+      return SendResult.queued;
     }
   }
 
@@ -558,6 +487,7 @@ class MeshRouterService extends ChangeNotifier {
         message: message,
         nextHopPeerId: message.recipientPeerId,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: QueueOrigin.mesh,
       );
       await _messageQueue.enqueue(queuedMessage);
     }
@@ -637,10 +567,12 @@ class MeshRouterService extends ChangeNotifier {
         MeshRouterTimerConfig.maintenanceInterval, (timer) async {
       try {
         await _routeManager.expireStaleRoutes();
-        await _messageQueue.removeExpired();
+        final expiredDroppedIds = await _messageQueue.removeExpired();
+        if (expiredDroppedIds.isNotEmpty) {
+          await _markMessagesFailed(expiredDroppedIds);
+        }
         await _deduplicationCache.cleanup();
         await _signatureVerifier.unblockExpiredPeers();
-        await _deliveryAckHandler.cleanupOldAcks();
         notifyListeners();
       } catch (e) {
         debugPrint('Error in maintenance tasks: $e');
@@ -660,12 +592,20 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   Future<void> _processQueue() async {
-    final queuedMessages = await _messageQueue.getReadyMessages();
+    final localQueuedMessages =
+        await _messageQueue.getReadyMessagesByOrigin(QueueOrigin.local);
+    final meshQueuedMessages =
+        await _messageQueue.getReadyMessagesByOrigin(QueueOrigin.mesh);
+    final queuedMessages = <QueuedMessage>[
+      ...localQueuedMessages,
+      ...meshQueuedMessages,
+    ];
     if (queuedMessages.isEmpty) return;
 
     for (final queuedMessage in queuedMessages) {
       if (queuedMessage.isExpired || queuedMessage.shouldDrop) {
         await _messageQueue.dequeue(queuedMessage.message.messageId);
+        await _markMessageFailed(queuedMessage.message.messageId);
         continue;
       }
 
@@ -684,49 +624,68 @@ class MeshRouterService extends ChangeNotifier {
                 MessageType.data &&
             queuedMessage.message.senderPeerId == _cryptoService.localPeerId;
         if (isLocalOutgoingData) {
-          await _deliveryAckHandler.trackPendingAck(
-            queuedMessage.message.messageId,
-            queuedMessage.message.recipientPeerId,
-          );
+          final isDirectSession =
+              _isDirectSessionWithPeer(queuedMessage.message.recipientPeerId);
           final messageStatus =
-              currentNextHop == queuedMessage.message.recipientPeerId
+              isDirectSession &&
+                      currentNextHop == queuedMessage.message.recipientPeerId
                   ? MessageStatus.sent
                   : MessageStatus.routing;
           await _db.updateMessageStatus(
-              queuedMessage.message.messageId, messageStatus);
+            queuedMessage.message.messageId,
+            messageStatus,
+            clearHopCount: true,
+          );
           _statusUpdateController.add(queuedMessage.message.messageId);
         }
         await _messageQueue.dequeue(queuedMessage.message.messageId);
         await _routeManager.markRouteSuccess(
             queuedMessage.message.recipientPeerId, currentNextHop);
       } else {
-        await _messageQueue.updateAttempt(queuedMessage.message.messageId);
+        final dropped =
+            await _messageQueue.updateAttempt(queuedMessage.message.messageId);
+        if (dropped) {
+          await _markMessageFailed(queuedMessage.message.messageId);
+        }
         await _routeManager.markRouteFailed(
             queuedMessage.message.recipientPeerId, currentNextHop);
       }
     }
   }
 
+  Future<void> _markMessagesFailed(Iterable<String> messageIds) async {
+    for (final messageId in messageIds) {
+      await _markMessageFailed(messageId);
+    }
+  }
+
+  Future<void> _markMessageFailed(String messageId) async {
+    final chatMessage = await _db.getChatMessageById(messageId);
+    if (chatMessage == null || !chatMessage.isSentByMe) return;
+    if (chatMessage.status == MessageStatus.failed) return;
+
+    await _db.updateMessageStatus(
+      messageId,
+      MessageStatus.failed,
+      clearHopCount: true,
+    );
+    _statusUpdateController.add(messageId);
+  }
+
   void _deliverToApplication(MeshMessage message, String content) async {
     if (message.type == MessageType.data) {
+      final totalHops = message.hopCount + 1;
       final chatMessage = ChatMessage(
         id: message.messageId,
         peerId: message.senderPeerId,
         content: content,
         timestamp: message.timestamp,
         isSentByMe: false,
-        status: MessageStatus.delivered,
+        status: MessageStatus.sent,
+        hopCount: totalHops,
       );
       await _db.insertChatMessage(chatMessage);
       _incomingMessageController.add(chatMessage);
-    } else if (message.type == MessageType.readReceipt) {
-      if (content.startsWith('READ:')) {
-        final ids = content.substring(5).split(',');
-        for (final id in ids) {
-          await _db.updateMessageStatus(id, MessageStatus.seen);
-          _statusUpdateController.add(id);
-        }
-      }
     }
     notifyListeners();
   }
@@ -734,13 +693,12 @@ class MeshRouterService extends ChangeNotifier {
   Future<RoutingStats> get stats async {
     final routeStats = await _routeManager.getStats();
     final queueStats = await _messageQueue.getStats();
-    final ackStats = await _deliveryAckHandler.getStats();
     final sigStats = await _signatureVerifier.getStats();
 
     return RoutingStats(
       totalRoutes: routeStats['total_routes'] ?? 0,
-      queuedMessages: queueStats.totalMessages,
-      pendingAcks: ackStats['pending_acks'] ?? 0,
+      localQueuedMessages: queueStats.localOriginMessages,
+      meshQueuedMessages: queueStats.meshOriginMessages,
       blockedPeers: sigStats['blocked_peers'] ?? 0,
       messagesSent: _messagesSent,
       messagesDelivered: _messagesDelivered,
@@ -750,11 +708,6 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   Future<QueueStats> get queueStatus => _messageQueue.getStats();
-
-  /// Manually clear all pending ACK records.
-  Future<int> clearPendingAcks() async {
-    return _deliveryAckHandler.clearAllPendingAcks();
-  }
 
   Future<List<mesh_route.Route>> getAllRoutesForStatus() async {
     return _routeManager.getAllRoutes();
@@ -774,6 +727,7 @@ class MeshRouterService extends ChangeNotifier {
         recipientPeerId: q.message.recipientPeerId,
         nextHopPeerId: q.nextHopPeerId,
         queuedTimestamp: q.queuedTimestamp,
+        origin: q.origin,
         attemptCount: q.attemptCount,
         priority: q.message.priority,
         contentPreview: chat?.content,
@@ -794,10 +748,15 @@ class MeshRouterService extends ChangeNotifier {
     return 1;
   }
 
-  Future<int> removeQueuedMessagesForPeer(String recipientPeerId) async {
+  Future<int> removeQueuedMessagesForPeer(
+    String recipientPeerId, {
+    QueueOrigin? origin,
+  }) async {
     final queued = await _messageQueue.getAllQueued();
     final ids = queued
-        .where((q) => q.message.recipientPeerId == recipientPeerId)
+        .where((q) =>
+            q.message.recipientPeerId == recipientPeerId &&
+            (origin == null || q.origin == origin))
         .map((q) => q.message.messageId)
         .toList();
     for (final id in ids) {
@@ -807,114 +766,6 @@ class MeshRouterService extends ChangeNotifier {
     return ids.length;
   }
 
-  Future<List<PendingAckDetail>> getPendingAckDetails() async {
-    final rows = await _deliveryAckHandler.getPendingAcks();
-    if (rows.isEmpty) return [];
-
-    final messageIds =
-        rows.map((r) => r['message_id'] as String).toSet().toList();
-    final chatMessages = await _db.getChatMessagesByIds(messageIds);
-
-    final details = rows.map((row) {
-      final messageId = row['message_id'] as String;
-      final chat = chatMessages[messageId];
-      return PendingAckDetail(
-        messageId: messageId,
-        recipientPeerId: row['recipient_peer_id'] as String,
-        sentTimestamp: row['sent_timestamp'] as int? ?? 0,
-        messageTimestamp: chat?.timestamp,
-        contentPreview: chat?.content,
-        status: chat?.status,
-      );
-    }).toList()
-      ..sort((a, b) {
-        final ta = a.orderTimestamp;
-        final tb = b.orderTimestamp;
-        if (ta != tb) return ta.compareTo(tb);
-        return a.messageId.compareTo(b.messageId);
-      });
-
-    return details;
-  }
-
-  Future<bool> queuePendingAckForMessage(
-    String messageId, {
-    int? orderedQueueTimestamp,
-  }) async {
-    final details = await getPendingAckDetails();
-    PendingAckDetail? target;
-    for (final detail in details) {
-      if (detail.messageId == messageId) {
-        target = detail;
-        break;
-      }
-    }
-    if (target == null) return false;
-    return _queuePendingAckDetail(
-      target,
-      orderedQueueTimestamp: orderedQueueTimestamp,
-    );
-  }
-
-  Future<int> queuePendingAcksForPeer(String recipientPeerId) async {
-    final details = await getPendingAckDetails();
-    final peerDetails =
-        details.where((d) => d.recipientPeerId == recipientPeerId).toList()
-          ..sort((a, b) {
-            final ta = a.orderTimestamp;
-            final tb = b.orderTimestamp;
-            if (ta != tb) return ta.compareTo(tb);
-            return a.messageId.compareTo(b.messageId);
-          });
-
-    if (peerDetails.isEmpty) return 0;
-
-    var queuedCount = 0;
-    for (var i = 0; i < peerDetails.length; i++) {
-      final orderedTimestamp = peerDetails[i].orderTimestamp + i;
-      final queued = await _queuePendingAckDetail(
-        peerDetails[i],
-        orderedQueueTimestamp: orderedTimestamp,
-      );
-      if (queued) queuedCount++;
-    }
-    return queuedCount;
-  }
-
-  Future<bool> _queuePendingAckDetail(
-    PendingAckDetail detail, {
-    int? orderedQueueTimestamp,
-  }) async {
-    if (detail.contentPreview == null || detail.contentPreview!.isEmpty) {
-      return false;
-    }
-
-    final recipientPublicKey =
-        await _signatureVerifier.getPeerPublicKey(detail.recipientPeerId);
-    if (recipientPublicKey == null) {
-      return false;
-    }
-
-    final message = await _messageManager.createMessage(
-      recipientPeerId: detail.recipientPeerId,
-      recipientPublicKey: recipientPublicKey,
-      content: detail.contentPreview!,
-      priority: MessagePriority.normal,
-      messageId: detail.messageId,
-    );
-
-    final queuedMessage = QueuedMessage(
-      message: message,
-      nextHopPeerId: detail.recipientPeerId,
-      queuedTimestamp: orderedQueueTimestamp ?? detail.orderTimestamp,
-    );
-    await _messageQueue.enqueue(queuedMessage);
-    await _db.updateMessageStatus(detail.messageId, MessageStatus.sending);
-    await _deliveryAckHandler.removePendingAck(detail.messageId);
-    _statusUpdateController.add(detail.messageId);
-    notifyListeners();
-    return true;
-  }
 
   RouteManager get routeManager => _routeManager;
   MessageQueue get messageQueue => _messageQueue;
@@ -933,6 +784,13 @@ class MeshRouterService extends ChangeNotifier {
         peerId,
         defaultValue: defaultValue,
       );
+
+  bool _isDirectSessionWithPeer(String peerId) {
+    final remoteProfile = _connectionManager.getPeerRuntimeProfile(peerId);
+    return _runtimeProfile == RuntimeProfile.normalDirect &&
+        remoteProfile == RuntimeProfile.normalDirect &&
+        _connectionManager.getConnectedCryptoPeerIds().contains(peerId);
+  }
 
   @override
   void dispose() {
@@ -974,8 +832,8 @@ enum SendResult {
 
 class RoutingStats {
   final int totalRoutes;
-  final int queuedMessages;
-  final int pendingAcks;
+  final int localQueuedMessages;
+  final int meshQueuedMessages;
   final int blockedPeers;
   final int messagesSent;
   final int messagesDelivered;
@@ -984,14 +842,18 @@ class RoutingStats {
 
   RoutingStats({
     required this.totalRoutes,
-    required this.queuedMessages,
-    required this.pendingAcks,
+    required this.localQueuedMessages,
+    required this.meshQueuedMessages,
     required this.blockedPeers,
     required this.messagesSent,
     required this.messagesDelivered,
     required this.messagesFailed,
     required this.activePeerCount,
   });
+
+  // Backward compatibility: "Queued" now represents local-origin queue only.
+  int get queuedMessages => localQueuedMessages;
+  int get totalQueuedMessages => localQueuedMessages + meshQueuedMessages;
 
   double get deliverySuccessRate {
     if (messagesSent <= 0) return 1.0;
@@ -1007,6 +869,7 @@ class QueuedMessageDetail {
   final String recipientPeerId;
   final String nextHopPeerId;
   final int queuedTimestamp;
+  final QueueOrigin origin;
   final int attemptCount;
   final MessagePriority priority;
   final String? contentPreview;
@@ -1016,28 +879,9 @@ class QueuedMessageDetail {
     required this.recipientPeerId,
     required this.nextHopPeerId,
     required this.queuedTimestamp,
+    required this.origin,
     required this.attemptCount,
     required this.priority,
     this.contentPreview,
   });
-}
-
-class PendingAckDetail {
-  final String messageId;
-  final String recipientPeerId;
-  final int sentTimestamp;
-  final int? messageTimestamp;
-  final String? contentPreview;
-  final MessageStatus? status;
-
-  PendingAckDetail({
-    required this.messageId,
-    required this.recipientPeerId,
-    required this.sentTimestamp,
-    this.messageTimestamp,
-    this.contentPreview,
-    this.status,
-  });
-
-  int get orderTimestamp => messageTimestamp ?? sentTimestamp;
 }

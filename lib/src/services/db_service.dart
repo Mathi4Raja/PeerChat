@@ -21,7 +21,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 13,
+      version: 16,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -65,6 +65,15 @@ class DBService {
         if (oldVersion < 13) {
           await _migrateTo13(db);
         }
+        if (oldVersion < 14) {
+          await _migrateTo14(db);
+        }
+        if (oldVersion < 15) {
+          await _migrateTo15(db);
+        }
+        if (oldVersion < 16) {
+          await _migrateTo16(db);
+        }
       },
     );
     return _db!;
@@ -92,7 +101,8 @@ class DBService {
         timestamp INTEGER NOT NULL,
         isSentByMe INTEGER NOT NULL,
         status INTEGER NOT NULL,
-        isRead INTEGER DEFAULT 1
+        isRead INTEGER DEFAULT 1,
+        hopCount INTEGER
       )
     ''');
 
@@ -107,6 +117,7 @@ class DBService {
         message_data BLOB NOT NULL,
         priority INTEGER NOT NULL,
         queued_timestamp INTEGER NOT NULL,
+        origin_type INTEGER NOT NULL DEFAULT 0,
         attempt_count INTEGER DEFAULT 0,
         last_attempt_timestamp INTEGER,
         next_retry_time INTEGER DEFAULT 0,
@@ -139,14 +150,6 @@ class DBService {
         peer_id TEXT PRIMARY KEY,
         blocked_until_timestamp INTEGER NOT NULL,
         invalid_signature_count INTEGER NOT NULL
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE pending_acks (
-        message_id TEXT PRIMARY KEY,
-        recipient_peer_id TEXT NOT NULL,
-        sent_timestamp INTEGER NOT NULL
       )
     ''');
 
@@ -306,6 +309,24 @@ class DBService {
     } catch (_) {}
   }
 
+  Future<void> _migrateTo14(Database db) async {
+    try {
+      await db
+          .execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
+    } catch (_) {}
+  }
+
+  Future<void> _migrateTo15(Database db) async {
+    try {
+      await db.execute(
+          'ALTER TABLE message_queue ADD COLUMN origin_type INTEGER NOT NULL DEFAULT 0');
+    } catch (_) {}
+  }
+
+  Future<void> _migrateTo16(Database db) async {
+    await db.execute('DROP TABLE IF EXISTS pending_acks');
+  }
+
   Future<void> _ensureCriticalSchema(Database db) async {
     final dedupHasOriginalTs =
         await _hasColumn(db, 'deduplication_cache', 'original_timestamp');
@@ -315,6 +336,20 @@ class DBService {
       await db.execute(
           'UPDATE deduplication_cache SET original_timestamp = seen_timestamp WHERE original_timestamp = 0');
     }
+
+    final chatHasHopCount = await _hasColumn(db, 'chat_messages', 'hopCount');
+    if (!chatHasHopCount) {
+      await db.execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
+    }
+
+    final queueHasOrigin = await _hasColumn(db, 'message_queue', 'origin_type');
+    if (!queueHasOrigin) {
+      await db.execute(
+          'ALTER TABLE message_queue ADD COLUMN origin_type INTEGER NOT NULL DEFAULT 0');
+    }
+
+    // Remove obsolete delivery-ACK table from older installations.
+    await db.execute('DROP TABLE IF EXISTS pending_acks');
   }
 
   Future<bool> _hasColumn(Database db, String table, String column) async {
@@ -371,14 +406,6 @@ class DBService {
         peer_id TEXT PRIMARY KEY,
         blocked_until_timestamp INTEGER NOT NULL,
         invalid_signature_count INTEGER NOT NULL
-      )
-    ''');
-
-    await db.execute('''
-      CREATE TABLE pending_acks (
-        message_id TEXT PRIMARY KEY,
-        recipient_peer_id TEXT NOT NULL,
-        sent_timestamp INTEGER NOT NULL
       )
     ''');
 
@@ -517,11 +544,23 @@ class DBService {
   }
 
   Future<void> updateMessageStatus(
-      String messageId, MessageStatus status) async {
+    String messageId,
+    MessageStatus status, {
+    int? hopCount,
+    bool clearHopCount = false,
+  }) async {
     final d = await db;
+    final values = <String, Object?>{
+      'status': status.index,
+    };
+    if (hopCount != null) {
+      values['hopCount'] = hopCount;
+    } else if (clearHopCount) {
+      values['hopCount'] = null;
+    }
     await d.update(
       'chat_messages',
-      {'status': status.index},
+      values,
       where: 'id = ?',
       whereArgs: [messageId],
     );
@@ -701,11 +740,6 @@ class DBService {
       await txn.delete(
         'chat_messages',
         where: 'peerId = ?',
-        whereArgs: [peerId],
-      );
-      await txn.delete(
-        'pending_acks',
-        where: 'recipient_peer_id = ?',
         whereArgs: [peerId],
       );
     });

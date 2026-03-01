@@ -2,12 +2,18 @@ import 'dart:typed_data';
 import 'mesh_message.dart';
 import '../config/limits_config.dart';
 
+enum QueueOrigin {
+  local,
+  mesh,
+}
+
 class QueuedMessage {
   final MeshMessage message;
   final String nextHopPeerId;
   final int queuedTimestamp;
   final int attemptCount;
   final int? lastAttemptTimestamp;
+  final QueueOrigin origin;
 
   /// When this message is next eligible for retry.
   /// Uses exponential backoff: nextRetryTime = now + base * 2^min(retryCount, 10)
@@ -27,6 +33,7 @@ class QueuedMessage {
     required this.message,
     required this.nextHopPeerId,
     required this.queuedTimestamp,
+    required this.origin,
     this.attemptCount = 0,
     this.lastAttemptTimestamp,
     this.nextRetryTime = 0,
@@ -47,6 +54,7 @@ class QueuedMessage {
       'message_data': message.toBytes(),
       'priority': message.priority.index,
       'queued_timestamp': queuedTimestamp,
+      'origin_type': origin.index,
       'attempt_count': attemptCount,
       'last_attempt_timestamp': lastAttemptTimestamp,
       'next_retry_time': nextRetryTime,
@@ -65,6 +73,7 @@ class QueuedMessage {
       message: message,
       nextHopPeerId: map['next_hop_peer_id'] as String,
       queuedTimestamp: map['queued_timestamp'] as int,
+      origin: _readOrigin(map['origin_type']),
       attemptCount: map['attempt_count'] as int? ?? 0,
       lastAttemptTimestamp: map['last_attempt_timestamp'] as int?,
       nextRetryTime: map['next_retry_time'] as int? ?? 0,
@@ -77,6 +86,7 @@ class QueuedMessage {
     MeshMessage? message,
     String? nextHopPeerId,
     int? queuedTimestamp,
+    QueueOrigin? origin,
     int? attemptCount,
     int? lastAttemptTimestamp,
     int? nextRetryTime,
@@ -86,10 +96,19 @@ class QueuedMessage {
       message: message ?? this.message,
       nextHopPeerId: nextHopPeerId ?? this.nextHopPeerId,
       queuedTimestamp: queuedTimestamp ?? this.queuedTimestamp,
+      origin: origin ?? this.origin,
       attemptCount: attemptCount ?? this.attemptCount,
       lastAttemptTimestamp: lastAttemptTimestamp ?? this.lastAttemptTimestamp,
       nextRetryTime: nextRetryTime ?? this.nextRetryTime,
       expiryTime: expiryTime ?? this.expiryTime,
     );
+  }
+
+  static QueueOrigin _readOrigin(Object? rawOrigin) {
+    final originIndex = rawOrigin as int? ?? QueueOrigin.local.index;
+    if (originIndex < 0 || originIndex >= QueueOrigin.values.length) {
+      return QueueOrigin.local;
+    }
+    return QueueOrigin.values[originIndex];
   }
 }

@@ -10,12 +10,16 @@ class QueueStats {
   final int highPriority;
   final int normalPriority;
   final int lowPriority;
+  final int localOriginMessages;
+  final int meshOriginMessages;
 
   QueueStats({
     required this.totalMessages,
     required this.highPriority,
     required this.normalPriority,
     required this.lowPriority,
+    required this.localOriginMessages,
+    required this.meshOriginMessages,
   });
 }
 
@@ -101,29 +105,63 @@ class MessageQueue {
   /// Get messages that are ready for retry (past their nextRetryTime).
   /// Filters out messages that haven't reached their backoff time yet.
   Future<List<QueuedMessage>> getReadyMessages() async {
+    return _queryReadyMessages();
+  }
+
+  /// Get ready messages for a specific queue origin.
+  Future<List<QueuedMessage>> getReadyMessagesByOrigin(
+      QueueOrigin origin) async {
+    return _queryReadyMessages(origin: origin);
+  }
+
+  Future<List<QueuedMessage>> _queryReadyMessages({QueueOrigin? origin}) async {
     final database = await _db.db;
     final now = DateTime.now().millisecondsSinceEpoch;
+    final whereOrigin = origin == null ? '' : ' AND origin_type = ?';
+    final args = <Object?>[
+      now,
+      now,
+      if (origin != null) origin.index,
+      now,
+    ];
     final results = await database.rawQuery('''
       SELECT * FROM message_queue
       WHERE next_retry_time <= ?
-        AND (expiry_time = 0 OR expiry_time > ?)
+        AND (expiry_time = 0 OR expiry_time > ?)$whereOrigin
       ORDER BY
         (priority + CASE WHEN (? - queued_timestamp) >= ${QueuePolicyConfig.stalePriorityBoostAgeMs} THEN 1 ELSE 0 END) DESC,
         queued_timestamp ASC
-    ''', [now, now, now]);
+    ''', args);
 
     return results.map((map) => QueuedMessage.fromMap(map)).toList();
   }
 
   // Remove expired messages based on each message's duration-based expiry.
-  Future<void> removeExpired() async {
+  // Returns message IDs that were dropped.
+  Future<List<String>> removeExpired() async {
     final database = await _db.db;
     final now = DateTime.now().millisecondsSinceEpoch;
-    await database.delete(
+    final droppedIds = <String>{};
+
+    final expiredRows = await database.query(
       'message_queue',
+      columns: ['message_id'],
       where: 'expiry_time > 0 AND expiry_time <= ?',
       whereArgs: [now],
     );
+    for (final row in expiredRows) {
+      final id = row['message_id'] as String?;
+      if (id != null && id.isNotEmpty) {
+        droppedIds.add(id);
+      }
+    }
+    if (droppedIds.isNotEmpty) {
+      await database.delete(
+        'message_queue',
+        where: 'expiry_time > 0 AND expiry_time <= ?',
+        whereArgs: [now],
+      );
+    }
 
     // Legacy rows without expiry_time still use message payload duration check.
     final legacyRows = await database.query(
@@ -133,13 +171,16 @@ class MessageQueue {
     for (final row in legacyRows) {
       final queued = QueuedMessage.fromMap(row);
       if (queued.isExpired) {
+        droppedIds.add(queued.message.messageId);
         await dequeue(queued.message.messageId);
       }
     }
+    return droppedIds.toList();
   }
 
   // Update attempt count with exponential backoff
-  Future<void> updateAttempt(String messageId) async {
+  // Returns true if the message was dropped due to exceeding retry limit.
+  Future<bool> updateAttempt(String messageId) async {
     final database = await _db.db;
     final now = DateTime.now().millisecondsSinceEpoch;
 
@@ -158,7 +199,7 @@ class MessageQueue {
     // Check if should drop (exceeded max retries)
     if (newAttempts > QueuedMessage.maxRetries) {
       await dequeue(messageId);
-      return;
+      return true;
     }
 
     // Exponential backoff: base * 2^min(retryCount, 10)
@@ -177,6 +218,7 @@ class MessageQueue {
           next_retry_time = ?
       WHERE message_id = ?
     ''', [newAttempts, now, nextRetryTime, messageId]);
+    return false;
   }
 
   /// Enforce per-destination queue limit. Drops oldest messages for a peer
@@ -238,11 +280,29 @@ class MessageQueue {
         ) ??
         0;
 
+    final localOriginCount = Sqflite.firstIntValue(
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE origin_type = ?',
+            [QueueOrigin.local.index],
+          ),
+        ) ??
+        0;
+
+    final meshOriginCount = Sqflite.firstIntValue(
+          await database.rawQuery(
+            'SELECT COUNT(*) FROM message_queue WHERE origin_type = ?',
+            [QueueOrigin.mesh.index],
+          ),
+        ) ??
+        0;
+
     return QueueStats(
       totalMessages: totalCount,
       highPriority: highCount,
       normalPriority: normalCount,
       lowPriority: lowCount,
+      localOriginMessages: localOriginCount,
+      meshOriginMessages: meshOriginCount,
     );
   }
 

@@ -79,44 +79,43 @@ class MeshStatusCard extends StatelessWidget {
                   const SizedBox(height: 16),
 
                   // ─── Stat Chips ───
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
+                  Row(
                     children: [
-                      _StatChip(
-                        icon: Icons.route,
-                        label: 'Routes',
-                        value: stats.totalRoutes.toString(),
-                        color: AppTheme.online,
-                      ),
-                      _StatChip(
-                        icon: Icons.queue,
-                        label: 'Queued',
-                        value: stats.queuedMessages.toString(),
-                        color: stats.queuedMessages > 0
-                            ? AppTheme.warning
-                            : AppTheme.textSecondary,
-                      ),
-                      _StatChip(
-                        icon: Icons.check_circle_outline,
-                        label: 'Pending ACK',
-                        value: stats.pendingAcks.toString(),
-                        color: stats.pendingAcks > 0
-                            ? AppTheme.accent
-                            : AppTheme.textSecondary,
-                      ),
-                      if (stats.blockedPeers > 0)
-                        _StatChip(
-                          icon: Icons.block,
-                          label: 'Blocked',
-                          value: stats.blockedPeers.toString(),
-                          color: AppTheme.danger,
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.route,
+                          label: 'Routes',
+                          value: stats.totalRoutes.toString(),
+                          color: AppTheme.online,
                         ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.queue,
+                          label: 'Queued',
+                          value: stats.localQueuedMessages.toString(),
+                          color: stats.localQueuedMessages > 0
+                              ? AppTheme.warning
+                              : AppTheme.textSecondary,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: _StatChip(
+                          icon: Icons.hub,
+                          label: 'Relayed',
+                          value: stats.meshQueuedMessages.toString(),
+                          color: stats.meshQueuedMessages > 0
+                              ? AppTheme.warning
+                              : AppTheme.textSecondary,
+                        ),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Queued = not sent yet. Pending ACK = sent, waiting for delivery confirmation.',
+                    'Queued = local messages waiting for route/connection. Relayed = mesh-origin messages waiting for next hop.',
                     style: GoogleFonts.inter(
                       fontSize: 11,
                       color: AppTheme.textSecondary,
@@ -178,6 +177,7 @@ class _StatChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
+      width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.08),
@@ -185,7 +185,7 @@ class _StatChip extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.2)),
       ),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Icon(icon, size: 14, color: color),
           const SizedBox(width: 6),

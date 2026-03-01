@@ -76,7 +76,7 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // Listen for status updates (ACKs, read receipts)
+    // Listen for local status updates (queue/routing/direct transitions).
     _statusChangeSubscription =
         appState.meshRouter.onMessageStatusChanged.listen((messageId) {
       if (_selectedPeerId == null || !mounted) return;
@@ -192,7 +192,8 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final existing = _messages[existingIndex];
     if (existing.status == updated.status &&
-        existing.isRead == updated.isRead) {
+        existing.isRead == updated.isRead &&
+        existing.hopCount == updated.hopCount) {
       return;
     }
 
@@ -251,6 +252,8 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Send via mesh router
+    final isDirectSession =
+        appState.isDirectSessionWithPeer(_selectedPeerId!);
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: _selectedPeerId!,
       content: content,
@@ -262,19 +265,24 @@ class _ChatScreenState extends State<ChatScreen> {
     MessageStatus newStatus;
     switch (result) {
       case SendResult.direct:
-        newStatus = MessageStatus.sent;
+        newStatus = isDirectSession ? MessageStatus.sent : MessageStatus.routing;
         break;
       case SendResult.routed:
         newStatus = MessageStatus.routing;
         break;
+      case SendResult.noRoute:
       case SendResult.queued:
-        newStatus = MessageStatus.sending;
+        newStatus = MessageStatus.queued;
         break;
       default:
         newStatus = MessageStatus.failed;
     }
 
-    await appState.db.updateMessageStatus(messageId, newStatus);
+    await appState.db.updateMessageStatus(
+      messageId,
+      newStatus,
+      clearHopCount: true,
+    );
     if (!mounted) return;
 
     final index = _messages.indexWhere((m) => m.id == messageId);
@@ -289,6 +297,7 @@ class _ChatScreenState extends State<ChatScreen> {
         isSentByMe: old.isSentByMe,
         status: newStatus,
         isRead: old.isRead,
+        hopCount: null,
       );
     });
   }
@@ -643,6 +652,10 @@ class _ChatScreenState extends State<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (!isMe && message.hopCount != null) ...[
+              _buildHopIndicator(message.hopCount!, isMe),
+              const SizedBox(height: 6),
+            ],
             Text(
               message.content,
               style: GoogleFonts.inter(
@@ -669,14 +682,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   Icon(
                     _getStatusIcon(message.status),
                     size: 15,
-                    color: message.status == MessageStatus.seen
-                        ? const Color(
-                            0xFFFFD54F) // gold — premium and visible on teal gradient
-                        : (message.status == MessageStatus.delivered
-                            ? Colors.white
-                            : (message.status == MessageStatus.failed
-                                ? AppTheme.danger
-                                : Colors.white.withValues(alpha: 0.55))),
+                    color: _getStatusColor(message.status),
                   ),
                 ],
               ],
@@ -691,6 +697,8 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (status) {
       case MessageStatus.sending:
         return Icons.access_time_rounded;
+      case MessageStatus.queued:
+        return Icons.schedule_send_rounded;
       case MessageStatus.routing:
         return Icons.alt_route_rounded;
       case MessageStatus.sent:
@@ -701,6 +709,49 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageStatus.failed:
         return Icons.error_outline_rounded;
     }
+  }
+
+  Color _getStatusColor(MessageStatus status) {
+    switch (status) {
+      case MessageStatus.failed:
+        return AppTheme.danger;
+      case MessageStatus.delivered:
+      case MessageStatus.seen:
+        return Colors.white;
+      case MessageStatus.sending:
+      case MessageStatus.queued:
+      case MessageStatus.routing:
+      case MessageStatus.sent:
+        return Colors.white.withValues(alpha: 0.55);
+    }
+  }
+
+  Widget _buildHopIndicator(int hopCount, bool isMe) {
+    final accentColor = isMe
+        ? Colors.white.withValues(alpha: 0.85)
+        : AppTheme.accent.withValues(alpha: 0.9);
+    final hopLabel = hopCount == 1 ? '1 hop' : '$hopCount hops';
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          Icons.alt_route_rounded,
+          size: 12,
+          color: accentColor,
+        ),
+        const SizedBox(width: 4),
+        Text(
+          hopLabel,
+          style: GoogleFonts.inter(
+            fontSize: 10,
+            fontWeight: FontWeight.w600,
+            color: accentColor,
+            letterSpacing: 0.2,
+          ),
+        ),
+      ],
+    );
   }
 
   String _formatTime(int timestamp) {

@@ -3,12 +3,22 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
 import '../../services/mesh_router_service.dart';
+import '../../models/queued_message.dart';
 import '../../config/identity_ui_config.dart';
 import '../../theme.dart';
 import '../../utils/name_generator.dart';
 
 class QueuedMessagesStatusScreen extends StatefulWidget {
-  const QueuedMessagesStatusScreen({super.key});
+  final QueueOrigin origin;
+  final String title;
+
+  const QueuedMessagesStatusScreen.local({super.key})
+      : origin = QueueOrigin.local,
+        title = 'Local Queue';
+
+  const QueuedMessagesStatusScreen.mesh({super.key})
+      : origin = QueueOrigin.mesh,
+        title = 'Mesh Queue';
 
   @override
   State<QueuedMessagesStatusScreen> createState() =>
@@ -78,10 +88,12 @@ class _QueuedMessagesStatusScreenState
     await _load();
   }
 
-  Future<void> _deletePeerSet(String peerId) async {
+  Future<void> _deletePeerSet(String peerId, QueueOrigin origin) async {
     final appState = Provider.of<AppState>(context, listen: false);
-    final removed =
-        await appState.meshRouter.removeQueuedMessagesForPeer(peerId);
+    final removed = await appState.meshRouter.removeQueuedMessagesForPeer(
+      peerId,
+      origin: origin,
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Removed $removed queued message(s)')),
@@ -89,28 +101,172 @@ class _QueuedMessagesStatusScreenState
     await _load();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
+  Map<String, List<QueuedMessageDetail>> _groupByRecipient(
+    List<QueuedMessageDetail> items,
+  ) {
     final grouped = <String, List<QueuedMessageDetail>>{};
-    for (final item in _items) {
+    for (final item in items) {
       grouped.putIfAbsent(item.recipientPeerId, () => []).add(item);
     }
     for (final list in grouped.values) {
       list.sort((a, b) => a.queuedTimestamp.compareTo(b.queuedTimestamp));
     }
+    return grouped;
+  }
 
-    final peerIds = grouped.keys.toList()
-      ..sort((a, b) {
-        final nameA = _peerName(appState, a).toLowerCase();
-        final nameB = _peerName(appState, b).toLowerCase();
-        return nameA.compareTo(nameB);
-      });
+  List<String> _sortedPeerIds(
+    AppState appState,
+    Map<String, List<QueuedMessageDetail>> grouped,
+  ) {
+    final peerIds = grouped.keys.toList();
+    peerIds.sort((a, b) {
+      final nameA = _peerName(appState, a).toLowerCase();
+      final nameB = _peerName(appState, b).toLowerCase();
+      return nameA.compareTo(nameB);
+    });
+    return peerIds;
+  }
+
+  Widget _buildPeerQueueCard(
+    AppState appState,
+    String peerId,
+    List<QueuedMessageDetail> messages,
+    QueueOrigin origin,
+  ) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.bgCard,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.08),
+        ),
+      ),
+      child: ExpansionTile(
+        tilePadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 4,
+        ),
+        childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+        title: Text(
+          _peerName(appState, peerId),
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: GoogleFonts.inter(
+            fontWeight: FontWeight.w700,
+            color: AppTheme.textPrimary,
+          ),
+        ),
+        subtitle: Text(
+          '${messages.length} message(s) • ordered by queue time',
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            color: AppTheme.textSecondary,
+          ),
+        ),
+        trailing: IconButton(
+          tooltip: 'Delete all for this peer in this queue',
+          onPressed: () => _deletePeerSet(peerId, origin),
+          icon: const Icon(
+            Icons.delete_sweep_rounded,
+            color: AppTheme.danger,
+          ),
+        ),
+        leading: Text(
+          '${messages.length}',
+          style: GoogleFonts.inter(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: AppTheme.warning,
+          ),
+        ),
+        children: [
+          for (final message in messages)
+            Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppTheme.bgSurface,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: _priorityColor(message.priority.index),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          message.contentPreview ?? '[Encrypted message]',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            color: AppTheme.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'Queued ${_timeLabel(message.queuedTimestamp)} • attempt ${message.attemptCount + 1} • ${_short(message.messageId)}',
+                          style: GoogleFonts.inter(
+                            fontSize: 11,
+                            color: AppTheme.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Delete',
+                    onPressed: () => _deleteMessage(message.messageId),
+                    icon: const Icon(
+                      Icons.delete_outline_rounded,
+                      color: AppTheme.danger,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQueueList(
+    AppState appState, {
+    required QueueOrigin origin,
+    required List<QueuedMessageDetail> items,
+  }) {
+    if (items.isEmpty) return const SizedBox.shrink();
+    final grouped = _groupByRecipient(items);
+    final peerIds = _sortedPeerIds(appState, grouped);
+
+    return Column(
+      children: [
+        for (final peerId in peerIds)
+          _buildPeerQueueCard(appState, peerId, grouped[peerId]!, origin),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final filteredItems =
+        _items.where((item) => item.origin == widget.origin).toList();
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'Queued Messages',
+          widget.title,
           style: GoogleFonts.inter(fontWeight: FontWeight.w700),
         ),
         actions: [
@@ -124,130 +280,22 @@ class _QueuedMessagesStatusScreenState
           ? const Center(
               child: CircularProgressIndicator(color: AppTheme.primary),
             )
-          : _items.isEmpty
+          : filteredItems.isEmpty
               ? Center(
                   child: Text(
-                    'Queue is empty',
+                    '${widget.title} is empty',
                     style: GoogleFonts.inter(color: AppTheme.textSecondary),
                   ),
                 )
-              : ListView.builder(
+              : ListView(
                   padding: const EdgeInsets.all(12),
-                  itemCount: peerIds.length,
-                  itemBuilder: (context, index) {
-                    final peerId = peerIds[index];
-                    final messages = grouped[peerId]!;
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 10),
-                      decoration: BoxDecoration(
-                        color: AppTheme.bgCard,
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.08),
-                        ),
-                      ),
-                      child: ExpansionTile(
-                        tilePadding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 4,
-                        ),
-                        childrenPadding:
-                            const EdgeInsets.fromLTRB(12, 0, 12, 12),
-                        title: Text(
-                          _peerName(appState, peerId),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: GoogleFonts.inter(
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.textPrimary,
-                          ),
-                        ),
-                        subtitle: Text(
-                          '${messages.length} message(s) • ordered by queue time',
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            color: AppTheme.textSecondary,
-                          ),
-                        ),
-                        trailing: IconButton(
-                          tooltip: 'Delete all for this peer',
-                          onPressed: () => _deletePeerSet(peerId),
-                          icon: const Icon(
-                            Icons.delete_sweep_rounded,
-                            color: AppTheme.danger,
-                          ),
-                        ),
-                        leading: Text(
-                          '${messages.length}',
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700,
-                            color: AppTheme.warning,
-                          ),
-                        ),
-                        children: [
-                          for (final message in messages)
-                            Container(
-                              margin: const EdgeInsets.only(top: 8),
-                              padding: const EdgeInsets.all(10),
-                              decoration: BoxDecoration(
-                                color: AppTheme.bgSurface,
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: BoxDecoration(
-                                      color: _priorityColor(
-                                          message.priority.index),
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Text(
-                                          message.contentPreview ??
-                                              '[Encrypted message]',
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: GoogleFonts.inter(
-                                            fontSize: 13,
-                                            color: AppTheme.textPrimary,
-                                          ),
-                                        ),
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          'Queued ${_timeLabel(message.queuedTimestamp)} • attempt ${message.attemptCount + 1} • ${_short(message.messageId)}',
-                                          style: GoogleFonts.inter(
-                                            fontSize: 11,
-                                            color: AppTheme.textSecondary,
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Delete',
-                                    onPressed: () =>
-                                        _deleteMessage(message.messageId),
-                                    icon: const Icon(
-                                      Icons.delete_outline_rounded,
-                                      color: AppTheme.danger,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
+                  children: [
+                    _buildQueueList(
+                      appState,
+                      origin: widget.origin,
+                      items: filteredItems,
+                    ),
+                  ],
                 ),
     );
   }

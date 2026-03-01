@@ -6,6 +6,7 @@ class ChatMessage {
   final bool isSentByMe;
   final MessageStatus status;
   final bool isRead;
+  final int? hopCount;
 
   ChatMessage({
     required this.id,
@@ -15,6 +16,7 @@ class ChatMessage {
     required this.isSentByMe,
     required this.status,
     this.isRead = false,
+    this.hopCount,
   });
 
   Map<String, Object?> toMap() => {
@@ -25,6 +27,7 @@ class ChatMessage {
         'isSentByMe': isSentByMe ? 1 : 0,
         'status': status.index,
         'isRead': isRead ? 1 : 0,
+        'hopCount': hopCount,
       };
 
   static ChatMessage fromMap(Map<String, Object?> m) => ChatMessage(
@@ -35,7 +38,14 @@ class ChatMessage {
         isSentByMe: (m['isSentByMe'] as int) == 1,
         status: MessageStatus.values[m['status'] as int],
         isRead: (m['isRead'] as int? ?? 1) == 1, // Default to read for old messages
+        hopCount: _readHopCount(m['hopCount']),
       );
+
+  static int? _readHopCount(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return null;
+  }
 }
 
 enum MessageStatus {
@@ -45,4 +55,5 @@ enum MessageStatus {
   delivered,
   seen,
   failed,
+  queued,
 }

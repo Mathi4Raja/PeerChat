@@ -21,7 +21,6 @@ import 'services/deduplication_cache.dart';
 import 'services/signature_verifier.dart';
 import 'services/message_queue.dart';
 import 'services/transport_service.dart';
-import 'services/delivery_ack_handler.dart';
 import 'services/connection_manager.dart';
 import 'services/file_transfer_service.dart';
 import 'services/route_manager.dart';
@@ -194,8 +193,6 @@ class AppState extends ChangeNotifier {
       final signatureVerifier = SignatureVerifier(cryptoService, _db);
       final messageQueue = MessageQueue(_db);
       final transportService = MultiTransportService();
-      final deliveryAckHandler = DeliveryAckHandler(_db, cryptoService);
-      deliveryAckHandler.setSignatureVerifier(signatureVerifier);
       final connectionManager = ConnectionManager(_db, cryptoService);
       fileTransferService =
           FileTransferService(_db, transportService, connectionManager);
@@ -229,7 +226,6 @@ class AppState extends ChangeNotifier {
         messageQueue,
         deduplicationCache,
         signatureVerifier,
-        deliveryAckHandler,
         (peerId, data) async {
           final transportId = connectionManager.getTransportId(peerId);
           return transportId != null
@@ -249,7 +245,6 @@ class AppState extends ChangeNotifier {
         signatureVerifier: signatureVerifier,
         messageQueue: messageQueue,
         routeManager: routeManager,
-        deliveryAckHandler: deliveryAckHandler,
         messageManager: messageManager,
         transportService: transportService,
         connectionManager: connectionManager,
@@ -614,20 +609,9 @@ class AppState extends ChangeNotifier {
   }
 
   Future<void> markChatAsRead(String peerId) async {
-    // Get list of unread message IDs before marking them as read locally
-    final unreadIds = await _db.getUnreadMessageIds(peerId);
-
-    // Mark as read in local database
+    // Mark as read in local database only.
     await _db.markMessagesAsRead(peerId);
     await refreshUnreadCounts();
-
-    // Send read receipts to the sender
-    if (unreadIds.isNotEmpty) {
-      await meshRouter.sendReadReceipt(
-        recipientPeerId: peerId,
-        messageIds: unreadIds,
-      );
-    }
   }
 }
 
