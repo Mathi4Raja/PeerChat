@@ -61,8 +61,8 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           ),
           bottom: const TabBar(
             tabs: [
-              Tab(icon: Icon(Icons.link_rounded), text: 'Direct'),
               Tab(icon: Icon(Icons.hub_rounded), text: 'Mesh'),
+              Tab(icon: Icon(Icons.link_rounded), text: 'Direct'),
             ],
           ),
         ),
@@ -144,18 +144,18 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
             return TabBarView(
               children: [
                 _buildRowsTab(
-                  rows: directRows,
-                  emptyTitle: 'No direct chats',
-                  emptySubtitle:
-                      'Shown only when both peers are in Direct profile and directly connected',
+                  rows: meshRows,
+                  emptyTitle: 'No mesh chats',
+                  emptySubtitle: 'Offline or routed conversations appear here',
                   unreadCounts: unreadCounts,
                   connectedPeerIds: connectedPeerIds,
                   appState: appState,
                 ),
                 _buildRowsTab(
-                  rows: meshRows,
-                  emptyTitle: 'No mesh chats',
-                  emptySubtitle: 'Offline or routed conversations appear here',
+                  rows: directRows,
+                  emptyTitle: 'No direct chats',
+                  emptySubtitle:
+                      'Shown only when both peers are in Direct profile and directly connected',
                   unreadCounts: unreadCounts,
                   connectedPeerIds: connectedPeerIds,
                   appState: appState,

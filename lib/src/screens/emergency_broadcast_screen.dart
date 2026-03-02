@@ -61,6 +61,16 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
   void _upsertIncomingBroadcast(Map<String, Object?> event) {
     if (!mounted) return;
     final id = (event['id'] as String?) ?? '';
+    final deleted = event['deleted'] as bool? ?? false;
+    if (id.isNotEmpty && deleted) {
+      setState(() {
+        _messages = _messages
+            .where((row) => (row['id'] as String?) != id)
+            .toList(growable: false);
+      });
+      return;
+    }
+
     final senderId = (event['sender_id'] as String?) ?? '';
     final content = (event['content'] as String?) ?? '';
     final timestamp = event['timestamp'] as int?;
@@ -93,6 +103,7 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
   Future<void> _sendBroadcast() async {
     final appState = Provider.of<AppState>(context, listen: false);
     final content = _inputController.text.trim();
+    final timing = appState.emergencyBroadcastService.timing;
     final maxPerMinute =
         appState.emergencyBroadcastService.maxBroadcastsPerMinute;
     if (content.isEmpty || _sending) return;
@@ -109,6 +120,13 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     }
 
     setState(() => _sending = true);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          'Trying for up to ${timing.queueWindow.inSeconds}s (retry every ${timing.retryInterval.inSeconds}s)...',
+        ),
+      ),
+    );
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: broadcastEmergencyDestination,
       content: content,
@@ -120,6 +138,12 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     if (result == SendResult.routed || result == SendResult.direct) {
       _inputController.clear();
       await _loadMessages();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Emergency broadcast delivered to nearby peers.'),
+        ),
+      );
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           0,
@@ -129,8 +153,10 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
       }
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('failed to save locally.'),
+        SnackBar(
+          content: Text(
+            'No nearby relay responded within ${timing.queueWindow.inSeconds}s. Message deleted.',
+          ),
         ),
       );
     }
@@ -402,4 +428,3 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     );
   }
 }
-

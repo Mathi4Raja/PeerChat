@@ -206,8 +206,38 @@ class MeshMessage {
     );
   }
 
-  // Create bytes for signing (excludes signature field)
+  // Create bytes for signing (excludes signature field).
+  // Important: routing-mutated fields (ttl, hopCount) are intentionally omitted
+  // so a relay can decrement/increment them without invalidating origin signature.
   Uint8List toBytesForSigning() {
+    final buffer = BytesBuilder();
+
+    buffer.add(utf8.encode(_fixedWidthId(messageId)));
+    buffer.addByte(type.index);
+
+    final senderBytes = utf8.encode(senderPeerId);
+    buffer.add(_uint16ToBytes(senderBytes.length));
+    buffer.add(senderBytes);
+
+    final recipientBytes = utf8.encode(recipientPeerId);
+    buffer.add(_uint16ToBytes(recipientBytes.length));
+    buffer.add(recipientBytes);
+
+    buffer.addByte(priority.index);
+    buffer.add(_uint64ToBytes(timestamp));
+
+    if (encryptedContent != null) {
+      buffer.add(_uint32ToBytes(encryptedContent!.length));
+      buffer.add(encryptedContent!);
+    } else {
+      buffer.add(_uint32ToBytes(0));
+    }
+
+    return buffer.toBytes();
+  }
+
+  // Legacy signing payload kept for backward verification compatibility.
+  Uint8List toBytesForSigningLegacy() {
     final buffer = BytesBuilder();
 
     buffer.add(utf8.encode(_fixedWidthId(messageId)));

@@ -101,6 +101,33 @@ class _QueuedMessagesStatusScreenState
     await _load();
   }
 
+  Future<void> _promoteMessageToMesh(String messageId) async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final moved = await appState.meshRouter.promoteQueuedMessageToMesh(messageId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          moved > 0
+              ? 'Message moved to mesh queue'
+              : 'Message was not in local queue',
+        ),
+      ),
+    );
+    await _load();
+  }
+
+  Future<void> _promotePeerSetToMesh(String peerId) async {
+    final appState = Provider.of<AppState>(context, listen: false);
+    final moved =
+        await appState.meshRouter.promoteQueuedMessagesForPeerToMesh(peerId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Moved $moved message(s) to mesh queue')),
+    );
+    await _load();
+  }
+
   Map<String, List<QueuedMessageDetail>> _groupByRecipient(
     List<QueuedMessageDetail> items,
   ) {
@@ -164,13 +191,27 @@ class _QueuedMessagesStatusScreenState
             color: AppTheme.textSecondary,
           ),
         ),
-        trailing: IconButton(
-          tooltip: 'Delete all for this peer in this queue',
-          onPressed: () => _deletePeerSet(peerId, origin),
-          icon: const Icon(
-            Icons.delete_sweep_rounded,
-            color: AppTheme.danger,
-          ),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (origin == QueueOrigin.local)
+              IconButton(
+                tooltip: 'Move all for this peer to mesh queue',
+                onPressed: () => _promotePeerSetToMesh(peerId),
+                icon: const Icon(
+                  Icons.alt_route_rounded,
+                  color: AppTheme.warning,
+                ),
+              ),
+            IconButton(
+              tooltip: 'Delete all for this peer in this queue',
+              onPressed: () => _deletePeerSet(peerId, origin),
+              icon: const Icon(
+                Icons.delete_sweep_rounded,
+                color: AppTheme.danger,
+              ),
+            ),
+          ],
         ),
         leading: Text(
           '${messages.length}',
@@ -224,13 +265,27 @@ class _QueuedMessagesStatusScreenState
                       ],
                     ),
                   ),
-                  IconButton(
-                    tooltip: 'Delete',
-                    onPressed: () => _deleteMessage(message.messageId),
-                    icon: const Icon(
-                      Icons.delete_outline_rounded,
-                      color: AppTheme.danger,
-                    ),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (origin == QueueOrigin.local)
+                        IconButton(
+                          tooltip: 'Move to mesh queue',
+                          onPressed: () => _promoteMessageToMesh(message.messageId),
+                          icon: const Icon(
+                            Icons.alt_route_rounded,
+                            color: AppTheme.warning,
+                          ),
+                        ),
+                      IconButton(
+                        tooltip: 'Delete',
+                        onPressed: () => _deleteMessage(message.messageId),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          color: AppTheme.danger,
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),

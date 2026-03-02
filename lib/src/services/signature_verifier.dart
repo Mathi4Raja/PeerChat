@@ -27,9 +27,19 @@ class SignatureVerifier {
       return false;
     }
 
+    // Preferred: routing-stable signing payload (ttl/hopCount excluded).
     final messageBytes = message.toBytesForSigning();
-    return _cryptoService.verifySignature(
+    final validCurrent = _cryptoService.verifySignature(
       messageBytes,
+      message.signature,
+      senderPublicKey,
+    );
+    if (validCurrent) return true;
+
+    // Backward compatibility for legacy payloads that included ttl/hopCount.
+    final legacyBytes = message.toBytesForSigningLegacy();
+    return _cryptoService.verifySignature(
+      legacyBytes,
       message.signature,
       senderPublicKey,
     );

@@ -35,6 +35,7 @@ class EmergencyBroadcastService {
   Stream<Map<String, Object?>> get onBroadcastMessage =>
       _broadcastStreamController.stream;
   int get maxBroadcastsPerMinute => _maxBroadcastsPerMinute;
+  EmergencyBroadcastTiming get timing => _timing;
   EmergencyBroadcastTiming get _timing =>
       TimerConfig.emergencyBroadcast(_runtimeProfile);
 
@@ -83,8 +84,14 @@ class EmergencyBroadcastService {
     final signed = message.copyWithSignature(
       _cryptoService.signMessage(message.toBytesForSigning()),
     );
-    await _persistBroadcast(signed);
-    return _forwardBroadcastWithQueueWindow(signed);
+    final delivered = await _forwardBroadcastWithQueueWindow(signed);
+    if (delivered) {
+      await _persistBroadcast(signed);
+      return true;
+    }
+
+    await _deleteBroadcastById(signed.messageId);
+    return false;
   }
 
   Future<bool> handleIncomingBroadcast(
@@ -181,6 +188,33 @@ class EmergencyBroadcastService {
     return false;
   }
 
+  Future<int> syncRecentBroadcastsToPeer(String peerId) async {
+    final transportId = _connectionManager.getTransportId(peerId);
+    if (transportId == null) return 0;
+
+    final rows = await _db.getBroadcastMessages(
+      limit: BroadcastLimits.syncRecentLimit,
+    );
+    if (rows.isEmpty) return 0;
+
+    // Send older first so receiver history reads naturally.
+    final ordered = rows.reversed.toList();
+    var synced = 0;
+    for (final row in ordered) {
+      final message = _messageFromStoredRow(row);
+      if (message == null) continue;
+      final sent = await _transportService.sendMessage(
+        transportId,
+        message.toBytes(),
+      );
+      if (sent) {
+        synced++;
+      }
+    }
+
+    return synced;
+  }
+
   Future<void> _persistBroadcast(MeshMessage message) async {
     if (message.encryptedContent == null) return;
     final database = await _db.db;
@@ -204,6 +238,55 @@ class EmergencyBroadcastService {
     });
 
     await _enforceRetentionPolicy(database);
+  }
+
+  MeshMessage? _messageFromStoredRow(Map<String, Object?> row) {
+    final id = row['id'] as String?;
+    final senderId = row['sender_id'] as String?;
+    final content = row['content'] as String?;
+    final timestamp = row['timestamp'] as int?;
+    final signature = row['signature'] as Uint8List?;
+    if (id == null ||
+        id.isEmpty ||
+        senderId == null ||
+        senderId.isEmpty ||
+        content == null ||
+        content.isEmpty ||
+        timestamp == null ||
+        signature == null ||
+        signature.isEmpty) {
+      return null;
+    }
+
+    return MeshMessage(
+      messageId: id,
+      type: MessageType.data,
+      senderPeerId: senderId,
+      recipientPeerId: broadcastEmergencyDestination,
+      // Keep relay disabled for sync payload to avoid re-flooding old alerts.
+      ttl: 1,
+      hopCount: 0,
+      priority: MessagePriority.high,
+      timestamp: timestamp,
+      encryptedContent: Uint8List.fromList(utf8.encode(content)),
+      signature: signature,
+      expiryDuration: TimerConfig.emergencyRetentionWindow.inMilliseconds,
+    );
+  }
+
+  Future<void> _deleteBroadcastById(String messageId) async {
+    final database = await _db.db;
+    final deleted = await database.delete(
+      'broadcast_messages',
+      where: 'id = ?',
+      whereArgs: [messageId],
+    );
+    if (deleted > 0) {
+      _broadcastStreamController.add({
+        'id': messageId,
+        'deleted': true,
+      });
+    }
   }
 
   Future<void> _pruneStoredBroadcasts() async {

@@ -65,6 +65,9 @@ class BroadcastLimits {
 
   /// Max messages rendered in emergency screen history at once.
   static const int screenHistoryLimit = 300;
+
+  /// Max recent broadcasts pushed to a peer on fresh connection.
+  static const int syncRecentLimit = 60;
 }
 
 /// Outbound queue sizing and retry caps.
@@ -94,13 +97,13 @@ class FileTransferLimits {
   static const int chunkSizeBytes = 65536; // 64 KiB
 
   /// Max chunks that can be in-flight before ACKs arrive.
-  static const int maxInFlightChunks = 5;
+  static const int maxInFlightChunks = 10;
 
   /// Max retries per chunk before transfer failure.
   static const int maxChunkRetries = 5;
 
   /// Persist transfer state after every N chunks for crash recovery.
-  static const int statePersistEveryNChunks = 10;
+  static const int statePersistEveryNChunks = 50;
 
   /// Required free-space multiplier over file size (safety headroom).
   static const double minStorageHeadroomMultiplier = 1.2;

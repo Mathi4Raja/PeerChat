@@ -23,8 +23,8 @@ class PeersScreen extends StatelessWidget {
           ),
           bottom: TabBar(
             tabs: const [
-              Tab(icon: Icon(Icons.radar_rounded), text: 'Discovered'),
               Tab(icon: Icon(Icons.link_rounded), text: 'Connected'),
+              Tab(icon: Icon(Icons.radar_rounded), text: 'Discovered'),
             ],
             indicatorWeight: 3,
             dividerColor: Colors.white.withValues(alpha: 0.06),
@@ -40,8 +40,8 @@ class PeersScreen extends StatelessWidget {
 
             return TabBarView(
               children: [
-                _UnconnectedTab(peers: unconnected),
                 _ConnectedTab(peers: connected),
+                _UnconnectedTab(peers: unconnected),
               ],
             );
           },

@@ -367,7 +367,7 @@ class _MeshStatusSection extends StatelessWidget {
     return Consumer<AppState>(
       builder: (context, appState, child) {
         final connectedCount = appState.meshRouter.getConnectedPeerIds().length;
-        final discoveredCount = appState.activePeers.length;
+        final discoveredCount = appState.discoveredPeers.length;
 
         return FutureBuilder(
           future: appState.meshRouter.stats,

@@ -110,13 +110,23 @@ class ChunkTracker {
 
   /// Bitset: bit i = 1 means chunk i has been received.
   final List<bool> _received;
+  int _receivedCount = 0;
+  int _highestContiguous = -1;
 
   ChunkTracker(this.totalChunks) : _received = List.filled(totalChunks, false);
 
   /// Mark a chunk as received.
   void markReceived(int index) {
-    if (index >= 0 && index < totalChunks) {
-      _received[index] = true;
+    if (index < 0 || index >= totalChunks) return;
+    if (_received[index]) return;
+
+    _received[index] = true;
+    _receivedCount++;
+
+    // Advance contiguous pointer only when possible.
+    while (_highestContiguous + 1 < totalChunks &&
+        _received[_highestContiguous + 1]) {
+      _highestContiguous++;
     }
   }
 
@@ -129,18 +139,13 @@ class ChunkTracker {
   /// Get the highest contiguous chunk index (for cumulative ACK).
   /// Returns -1 if no chunks received, or the highest index where
   /// all chunks 0..index have been received.
-  int get highestContiguous {
-    for (int i = 0; i < totalChunks; i++) {
-      if (!_received[i]) return i - 1;
-    }
-    return totalChunks - 1;
-  }
+  int get highestContiguous => _highestContiguous;
 
   /// Check if all chunks have been received.
-  bool get isComplete => _received.every((r) => r);
+  bool get isComplete => _receivedCount == totalChunks;
 
   /// Count of received chunks.
-  int get receivedCount => _received.where((r) => r).length;
+  int get receivedCount => _receivedCount;
 
   /// Get list of missing chunk indices.
   List<int> get missingChunks {

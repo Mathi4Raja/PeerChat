@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import '../config/limits_config.dart';
 
 // Abstract transport interface
 abstract class TransportService {
@@ -25,8 +26,9 @@ class TransportMessage {
 // Multi-transport coordinator
 class MultiTransportService extends ChangeNotifier {
   final List<TransportService> _transports = [];
-  final StreamController<TransportMessage> _messageController = StreamController.broadcast();
-  
+  final StreamController<TransportMessage> _messageController =
+      StreamController.broadcast();
+
   Stream<TransportMessage> get onMessageReceived => _messageController.stream;
 
   void addTransport(TransportService transport) {
@@ -47,28 +49,37 @@ class MultiTransportService extends ChangeNotifier {
   }
 
   Future<bool> sendMessage(String peerId, Uint8List data) async {
-    debugPrint('=== TRANSPORT SEND ===');
-    debugPrint('Target peer: $peerId');
-    debugPrint('Data size: ${data.length} bytes');
-    debugPrint('Trying ${_transports.length} transports...');
-    
+    final isFileTransferFrame =
+        data.isNotEmpty && data[0] == FileTransferLimits.protocolMarker;
+
+    if (!isFileTransferFrame) {
+      debugPrint('=== TRANSPORT SEND ===');
+      debugPrint('Target peer: $peerId');
+      debugPrint('Data size: ${data.length} bytes');
+      debugPrint('Trying ${_transports.length} transports...');
+    }
+
     // Try each transport until one succeeds
     for (int i = 0; i < _transports.length; i++) {
       final transport = _transports[i];
       try {
-        debugPrint('  Transport ${i + 1}: ${transport.runtimeType}');
+        if (!isFileTransferFrame) {
+          debugPrint('  Transport ${i + 1}: ${transport.runtimeType}');
+        }
         final success = await transport.sendMessage(peerId, data);
         if (success) {
-          debugPrint('  ✓ SUCCESS via ${transport.runtimeType}');
+          if (!isFileTransferFrame) {
+            debugPrint('  ✓ SUCCESS via ${transport.runtimeType}');
+          }
           return true;
-        } else {
+        } else if (!isFileTransferFrame) {
           debugPrint('  ✗ FAILED via ${transport.runtimeType}');
         }
       } catch (e) {
         debugPrint('  ✗ ERROR via ${transport.runtimeType}: $e');
       }
     }
-    
+
     debugPrint('All transports failed');
     return false;
   }

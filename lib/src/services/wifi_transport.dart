@@ -5,6 +5,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../config/timer_config.dart';
 import '../config/identity_ui_config.dart';
 import '../config/protocol_config.dart';
+import '../config/limits_config.dart';
 import 'transport_service.dart';
 import 'db_service.dart';
 
@@ -793,7 +794,11 @@ class WiFiTransport implements TransportService {
 
   @override
   Future<bool> sendMessage(String peerId, Uint8List data) async {
-    debugPrint('WiFiTransport.sendMessage to $peerId');
+    final isFileTransferFrame =
+        data.isNotEmpty && data[0] == FileTransferLimits.protocolMarker;
+    if (!isFileTransferFrame) {
+      debugPrint('WiFiTransport.sendMessage to $peerId');
+    }
 
     // Find endpoint ID for peer
     String? endpointId;
@@ -805,15 +810,21 @@ class WiFiTransport implements TransportService {
     }
 
     if (endpointId == null) {
-      debugPrint('  No endpoint found for $peerId');
-      debugPrint('  Connected peers: $_connectedPeers');
+      if (!isFileTransferFrame) {
+        debugPrint('  No endpoint found for $peerId');
+        debugPrint('  Connected peers: $_connectedPeers');
+      }
       return false;
     }
 
     try {
-      debugPrint('  Sending ${data.length} bytes to endpoint $endpointId...');
+      if (!isFileTransferFrame) {
+        debugPrint('  Sending ${data.length} bytes to endpoint $endpointId...');
+      }
       await _nearby.sendBytesPayload(endpointId, data);
-      debugPrint('  Data sent successfully');
+      if (!isFileTransferFrame) {
+        debugPrint('  Data sent successfully');
+      }
       return true;
     } catch (e) {
       debugPrint('  Error sending: $e');

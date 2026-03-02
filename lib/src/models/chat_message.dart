@@ -7,6 +7,9 @@ class ChatMessage {
   final MessageStatus status;
   final bool isRead;
   final int? hopCount;
+  final String? replyToMessageId;
+  final String? replyToContent;
+  final String? replyToPeerId;
 
   ChatMessage({
     required this.id,
@@ -17,6 +20,9 @@ class ChatMessage {
     required this.status,
     this.isRead = false,
     this.hopCount,
+    this.replyToMessageId,
+    this.replyToContent,
+    this.replyToPeerId,
   });
 
   Map<String, Object?> toMap() => {
@@ -28,6 +34,9 @@ class ChatMessage {
         'status': status.index,
         'isRead': isRead ? 1 : 0,
         'hopCount': hopCount,
+        'replyToMessageId': replyToMessageId,
+        'replyToContent': replyToContent,
+        'replyToPeerId': replyToPeerId,
       };
 
   static ChatMessage fromMap(Map<String, Object?> m) => ChatMessage(
@@ -37,8 +46,12 @@ class ChatMessage {
         timestamp: m['timestamp'] as int,
         isSentByMe: (m['isSentByMe'] as int) == 1,
         status: MessageStatus.values[m['status'] as int],
-        isRead: (m['isRead'] as int? ?? 1) == 1, // Default to read for old messages
+        isRead:
+            (m['isRead'] as int? ?? 1) == 1, // Default to read for old messages
         hopCount: _readHopCount(m['hopCount']),
+        replyToMessageId: m['replyToMessageId'] as String?,
+        replyToContent: m['replyToContent'] as String?,
+        replyToPeerId: m['replyToPeerId'] as String?,
       );
 
   static int? _readHopCount(Object? value) {

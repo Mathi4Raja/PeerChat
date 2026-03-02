@@ -7,6 +7,7 @@ import 'discovery_service.dart';
 import 'db_service.dart';
 import '../models/chat_message.dart';
 import '../models/mesh_message.dart';
+import '../models/chat_payload.dart';
 import '../models/communication_mode.dart';
 import '../models/queued_message.dart';
 import '../models/peer.dart';
@@ -59,6 +60,8 @@ class MeshRouterService extends ChangeNotifier {
   final int _messagesDelivered = 0;
   int _messagesFailed = 0;
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
+  final Map<String, int> _lastQueueDiscoveryAttempt = {};
+  static const Duration _queueDiscoveryCooldown = Duration(seconds: 15);
 
   // Stream for incoming messages — ChatScreen listens to this
   final StreamController<ChatMessage> _incomingMessageController =
@@ -104,6 +107,12 @@ class MeshRouterService extends ChangeNotifier {
     _connectionManager.onHandshakeComplete = (peerId) async {
       debugPrint('Handshake complete for $peerId - processing full queue');
       _scheduleQueueProcessing();
+      final syncedCount =
+          await _emergencyBroadcastService.syncRecentBroadcastsToPeer(peerId);
+      if (syncedCount > 0) {
+        debugPrint(
+            'EmergencyBroadcast: synced $syncedCount recent broadcast(s) to $peerId');
+      }
       _fileTransferService.onPeerReconnected(peerId);
       notifyListeners();
     };
@@ -606,6 +615,7 @@ class MeshRouterService extends ChangeNotifier {
       ...meshQueuedMessages,
     ];
     if (queuedMessages.isEmpty) return;
+    final discoveryRequested = <String>{};
 
     for (final queuedMessage in queuedMessages) {
       if (queuedMessage.isExpired || queuedMessage.shouldDrop) {
@@ -616,10 +626,28 @@ class MeshRouterService extends ChangeNotifier {
 
       final currentNextHop =
           await _routeManager.getNextHop(queuedMessage.message.recipientPeerId);
-      if (currentNextHop == null) continue;
+      if (currentNextHop == null) {
+        final handedOff = await _tryOpportunisticQueueForward(queuedMessage);
+        if (!handedOff) {
+          _requestQueueRouteDiscovery(
+            queuedMessage.message.recipientPeerId,
+            discoveryRequested,
+          );
+        }
+        continue;
+      }
 
       final transportId = _connectionManager.getTransportId(currentNextHop);
-      if (transportId == null) continue;
+      if (transportId == null) {
+        final handedOff = await _tryOpportunisticQueueForward(queuedMessage);
+        if (!handedOff) {
+          _requestQueueRouteDiscovery(
+            queuedMessage.message.recipientPeerId,
+            discoveryRequested,
+          );
+        }
+        continue;
+      }
 
       final sent = await _transportService.sendMessage(
           transportId, queuedMessage.message.toBytes());
@@ -646,6 +674,12 @@ class MeshRouterService extends ChangeNotifier {
         await _routeManager.markRouteSuccess(
             queuedMessage.message.recipientPeerId, currentNextHop);
       } else {
+        final handedOff = await _tryOpportunisticQueueForward(queuedMessage);
+        if (handedOff) {
+          await _routeManager.markRouteFailed(
+              queuedMessage.message.recipientPeerId, currentNextHop);
+          continue;
+        }
         final dropped =
             await _messageQueue.updateAttempt(queuedMessage.message.messageId);
         if (dropped) {
@@ -655,6 +689,51 @@ class MeshRouterService extends ChangeNotifier {
             queuedMessage.message.recipientPeerId, currentNextHop);
       }
     }
+  }
+
+  void _requestQueueRouteDiscovery(
+    String recipientPeerId,
+    Set<String> cycleRequested,
+  ) {
+    if (cycleRequested.contains(recipientPeerId)) return;
+    cycleRequested.add(recipientPeerId);
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final lastAttempt = _lastQueueDiscoveryAttempt[recipientPeerId];
+    if (lastAttempt != null &&
+        now - lastAttempt < _queueDiscoveryCooldown.inMilliseconds) {
+      return;
+    }
+
+    _lastQueueDiscoveryAttempt[recipientPeerId] = now;
+    _routeManager.discoverRoute(recipientPeerId);
+  }
+
+  Future<bool> _tryOpportunisticQueueForward(
+      QueuedMessage queuedMessage) async {
+    if (queuedMessage.origin != QueueOrigin.mesh) {
+      return false;
+    }
+
+    final forwarded = await _opportunisticForward(queuedMessage.message, null);
+    if (forwarded <= 0) {
+      return false;
+    }
+
+    final isLocalOutgoingData =
+        queuedMessage.message.type == MessageType.data &&
+            queuedMessage.message.senderPeerId == _cryptoService.localPeerId;
+    if (isLocalOutgoingData) {
+      await _db.updateMessageStatus(
+        queuedMessage.message.messageId,
+        MessageStatus.routing,
+        clearHopCount: true,
+      );
+      _statusUpdateController.add(queuedMessage.message.messageId);
+    }
+
+    await _messageQueue.dequeue(queuedMessage.message.messageId);
+    return true;
   }
 
   Future<void> _markMessagesFailed(Iterable<String> messageIds) async {
@@ -678,15 +757,19 @@ class MeshRouterService extends ChangeNotifier {
 
   void _deliverToApplication(MeshMessage message, String content) async {
     if (message.type == MessageType.data) {
+      final payload = ChatPayload.decode(content);
       final totalHops = message.hopCount + 1;
       final chatMessage = ChatMessage(
         id: message.messageId,
         peerId: message.senderPeerId,
-        content: content,
+        content: payload.text,
         timestamp: message.timestamp,
         isSentByMe: false,
         status: MessageStatus.sent,
         hopCount: totalHops,
+        replyToMessageId: payload.replyToMessageId,
+        replyToContent: payload.replyToContent,
+        replyToPeerId: payload.replyToPeerId,
       );
       await _db.insertChatMessage(chatMessage);
       _incomingMessageController.add(chatMessage);
@@ -768,6 +851,55 @@ class MeshRouterService extends ChangeNotifier {
     }
     notifyListeners();
     return ids.length;
+  }
+
+  Future<int> promoteQueuedMessageToMesh(String messageId) async {
+    final queued = await _messageQueue.getAllQueued();
+    QueuedMessage? target;
+    for (final item in queued) {
+      if (item.message.messageId == messageId &&
+          item.origin == QueueOrigin.local) {
+        target = item;
+        break;
+      }
+    }
+    if (target == null) return 0;
+
+    final updated = target.copyWith(
+      origin: QueueOrigin.mesh,
+      attemptCount: 0,
+      nextRetryTime: 0,
+    );
+    await _messageQueue.enqueue(updated);
+    _routeManager.discoverRoute(target.message.recipientPeerId);
+    _scheduleQueueProcessing();
+    notifyListeners();
+    return 1;
+  }
+
+  Future<int> promoteQueuedMessagesForPeerToMesh(String recipientPeerId) async {
+    final queued = await _messageQueue.getAllQueued();
+    var moved = 0;
+    for (final item in queued) {
+      if (item.message.recipientPeerId != recipientPeerId ||
+          item.origin != QueueOrigin.local) {
+        continue;
+      }
+      final updated = item.copyWith(
+        origin: QueueOrigin.mesh,
+        attemptCount: 0,
+        nextRetryTime: 0,
+      );
+      await _messageQueue.enqueue(updated);
+      moved++;
+    }
+
+    if (moved > 0) {
+      _routeManager.discoverRoute(recipientPeerId);
+      _scheduleQueueProcessing();
+      notifyListeners();
+    }
+    return moved;
   }
 
   RouteManager get routeManager => _routeManager;

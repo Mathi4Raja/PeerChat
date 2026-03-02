@@ -17,7 +17,7 @@ import 'transport_service.dart';
 import 'connection_manager.dart';
 
 /// Service for handling P2P file transfers with:
-/// - 64KB chunking + sliding window (5 in-flight)
+/// - 64KB chunking + sliding window (10 in-flight)
 /// - Cumulative ACK (highestContiguousChunkIndex)
 /// - Chunk ACK timeout (10s WiFi / 15s BT)
 /// - BitSet chunk ordering (never assumes ordered delivery)
@@ -50,6 +50,10 @@ class FileTransferService extends ChangeNotifier {
 
   /// ACK timeout timers per file transfer.
   final Map<String, Timer> _ackTimers = {};
+  final Map<String, RandomAccessFile> _receiverChunkWriters = {};
+  final Map<String, Future<void>> _receiverWriteChains = {};
+  final Map<String, int> _lastUpdateEmitTimestamp = {};
+  static const int _progressEmitIntervalMs = 200;
 
   FileTransferService(
       this._db, this._transportService, this._connectionManager);
@@ -117,9 +121,8 @@ class FileTransferService extends ChangeNotifier {
         .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     final fileId = '${prefix}_$compactUuid';
 
-    // Compute SHA-256 hash
-    final bytes = await file.readAsBytes();
-    final hash = sha256.convert(bytes);
+    // Compute SHA-256 hash with streaming reads to avoid large-file UI stalls.
+    final hash = await _computeSha256ForFile(file);
 
     final totalChunks = (fileSize / FileMetadata.chunkSize).ceil();
 
@@ -154,8 +157,7 @@ class FileTransferService extends ChangeNotifier {
 
     debugPrint(
         'FileTransfer: Initiated send of "$fileName" ($totalChunks chunks) to $peerId');
-    _transferUpdateController.add(session);
-    notifyListeners();
+    _emitTransferUpdate(session, force: true);
     return session;
   }
 
@@ -432,15 +434,21 @@ class FileTransferService extends ChangeNotifier {
         (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
     final chunkData = data.sublist(FileTransferLimits.chunkHeaderBytes);
 
-    // Skip if already received (dedup)
-    if (session.chunkTracker.isReceived(chunkIndex)) return;
+    // Serialize per-file writes so out-of-order arrivals don't race seeks.
+    await _queueReceiverWrite(fileId, () async {
+      // Skip if already received (dedup).
+      if (session.chunkTracker.isReceived(chunkIndex)) return;
 
-    // Store each chunk as a separate temp part file.
-    final tempDir = await _ensureReceiverTempDir(session);
-    final chunkFile = File(_chunkTempPath(tempDir, chunkIndex));
-    await chunkFile.writeAsBytes(chunkData, flush: false);
+      // Store in one sparse temp file to avoid per-chunk file overhead.
+      final tempDir = await _ensureReceiverTempDir(session);
+      final streamPath = _streamTempPath(tempDir);
+      final writer = await _openReceiverWriter(fileId, streamPath);
 
-    session.chunkTracker.markReceived(chunkIndex);
+      await writer.setPosition(chunkIndex * FileMetadata.chunkSize);
+      await writer.writeFrom(chunkData);
+      session.chunkTracker.markReceived(chunkIndex);
+    });
+
     session.lastActivityTimestamp = DateTime.now().millisecondsSinceEpoch;
 
     // Send cumulative ACK
@@ -470,8 +478,7 @@ class FileTransferService extends ChangeNotifier {
       await _persistTransferState(session);
     }
 
-    _transferUpdateController.add(session);
-    notifyListeners();
+    _emitTransferUpdate(session);
   }
 
   Future<void> _handleChunkAck(String fileId, Uint8List data) async {
@@ -484,12 +491,15 @@ class FileTransferService extends ChangeNotifier {
     final highestContiguous =
         (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
 
-    // Mark all chunks up to highestContiguous as received
-    for (int i = 0; i <= highestContiguous; i++) {
-      session.chunkTracker.markReceived(i);
-      session.inFlightChunks.remove(i);
-      session.chunkRetryCount.remove(i);
-      session.chunkSentTimestamp.remove(i);
+    // Mark only newly acknowledged contiguous range.
+    final start = session.chunkTracker.highestContiguous + 1;
+    if (highestContiguous >= start) {
+      for (int i = start; i <= highestContiguous; i++) {
+        session.chunkTracker.markReceived(i);
+        session.inFlightChunks.remove(i);
+        session.chunkRetryCount.remove(i);
+        session.chunkSentTimestamp.remove(i);
+      }
     }
 
     session.lastActivityTimestamp = DateTime.now().millisecondsSinceEpoch;
@@ -515,8 +525,7 @@ class FileTransferService extends ChangeNotifier {
       await _persistTransferState(session);
     }
 
-    _transferUpdateController.add(session);
-    notifyListeners();
+    _emitTransferUpdate(session, force: session.chunkTracker.isComplete);
   }
 
   Future<void> _handleFileComplete(String fileId) async {
@@ -631,15 +640,13 @@ class FileTransferService extends ChangeNotifier {
     final file = File(session.filePath!);
     if (!await file.exists()) return;
 
-    while (session.canSendMore) {
-      if (session.state != FileTransferState.transferring) break;
-      final chunkIndex = session.nextChunkToSend;
-      if (chunkIndex == null) break;
-
-      // Read chunk from file
-      final raf = await file.open(mode: FileMode.read);
-      try {
+    final raf = await file.open(mode: FileMode.read);
+    try {
+      while (session.canSendMore) {
         if (session.state != FileTransferState.transferring) break;
+        final chunkIndex = session.nextChunkToSend;
+        if (chunkIndex == null) break;
+
         await raf.setPosition(chunkIndex * FileMetadata.chunkSize);
         final remaining =
             session.metadata.fileSize - (chunkIndex * FileMetadata.chunkSize);
@@ -670,9 +677,9 @@ class FileTransferService extends ChangeNotifier {
         session.chunkSentTimestamp[chunkIndex] =
             DateTime.now().millisecondsSinceEpoch;
         session.chunkRetryCount.putIfAbsent(chunkIndex, () => 0);
-      } finally {
-        await raf.close();
       }
+    } finally {
+      await raf.close();
     }
   }
 
@@ -733,7 +740,7 @@ class FileTransferService extends ChangeNotifier {
 
   Future<void> _verifyAndComplete(FileTransferSession session) async {
     session.state = FileTransferState.verifying;
-    _transferUpdateController.add(session);
+    _emitTransferUpdate(session, force: true);
 
     if (session.filePath == null) {
       session.state = FileTransferState.failed;
@@ -750,16 +757,50 @@ class FileTransferService extends ChangeNotifier {
       return;
     }
 
+    await _closeReceiverWriter(session.fileId);
+
+    // Fast path: verify directly from single sparse temp file.
+    final streamPart = File(_streamTempPath(chunkDir.path));
+    if (await streamPart.exists()) {
+      final digest = await _computeSha256ForFile(streamPart);
+      if (listEquals(
+          Uint8List.fromList(digest.bytes), session.metadata.sha256Hash)) {
+        final finalPath =
+            await _resolveReceivedFileDestination(session.metadata.fileName);
+        await streamPart.copy(finalPath);
+        await chunkDir.delete(recursive: true);
+
+        session.filePath = finalPath;
+        session.state = FileTransferState.completed;
+        await _removeTransferState(session.fileId);
+        debugPrint('FileTransfer: Verified and saved: $finalPath');
+      } else {
+        session.state = FileTransferState.failed;
+        debugPrint('FileTransfer: SHA-256 mismatch! Transfer corrupted.');
+        if (await chunkDir.exists()) {
+          await chunkDir.delete(recursive: true);
+        }
+        await _removeTransferState(session.fileId);
+      }
+
+      _emitTransferUpdate(session, force: true);
+      return;
+    }
+
+    // Legacy fallback for older partial transfers saved as per-chunk files.
     // Re-assemble chunks in order.
     final assembledPath =
         '${chunkDir.path}${Platform.pathSeparator}assembled.tmp';
     final assembledFile = File(assembledPath);
     final output = assembledFile.openWrite(mode: FileMode.writeOnly);
+    final digestSink = _DigestSink();
+    final hashStream = sha256.startChunkedConversion(digestSink);
 
     for (int i = 0; i < session.metadata.totalChunks; i++) {
       final part = File(_chunkTempPath(chunkDir.path, i));
       if (!await part.exists()) {
         await output.close();
+        hashStream.close();
         if (await assembledFile.exists()) {
           await assembledFile.delete();
         }
@@ -768,17 +809,30 @@ class FileTransferService extends ChangeNotifier {
         }
         session.state = FileTransferState.failed;
         await _removeTransferState(session.fileId);
-        _transferUpdateController.add(session);
-        notifyListeners();
+        _emitTransferUpdate(session, force: true);
         return;
       }
 
       final partBytes = await part.readAsBytes();
       output.add(partBytes);
+      hashStream.add(partBytes);
     }
 
     await output.close();
-    final digest = sha256.convert(await assembledFile.readAsBytes());
+    hashStream.close();
+    final digest = digestSink.value;
+    if (digest == null) {
+      session.state = FileTransferState.failed;
+      if (await assembledFile.exists()) {
+        await assembledFile.delete();
+      }
+      if (await chunkDir.exists()) {
+        await chunkDir.delete(recursive: true);
+      }
+      await _removeTransferState(session.fileId);
+      _emitTransferUpdate(session, force: true);
+      return;
+    }
 
     if (listEquals(
         Uint8List.fromList(digest.bytes), session.metadata.sha256Hash)) {
@@ -804,8 +858,7 @@ class FileTransferService extends ChangeNotifier {
       await _removeTransferState(session.fileId);
     }
 
-    _transferUpdateController.add(session);
-    notifyListeners();
+    _emitTransferUpdate(session, force: true);
   }
 
   // ── CRASH RECOVERY ──
@@ -861,9 +914,12 @@ class FileTransferService extends ChangeNotifier {
   }
 
   Future<void> _removeTransferState(String fileId) async {
+    await _closeReceiverWriter(fileId);
     final database = await _db.db;
     await database
         .delete('file_transfers', where: 'file_id = ?', whereArgs: [fileId]);
+    _lastUpdateEmitTimestamp.remove(fileId);
+    _receiverWriteChains.remove(fileId);
   }
 
   // ── TEMP FILE CLEANUP ──
@@ -936,6 +992,34 @@ class FileTransferService extends ChangeNotifier {
       fileId: session.fileId,
       data: resumeData,
     );
+  }
+
+  Future<Digest> _computeSha256ForFile(File file) async {
+    final digestSink = _DigestSink();
+    final hashStream = sha256.startChunkedConversion(digestSink);
+    await for (final chunk in file.openRead()) {
+      hashStream.add(chunk);
+    }
+    hashStream.close();
+    final digest = digestSink.value;
+    if (digest == null) {
+      throw StateError('Failed to compute SHA-256 digest');
+    }
+    return digest;
+  }
+
+  void _emitTransferUpdate(
+    FileTransferSession session, {
+    bool force = false,
+  }) {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final last = _lastUpdateEmitTimestamp[session.fileId] ?? 0;
+    if (!force && now - last < _progressEmitIntervalMs) {
+      return;
+    }
+    _lastUpdateEmitTimestamp[session.fileId] = now;
+    _transferUpdateController.add(session);
+    notifyListeners();
   }
 
   // ── TRANSPORT HELPER ──
@@ -1137,6 +1221,46 @@ class FileTransferService extends ChangeNotifier {
     return '$transferDirPath${Platform.pathSeparator}${FileTransferPathConfig.chunkPartPrefix}$chunkIndex${FileTransferPathConfig.chunkPartExtension}';
   }
 
+  String _streamTempPath(String transferDirPath) {
+    return '$transferDirPath${Platform.pathSeparator}stream.part';
+  }
+
+  Future<RandomAccessFile> _openReceiverWriter(
+    String fileId,
+    String streamPath,
+  ) async {
+    final existing = _receiverChunkWriters[fileId];
+    if (existing != null) return existing;
+
+    final streamFile = File(streamPath);
+    if (!await streamFile.exists()) {
+      await streamFile.create(recursive: true);
+    }
+
+    final writer = await streamFile.open(mode: FileMode.append);
+    _receiverChunkWriters[fileId] = writer;
+    return writer;
+  }
+
+  Future<void> _closeReceiverWriter(String fileId) async {
+    final writer = _receiverChunkWriters.remove(fileId);
+    if (writer == null) return;
+    try {
+      await writer.close();
+    } catch (_) {}
+  }
+
+  Future<void> _queueReceiverWrite(
+    String fileId,
+    Future<void> Function() op,
+  ) {
+    final previous = _receiverWriteChains[fileId] ?? Future<void>.value();
+    final chained = previous.then((_) => op());
+    // Keep chain alive even if one write fails.
+    _receiverWriteChains[fileId] = chained.catchError((_) {});
+    return chained;
+  }
+
   Future<String> _ensureReceiverTempDir(FileTransferSession session) async {
     session.filePath ??= await _transferTempDirPath(session.fileId);
     final dir = Directory(session.filePath!);
@@ -1159,6 +1283,8 @@ class FileTransferService extends ChangeNotifier {
         session.filePath == null) {
       return;
     }
+
+    await _closeReceiverWriter(session.fileId);
 
     final path = session.filePath!;
     final dir = Directory(path);
@@ -1228,8 +1354,21 @@ class FileTransferService extends ChangeNotifier {
     for (final timer in _ackTimers.values) {
       timer.cancel();
     }
+    _lastUpdateEmitTimestamp.clear();
     _transferUpdateController.close();
     _incomingRequestController.close();
     super.dispose();
   }
+}
+
+class _DigestSink implements Sink<Digest> {
+  Digest? value;
+
+  @override
+  void add(Digest data) {
+    value = data;
+  }
+
+  @override
+  void close() {}
 }

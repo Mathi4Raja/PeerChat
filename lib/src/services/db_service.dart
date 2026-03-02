@@ -21,7 +21,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 16,
+      version: 17,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -74,6 +74,9 @@ class DBService {
         if (oldVersion < 16) {
           await _migrateTo16(db);
         }
+        if (oldVersion < 17) {
+          await _migrateTo17(db);
+        }
       },
     );
     return _db!;
@@ -102,7 +105,10 @@ class DBService {
         isSentByMe INTEGER NOT NULL,
         status INTEGER NOT NULL,
         isRead INTEGER DEFAULT 1,
-        hopCount INTEGER
+        hopCount INTEGER,
+        replyToMessageId TEXT,
+        replyToContent TEXT,
+        replyToPeerId TEXT
       )
     ''');
 
@@ -311,8 +317,7 @@ class DBService {
 
   Future<void> _migrateTo14(Database db) async {
     try {
-      await db
-          .execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
+      await db.execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
     } catch (_) {}
   }
 
@@ -325,6 +330,21 @@ class DBService {
 
   Future<void> _migrateTo16(Database db) async {
     await db.execute('DROP TABLE IF EXISTS pending_acks');
+  }
+
+  Future<void> _migrateTo17(Database db) async {
+    try {
+      await db.execute(
+          'ALTER TABLE chat_messages ADD COLUMN replyToMessageId TEXT');
+    } catch (_) {}
+    try {
+      await db
+          .execute('ALTER TABLE chat_messages ADD COLUMN replyToContent TEXT');
+    } catch (_) {}
+    try {
+      await db
+          .execute('ALTER TABLE chat_messages ADD COLUMN replyToPeerId TEXT');
+    } catch (_) {}
   }
 
   Future<void> _ensureCriticalSchema(Database db) async {
@@ -340,6 +360,24 @@ class DBService {
     final chatHasHopCount = await _hasColumn(db, 'chat_messages', 'hopCount');
     if (!chatHasHopCount) {
       await db.execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
+    }
+    final chatHasReplyToMessageId =
+        await _hasColumn(db, 'chat_messages', 'replyToMessageId');
+    if (!chatHasReplyToMessageId) {
+      await db.execute(
+          'ALTER TABLE chat_messages ADD COLUMN replyToMessageId TEXT');
+    }
+    final chatHasReplyToContent =
+        await _hasColumn(db, 'chat_messages', 'replyToContent');
+    if (!chatHasReplyToContent) {
+      await db
+          .execute('ALTER TABLE chat_messages ADD COLUMN replyToContent TEXT');
+    }
+    final chatHasReplyToPeerId =
+        await _hasColumn(db, 'chat_messages', 'replyToPeerId');
+    if (!chatHasReplyToPeerId) {
+      await db
+          .execute('ALTER TABLE chat_messages ADD COLUMN replyToPeerId TEXT');
     }
 
     final queueHasOrigin = await _hasColumn(db, 'message_queue', 'origin_type');
@@ -508,7 +546,7 @@ class DBService {
       'chat_messages',
       where: 'peerId = ?',
       whereArgs: [peerId],
-      orderBy: 'timestamp ASC',
+      orderBy: 'timestamp ASC, id ASC',
     );
     return rows.map((r) => ChatMessage.fromMap(r)).toList();
   }

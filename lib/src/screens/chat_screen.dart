@@ -6,6 +6,7 @@ import 'package:uuid/uuid.dart';
 import '../app_state.dart';
 import '../services/mesh_router_service.dart';
 import '../models/mesh_message.dart';
+import '../models/chat_payload.dart';
 import '../models/chat_message.dart';
 import '../models/file_transfer.dart';
 import '../models/peer.dart';
@@ -36,6 +37,7 @@ class _ChatScreenState extends State<ChatScreen> {
   StreamSubscription<String>? _statusChangeSubscription;
   StreamSubscription<FileTransferSession>? _transferUpdateSubscription;
   List<FileTransferSession> _peerTransfers = [];
+  ChatMessage? _replyingTo;
 
   @override
   void initState() {
@@ -62,6 +64,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
         setState(() {
           _messages.add(chatMessage);
+          _sortMessagesChronologically();
         });
         // Scroll to bottom
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -148,6 +151,63 @@ class _ChatScreenState extends State<ChatScreen> {
     return null;
   }
 
+  String _selectedPeerDisplayName(AppState appState) {
+    final selectedPeerId = _selectedPeerId;
+    if (selectedPeerId == null) return 'Peer';
+    final peer = _findPeerById(appState, selectedPeerId);
+    if (peer == null ||
+        peer.id.length > 40 ||
+        peer.displayName.trim().isEmpty) {
+      return NameGenerator.generateShortName(selectedPeerId);
+    }
+    return peer.displayName;
+  }
+
+  void _startReply(ChatMessage message) {
+    setState(() {
+      _replyingTo = message;
+    });
+  }
+
+  void _cancelReply() {
+    if (_replyingTo == null) return;
+    setState(() {
+      _replyingTo = null;
+    });
+  }
+
+  void _sortMessagesChronologically() {
+    _messages.sort((a, b) {
+      final timestampOrder = a.timestamp.compareTo(b.timestamp);
+      if (timestampOrder != 0) return timestampOrder;
+      return a.id.compareTo(b.id);
+    });
+  }
+
+  String _replySnippet(String content) {
+    final compact = content.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (compact.length <= 80) return compact;
+    return '${compact.substring(0, 80)}...';
+  }
+
+  String _replyAuthorLabelForStored(AppState appState, String? replyPeerId) {
+    if (replyPeerId == null || replyPeerId.isEmpty) {
+      return 'Reply';
+    }
+    final localPeerId = appState.publicKey;
+    if (localPeerId != null && replyPeerId == localPeerId) {
+      return 'You';
+    }
+    if (_selectedPeerId != null && replyPeerId == _selectedPeerId) {
+      return _selectedPeerDisplayName(appState);
+    }
+    final peer = _findPeerById(appState, replyPeerId);
+    if (peer != null && peer.displayName.trim().isNotEmpty) {
+      return peer.displayName;
+    }
+    return NameGenerator.generateShortName(replyPeerId);
+  }
+
   Future<void> _loadMessages() async {
     if (_selectedPeerId == null || !mounted) return;
 
@@ -185,7 +245,7 @@ class _ChatScreenState extends State<ChatScreen> {
     if (existingIndex == -1) {
       setState(() {
         _messages.add(updated);
-        _messages.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+        _sortMessagesChronologically();
       });
       return;
     }
@@ -209,6 +269,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final appState = Provider.of<AppState>(context, listen: false);
     final content = _messageController.text.trim();
+    final replyTarget = _replyingTo;
     final localPeerId = appState.publicKey ?? 'localpeer';
     final prefix = localPeerId.length >=
             MessageLimits.generatedIdSenderPrefixLength
@@ -219,6 +280,17 @@ class _ChatScreenState extends State<ChatScreen> {
         .replaceAll('-', '')
         .substring(0, MessageLimits.generatedIdUuidFragmentLength);
     final messageId = '${prefix}_$compactUuid';
+    final replyToPeerId = replyTarget == null
+        ? null
+        : (replyTarget.isSentByMe ? localPeerId : _selectedPeerId!);
+    final payload = ChatPayload(
+      text: content,
+      replyToMessageId: replyTarget?.id,
+      replyToContent:
+          replyTarget == null ? null : _replySnippet(replyTarget.content),
+      replyToPeerId: replyToPeerId,
+    );
+    final wireContent = payload.toWire();
 
     // Create chat message
     final chatMessage = ChatMessage(
@@ -229,6 +301,10 @@ class _ChatScreenState extends State<ChatScreen> {
       isSentByMe: true,
       status: MessageStatus.sending,
       isRead: true, // Sent messages are always read
+      replyToMessageId: replyTarget?.id,
+      replyToContent:
+          replyTarget == null ? null : _replySnippet(replyTarget.content),
+      replyToPeerId: replyToPeerId,
     );
 
     // Save to database
@@ -237,7 +313,9 @@ class _ChatScreenState extends State<ChatScreen> {
     // Update UI
     setState(() {
       _messages.add(chatMessage);
+      _sortMessagesChronologically();
       _messageController.clear();
+      _replyingTo = null;
     });
 
     // Scroll to bottom
@@ -252,11 +330,10 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Send via mesh router
-    final isDirectSession =
-        appState.isDirectSessionWithPeer(_selectedPeerId!);
+    final isDirectSession = appState.isDirectSessionWithPeer(_selectedPeerId!);
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: _selectedPeerId!,
-      content: content,
+      content: wireContent,
       priority: MessagePriority.normal,
       messageId: messageId,
     );
@@ -265,7 +342,8 @@ class _ChatScreenState extends State<ChatScreen> {
     MessageStatus newStatus;
     switch (result) {
       case SendResult.direct:
-        newStatus = isDirectSession ? MessageStatus.sent : MessageStatus.routing;
+        newStatus =
+            isDirectSession ? MessageStatus.sent : MessageStatus.routing;
         break;
       case SendResult.routed:
         newStatus = MessageStatus.routing;
@@ -298,6 +376,9 @@ class _ChatScreenState extends State<ChatScreen> {
         status: newStatus,
         isRead: old.isRead,
         hopCount: null,
+        replyToMessageId: old.replyToMessageId,
+        replyToContent: old.replyToContent,
+        replyToPeerId: old.replyToPeerId,
       );
     });
   }
@@ -455,7 +536,7 @@ class _ChatScreenState extends State<ChatScreen> {
                         child:
                             CircularProgressIndicator(color: AppTheme.primary),
                       )
-                    : _buildMessagesList(),
+                    : _buildMessagesList(appState),
           ),
           if (_selectedPeerId != null && !appState.allowsFileTransfers)
             Container(
@@ -562,7 +643,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessagesList() {
+  Widget _buildMessagesList(AppState appState) {
     if (_messages.isEmpty) {
       return Center(
         child: Column(
@@ -610,14 +691,53 @@ class _ChatScreenState extends State<ChatScreen> {
         return Column(
           children: [
             if (showDateHeader) _buildDateSeparator(message.timestamp),
-            _buildMessageBubble(message),
+            Dismissible(
+              key: ValueKey('reply_${message.id}'),
+              direction: DismissDirection.startToEnd,
+              dismissThresholds: const {
+                DismissDirection.startToEnd: 0.25,
+              },
+              confirmDismiss: (_) async {
+                _startReply(message);
+                return false;
+              },
+              background: _buildReplySwipeBackground(),
+              child: _buildMessageBubble(message, appState),
+            ),
           ],
         );
       },
     );
   }
 
-  Widget _buildMessageBubble(ChatMessage message) {
+  Widget _buildReplySwipeBackground() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 6),
+      alignment: Alignment.centerLeft,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.reply_rounded,
+            size: 18,
+            color: AppTheme.primary.withValues(alpha: 0.9),
+          ),
+          const SizedBox(width: 6),
+          Text(
+            'Reply',
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.primary.withValues(alpha: 0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMessageBubble(ChatMessage message, AppState appState) {
     final isMe = message.isSentByMe;
 
     return Align(
@@ -655,6 +775,61 @@ class _ChatScreenState extends State<ChatScreen> {
             if (!isMe && message.hopCount != null) ...[
               _buildHopIndicator(message.hopCount!, isMe),
               const SizedBox(height: 6),
+            ],
+            if (message.replyToMessageId != null ||
+                (message.replyToContent != null &&
+                    message.replyToContent!.isNotEmpty)) ...[
+              Container(
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                decoration: BoxDecoration(
+                  color: isMe
+                      ? Colors.white.withValues(alpha: 0.12)
+                      : AppTheme.bgDeep.withValues(alpha: 0.45),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border(
+                    left: BorderSide(
+                      color: isMe ? Colors.white70 : AppTheme.primary,
+                      width: 3,
+                    ),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _replyAuthorLabelForStored(
+                          appState, message.replyToPeerId),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: isMe
+                            ? Colors.white.withValues(alpha: 0.95)
+                            : AppTheme.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      message.replyToContent ?? '[Message]',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: GoogleFonts.inter(
+                        fontSize: 11,
+                        color: isMe
+                            ? Colors.white.withValues(alpha: 0.85)
+                            : AppTheme.textSecondary,
+                        height: 1.25,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ],
             Text(
               message.content,
@@ -855,72 +1030,134 @@ class _ChatScreenState extends State<ChatScreen> {
       ),
       child: SafeArea(
         top: false,
-        child: Row(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            if (isConnected && canSendFiles)
+            if (_replyingTo != null)
               Container(
-                margin: const EdgeInsets.only(right: 8),
+                width: double.infinity,
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 8,
+                ),
                 decoration: BoxDecoration(
                   color: AppTheme.bgSurface,
-                  shape: BoxShape.circle,
+                  borderRadius: BorderRadius.circular(10),
                   border:
                       Border.all(color: Colors.white.withValues(alpha: 0.06)),
                 ),
-                child: IconButton(
-                  icon: const Icon(Icons.attach_file_rounded,
-                      color: AppTheme.primary),
-                  onPressed: _openFileTransfer,
-                ),
-              ),
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.bgSurface,
-                  borderRadius: BorderRadius.circular(24),
-                  border:
-                      Border.all(color: Colors.white.withValues(alpha: 0.06)),
-                ),
-                child: TextField(
-                  controller: _messageController,
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    color: AppTheme.textPrimary,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'Type a message...',
-                    hintStyle: GoogleFonts.inter(
-                      color: AppTheme.textSecondary,
-                      fontSize: 14,
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _replyingTo!.isSentByMe
+                                ? 'Replying to You'
+                                : 'Replying to ${_selectedPeerDisplayName(appState)}',
+                            style: GoogleFonts.inter(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.primary,
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _replySnippet(_replyingTo!.content),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              color: AppTheme.textSecondary,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                    border: InputBorder.none,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 18,
-                      vertical: 10,
+                    IconButton(
+                      tooltip: 'Cancel reply',
+                      onPressed: _cancelReply,
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppTheme.textSecondary,
+                      ),
                     ),
-                  ),
-                  maxLines: null,
-                  textCapitalization: TextCapitalization.sentences,
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              decoration: BoxDecoration(
-                gradient: AppTheme.primaryGradient,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTheme.primary.withValues(alpha: 0.3),
-                    blurRadius: 8,
-                    offset: const Offset(0, 2),
+            Row(
+              children: [
+                if (isConnected && canSendFiles)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgSurface,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.06)),
+                    ),
+                    child: IconButton(
+                      icon: const Icon(Icons.attach_file_rounded,
+                          color: AppTheme.primary),
+                      onPressed: _openFileTransfer,
+                    ),
                   ),
-                ],
-              ),
-              child: IconButton(
-                icon: const Icon(Icons.send_rounded,
-                    color: AppTheme.bgDeep, size: 20),
-                onPressed: _sendMessage,
-              ),
+                Expanded(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.bgSurface,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.06)),
+                    ),
+                    child: TextField(
+                      controller: _messageController,
+                      style: GoogleFonts.inter(
+                        fontSize: 14,
+                        color: AppTheme.textPrimary,
+                      ),
+                      decoration: InputDecoration(
+                        hintText: _replyingTo == null
+                            ? 'Type a message...'
+                            : 'Type a reply...',
+                        hintStyle: GoogleFonts.inter(
+                          color: AppTheme.textSecondary,
+                          fontSize: 14,
+                        ),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 10,
+                        ),
+                      ),
+                      maxLines: null,
+                      textCapitalization: TextCapitalization.sentences,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  decoration: BoxDecoration(
+                    gradient: AppTheme.primaryGradient,
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppTheme.primary.withValues(alpha: 0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: IconButton(
+                    icon: const Icon(Icons.send_rounded,
+                        color: AppTheme.bgDeep, size: 20),
+                    onPressed: _sendMessage,
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -1114,6 +1351,7 @@ class _ChatScreenState extends State<ChatScreen> {
                       onTap: () {
                         setState(() {
                           _selectedPeerId = peer.id;
+                          _replyingTo = null;
                           _refreshPeerTransfers(appState);
                         });
                         Navigator.pop(context);
@@ -1129,4 +1367,3 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 }
-
