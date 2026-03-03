@@ -39,7 +39,7 @@ class MenuScreen extends StatelessWidget {
           _MenuTile(
             icon: Icons.notifications_active_rounded,
             title: 'Notifications',
-            subtitle: 'Sound, vibration, direct/mesh/broadcast',
+            subtitle: 'Sound, vibration, messages/broadcast',
             onTap: () => _open(context, const NotificationSettingsScreen()),
           ),
           _MenuTile(

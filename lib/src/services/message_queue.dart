@@ -61,7 +61,7 @@ class MessageQueue {
         DELETE FROM message_queue
         WHERE message_id IN (
           SELECT message_id FROM message_queue
-          ORDER BY priority ASC, queued_timestamp ASC
+          ORDER BY priority DESC, queued_timestamp ASC
           LIMIT ?
         )
       ''', [excess]);
@@ -75,7 +75,7 @@ class MessageQueue {
       'message_queue',
       where: 'next_hop_peer_id = ?',
       whereArgs: [peerId],
-      orderBy: 'priority DESC, queued_timestamp ASC',
+      orderBy: 'priority ASC, queued_timestamp ASC',
     );
 
     return results.map((map) => QueuedMessage.fromMap(map)).toList();
@@ -96,7 +96,7 @@ class MessageQueue {
     final database = await _db.db;
     final results = await database.query(
       'message_queue',
-      orderBy: 'priority DESC, queued_timestamp ASC',
+      orderBy: 'priority ASC, queued_timestamp ASC',
     );
 
     return results.map((map) => QueuedMessage.fromMap(map)).toList();
@@ -129,7 +129,18 @@ class MessageQueue {
       WHERE next_retry_time <= ?
         AND (expiry_time = 0 OR expiry_time > ?)$whereOrigin
       ORDER BY
-        (priority + CASE WHEN (? - queued_timestamp) >= ${QueuePolicyConfig.stalePriorityBoostAgeMs} THEN 1 ELSE 0 END) DESC,
+        (
+          CASE priority
+            WHEN ${MessagePriority.high.index} THEN 3
+            WHEN ${MessagePriority.normal.index} THEN 2
+            ELSE 1
+          END
+          + CASE
+              WHEN (? - queued_timestamp) >= ${QueuePolicyConfig.stalePriorityBoostAgeMs}
+                THEN 1
+              ELSE 0
+            END
+        ) DESC,
         queued_timestamp ASC
     ''', args);
 
@@ -240,7 +251,7 @@ class MessageQueue {
         WHERE message_id IN (
           SELECT message_id FROM message_queue
           WHERE next_hop_peer_id = ?
-          ORDER BY priority ASC, queued_timestamp ASC
+          ORDER BY priority DESC, queued_timestamp ASC
           LIMIT ?
         )
       ''', [peerId, excess]);

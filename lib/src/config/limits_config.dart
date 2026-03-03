@@ -88,46 +88,25 @@ class QueueLimits {
   static const int backoffExponentCap = 10;
 }
 
-/// File transfer protocol and resource limits.
-class FileTransferLimits {
-  /// Max file size user is allowed to send (bytes).
-  static const int maxSendFileSizeBytes = 1024 * 1024 * 1024; // 1 GiB
+/// Transport-level fairness, backpressure, and connection caps.
+class TransportLimits {
+  /// Soft cap for simultaneously connected WiFi/Nearby peers.
+  static const int maxConnectedWiFiPeers = 50;
 
-  /// File chunk payload size (bytes) used on wire.
-  static const int chunkSizeBytes = 65536; // 64 KiB
+  /// Upper bound for in-flight WiFi connection attempts.
+  static const int maxPendingWiFiConnections = 6;
 
-  /// Max chunks that can be in-flight before ACKs arrive.
-  static const int maxInFlightChunks = 10;
+  /// Max buffered outbound frames across control + bulk queues.
+  static const int maxOutboundFrames = 2048;
 
-  /// Max retries per chunk before transfer failure.
-  static const int maxChunkRetries = 5;
+  /// Max buffered outbound payload bytes across control + bulk queues.
+  static const int maxOutboundBytes = 32 * 1024 * 1024; // 32 MiB
 
-  /// Persist transfer state after every N chunks for crash recovery.
-  static const int statePersistEveryNChunks = 50;
+  /// Number of bulk frames allowed before servicing control queue.
+  static const int maxConsecutiveBulkFrames = 6;
 
-  /// Required free-space multiplier over file size (safety headroom).
-  static const double minStorageHeadroomMultiplier = 1.2;
-
-  /// Protocol marker byte used to identify file-transfer frames.
-  static const int protocolMarker = 0xFE;
-
-  /// Expected on-wire file ID length.
-  static const int wireFileIdLength = 36;
-
-  /// Fixed chunk header size (bytes) in framed payload.
-  static const int chunkHeaderBytes = 4;
-
-  /// ACK wait timeout for WiFi transport.
-  static const int ackTimeoutWifiMs = 10000;
-
-  /// ACK wait timeout for Bluetooth transport.
-  static const int ackTimeoutBluetoothMs = 15000;
-
-  /// Fallback storage estimate when platform API cannot provide free space.
-  static const int fallbackAvailableStorageBytes = 1024 * 1024 * 1024; // 1 GiB
-
-  /// Multiplier to convert df "blocks" to bytes on supported systems.
-  static const int dfBlocksToBytesMultiplier = 1024;
+  /// Skip keepalive enqueue when outbound queue pressure exceeds this ratio.
+  static const double keepAliveBackpressureThreshold = 0.8;
 }
 
 /// Routing protocol and pruning limits.

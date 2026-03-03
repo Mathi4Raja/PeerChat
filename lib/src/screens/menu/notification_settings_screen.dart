@@ -14,8 +14,8 @@ class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
   bool _sound = true;
   bool _vibration = true;
-  bool _direct = true;
-  bool _mesh = true;
+  bool _messages = true;
+  bool _relayUpdates = true;
   bool _broadcast = true;
 
   @override
@@ -50,14 +50,14 @@ class _NotificationSettingsScreenState
             title: 'Chat Notifications',
             children: [
               SwitchListTile(
-                value: _direct,
-                onChanged: (value) => setState(() => _direct = value),
-                title: const Text('Direct chats'),
+                value: _messages,
+                onChanged: (value) => setState(() => _messages = value),
+                title: const Text('Chat messages'),
               ),
               SwitchListTile(
-                value: _mesh,
-                onChanged: (value) => setState(() => _mesh = value),
-                title: const Text('Mesh chats'),
+                value: _relayUpdates,
+                onChanged: (value) => setState(() => _relayUpdates = value),
+                title: const Text('Relay/queue updates'),
               ),
               SwitchListTile(
                 value: _broadcast,

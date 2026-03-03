@@ -17,14 +17,9 @@ class HelpFaqScreen extends StatelessWidget {
         padding: const EdgeInsets.fromLTRB(8, 8, 8, 12),
         children: const [
           _FaqItem(
-            question: 'How does direct chat work?',
+            question: 'How does chat delivery work?',
             answer:
-                'Direct chat works when both peers are online and actively connected through available transport links.',
-          ),
-          _FaqItem(
-            question: 'How does mesh chat work?',
-            answer:
-                'Mesh chat can queue and route messages through intermediate peers when a direct path is unavailable.',
+                'All chat messages use mesh routing. If a peer is connected, messages move immediately; otherwise they queue and relay through available peers.',
           ),
           _FaqItem(
             question: 'What is emergency broadcast?',

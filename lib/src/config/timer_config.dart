@@ -247,18 +247,6 @@ class AppStateTimerConfig {
   static const Duration resumeDiscoveryKickCooldown = Duration(seconds: 12);
 }
 
-/// File transfer maintenance timers.
-class FileTransferTimerConfig {
-  /// Transfer state older than this can be considered stale.
-  static const Duration staleThreshold = Duration(minutes: 10);
-
-  /// Max age for temporary transfer files before cleanup.
-  static const Duration tempFileMaxAge = Duration(hours: 24);
-
-  /// Interval for checking missing chunk ACKs and retry eligibility.
-  static const Duration ackCheckInterval = Duration(seconds: 2);
-}
-
 /// Deduplication record cleanup timers.
 class DeduplicationTimerConfig {
   /// Hard upper bound age for dedup records before forced cleanup.

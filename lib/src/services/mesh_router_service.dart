@@ -22,7 +22,6 @@ import '../config/protocol_config.dart';
 import 'message_manager.dart';
 import 'route_manager.dart';
 import 'message_queue.dart';
-import 'file_transfer_service.dart';
 import 'deduplication_cache.dart';
 import 'signature_verifier.dart';
 import 'connection_manager.dart';
@@ -44,7 +43,6 @@ class MeshRouterService extends ChangeNotifier {
   final MessageManager _messageManager;
   final MultiTransportService _transportService;
   final ConnectionManager _connectionManager;
-  final FileTransferService _fileTransferService;
   final EmergencyBroadcastService _emergencyBroadcastService;
 
   WiFiTransport? _wifiTransport;
@@ -59,7 +57,6 @@ class MeshRouterService extends ChangeNotifier {
   int _messagesSent = 0;
   final int _messagesDelivered = 0;
   int _messagesFailed = 0;
-  RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
   final Map<String, int> _lastQueueDiscoveryAttempt = {};
   static const Duration _queueDiscoveryCooldown = Duration(seconds: 15);
 
@@ -90,7 +87,6 @@ class MeshRouterService extends ChangeNotifier {
     required MessageManager messageManager,
     required MultiTransportService transportService,
     required ConnectionManager connectionManager,
-    required FileTransferService fileTransferService,
     required EmergencyBroadcastService emergencyBroadcastService,
   })  : _db = db,
         _discovery = discovery,
@@ -102,7 +98,6 @@ class MeshRouterService extends ChangeNotifier {
         _messageManager = messageManager,
         _transportService = transportService,
         _connectionManager = connectionManager,
-        _fileTransferService = fileTransferService,
         _emergencyBroadcastService = emergencyBroadcastService {
     _connectionManager.onHandshakeComplete = (peerId) async {
       debugPrint('Handshake complete for $peerId - processing full queue');
@@ -113,7 +108,6 @@ class MeshRouterService extends ChangeNotifier {
         debugPrint(
             'EmergencyBroadcast: synced $syncedCount recent broadcast(s) to $peerId');
       }
-      _fileTransferService.onPeerReconnected(peerId);
       notifyListeners();
     };
 
@@ -141,7 +135,6 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   void setRuntimeProfile(RuntimeProfile profile) {
-    _runtimeProfile = profile;
     _connectionManager.setRuntimeProfile(profile);
     _emergencyBroadcastService.setRuntimeProfile(profile);
   }
@@ -292,15 +285,10 @@ class MeshRouterService extends ChangeNotifier {
     try {
       final mode = selectMode(
         destinationId: recipientPeerId,
-        connectedPeerIds: getConnectedPeerIds(),
       );
-      final effectiveMode = (_runtimeProfile != RuntimeProfile.normalDirect &&
-              mode == CommunicationMode.direct)
-          ? CommunicationMode.mesh
-          : mode;
 
       final msgId = messageId ?? _generateMessageId();
-      if (effectiveMode == CommunicationMode.emergencyBroadcast) {
+      if (mode == CommunicationMode.emergencyBroadcast) {
         final sent = await _emergencyBroadcastService.broadcastMessage(
           messageId: msgId,
           content: content,
@@ -322,21 +310,10 @@ class MeshRouterService extends ChangeNotifier {
         messageId: msgId,
       );
 
-      switch (effectiveMode) {
-        case CommunicationMode.direct:
-          final result = await _sendDirect(message, recipientPeerId);
-          _recordSendAttempt(result);
-          notifyListeners();
-          return result;
-        case CommunicationMode.mesh:
-          final forwarded = await _forwardMessageViaTransport(message);
-          _recordSendAttempt(forwarded);
-          notifyListeners();
-          return forwarded;
-        case CommunicationMode.emergencyBroadcast:
-          _recordSendAttempt(SendResult.failed);
-          return SendResult.failed;
-      }
+      final forwarded = await _forwardMessageViaTransport(message);
+      _recordSendAttempt(forwarded);
+      notifyListeners();
+      return forwarded;
     } catch (e) {
       debugPrint('ERROR sending message: $e');
       _recordSendAttempt(SendResult.failed);
@@ -348,24 +325,6 @@ class MeshRouterService extends ChangeNotifier {
     _messagesSent++;
     if (result == SendResult.failed) {
       _messagesFailed++;
-    }
-  }
-
-  Future<SendResult> _sendDirect(
-      MeshMessage message, String recipientPeerId) async {
-    final transportId = _connectionManager.getTransportId(recipientPeerId);
-    if (transportId == null) {
-      return _forwardMessageViaTransport(message);
-    }
-
-    final sent =
-        await _transportService.sendMessage(transportId, message.toBytes());
-
-    if (sent) {
-      await _routeManager.markRouteSuccess(recipientPeerId, recipientPeerId);
-      return SendResult.direct;
-    } else {
-      return _forwardMessageViaTransport(message);
     }
   }
 
@@ -404,9 +363,7 @@ class MeshRouterService extends ChangeNotifier {
     if (sent) {
       await _routeManager.markRouteSuccess(
           message.recipientPeerId, nextHopCryptoId);
-      return nextHopCryptoId == message.recipientPeerId
-          ? SendResult.direct
-          : SendResult.routed;
+      return SendResult.routed;
     } else {
       final queuedMessage = QueuedMessage(
         message: message,
@@ -424,14 +381,6 @@ class MeshRouterService extends ChangeNotifier {
   Future<void> receiveMessage(
       Uint8List rawMessage, String fromPeerAddress) async {
     try {
-      if (FileTransferService.isFileTransferMessage(rawMessage)) {
-        final cryptoId = _connectionManager.getCryptoPeerId(fromPeerAddress);
-        if (cryptoId != null) {
-          await _fileTransferService.dispatchRawMessage(cryptoId, rawMessage);
-          return;
-        }
-      }
-
       final message = MeshMessage.fromBytes(rawMessage);
 
       if (message.recipientPeerId == broadcastEmergencyDestination) {
@@ -657,15 +606,9 @@ class MeshRouterService extends ChangeNotifier {
                 MessageType.data &&
             queuedMessage.message.senderPeerId == _cryptoService.localPeerId;
         if (isLocalOutgoingData) {
-          final isDirectSession =
-              _isDirectSessionWithPeer(queuedMessage.message.recipientPeerId);
-          final messageStatus = isDirectSession &&
-                  currentNextHop == queuedMessage.message.recipientPeerId
-              ? MessageStatus.sent
-              : MessageStatus.routing;
           await _db.updateMessageStatus(
             queuedMessage.message.messageId,
-            messageStatus,
+            MessageStatus.routing,
             clearHopCount: true,
           );
           _statusUpdateController.add(queuedMessage.message.messageId);
@@ -821,7 +764,7 @@ class MeshRouterService extends ChangeNotifier {
       );
     }).toList()
       ..sort((a, b) {
-        final priorityOrder = b.priority.index.compareTo(a.priority.index);
+        final priorityOrder = a.priority.index.compareTo(b.priority.index);
         if (priorityOrder != 0) return priorityOrder;
         return a.queuedTimestamp.compareTo(b.queuedTimestamp);
       });
@@ -905,7 +848,6 @@ class MeshRouterService extends ChangeNotifier {
   RouteManager get routeManager => _routeManager;
   MessageQueue get messageQueue => _messageQueue;
   MultiTransportService get transportService => _transportService;
-  FileTransferService get fileTransferService => _fileTransferService;
   String get localPeerId => _cryptoService.localPeerId;
 
   List<String> getConnectedPeerIds() =>
@@ -913,19 +855,6 @@ class MeshRouterService extends ChangeNotifier {
 
   RuntimeProfile? getPeerRuntimeProfile(String peerId) =>
       _connectionManager.getPeerRuntimeProfile(peerId);
-
-  bool peerSupportsFileTransfer(String peerId, {bool defaultValue = false}) =>
-      _connectionManager.peerSupportsFileTransfer(
-        peerId,
-        defaultValue: defaultValue,
-      );
-
-  bool _isDirectSessionWithPeer(String peerId) {
-    final remoteProfile = _connectionManager.getPeerRuntimeProfile(peerId);
-    return _runtimeProfile == RuntimeProfile.normalDirect &&
-        remoteProfile == RuntimeProfile.normalDirect &&
-        _connectionManager.getConnectedCryptoPeerIds().contains(peerId);
-  }
 
   @override
   void dispose() {
@@ -946,9 +875,6 @@ class MeshRouterService extends ChangeNotifier {
 
 /// Result of a send attempt.
 enum SendResult {
-  /// Delivered directly to the recipient.
-  direct,
-
   /// Successfully routed through one or more hops.
   routed,
 

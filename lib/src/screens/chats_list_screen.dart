@@ -51,119 +51,90 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     final unreadCounts = appState.unreadCounts;
     final connectedPeerIds = appState.meshRouter.getConnectedPeerIds();
 
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          title: Text(
-            'Messages',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-          ),
-          bottom: const TabBar(
-            tabs: [
-              Tab(icon: Icon(Icons.hub_rounded), text: 'Mesh'),
-              Tab(icon: Icon(Icons.link_rounded), text: 'Direct'),
-            ],
-          ),
+    return Scaffold(
+      appBar: AppBar(
+        title: Text(
+          'Messages',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w700),
         ),
-        body: FutureBuilder<List<Map<String, Object?>>>(
-          future: _rowsFuture ?? appState.db.getRecentChatRows(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting &&
-                !snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
+      ),
+      body: FutureBuilder<List<Map<String, Object?>>>(
+        future: _rowsFuture ?? appState.db.getRecentChatRows(),
+        builder: (context, snapshot) {
+          if (snapshot.connectionState == ConnectionState.waiting &&
+              !snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          final rows = List<Map<String, Object?>>.from(
+            snapshot.data ?? const [],
+          );
+          final existingPeerIds = <String>{
+            for (final row in rows)
+              if ((row['peer_id'] as String?) != null)
+                (row['peer_id'] as String?)!,
+          };
+
+          // If there are unread counters with no resolved row, surface a fallback row
+          // so unread chats are still visible.
+          for (final entry in unreadCounts.entries) {
+            if (entry.value <= 0) continue;
+            if (existingPeerIds.contains(entry.key)) continue;
+
+            String displayName = '';
+            int lastSeen = 0;
+            for (final peer in appState.peers) {
+              if (peer.id == entry.key) {
+                displayName = peer.displayName;
+                lastSeen = peer.lastSeen;
+                break;
+              }
             }
 
-            final rows = List<Map<String, Object?>>.from(
-              snapshot.data ?? const [],
-            );
-            final existingPeerIds = <String>{
-              for (final row in rows)
-                if ((row['peer_id'] as String?) != null)
-                  (row['peer_id'] as String?)!,
-            };
-
-            // If there are unread counters with no resolved row, surface a fallback row
-            // so unread chats are still visible.
-            for (final entry in unreadCounts.entries) {
-              if (entry.value <= 0) continue;
-              if (existingPeerIds.contains(entry.key)) continue;
-
-              String displayName = '';
-              int lastSeen = 0;
-              for (final peer in appState.peers) {
-                if (peer.id == entry.key) {
-                  displayName = peer.displayName;
-                  lastSeen = peer.lastSeen;
-                  break;
-                }
-              }
-
-              rows.add({
-                'peer_id': entry.key,
-                'last_content': '(new message)',
-                'last_timestamp': 0,
-                'is_sent_by_me': 0,
-                'last_status': 0,
-                'display_name': displayName,
-                'address': '',
-                'last_seen': lastSeen,
-                'has_app': 0,
-                'is_wifi': 0,
-                'is_bluetooth': 0,
-              });
-              existingPeerIds.add(entry.key);
-            }
-
-            rows.sort((a, b) {
-              final aPeerId = (a['peer_id'] as String?) ?? '';
-              final bPeerId = (b['peer_id'] as String?) ?? '';
-              final unreadA = unreadCounts[aPeerId] ?? 0;
-              final unreadB = unreadCounts[bPeerId] ?? 0;
-              if (unreadA != unreadB) {
-                return unreadB.compareTo(unreadA);
-              }
-              final tsA = (a['last_timestamp'] as int?) ?? 0;
-              final tsB = (b['last_timestamp'] as int?) ?? 0;
-              return tsB.compareTo(tsA);
+            rows.add({
+              'peer_id': entry.key,
+              'last_content': '(new message)',
+              'last_timestamp': 0,
+              'is_sent_by_me': 0,
+              'last_status': 0,
+              'display_name': displayName,
+              'address': '',
+              'last_seen': lastSeen,
+              'has_app': 0,
+              'is_wifi': 0,
+              'is_bluetooth': 0,
             });
+            existingPeerIds.add(entry.key);
+          }
 
-            final directRows = <Map<String, Object?>>[];
-            final meshRows = <Map<String, Object?>>[];
-            for (final row in rows) {
-              final peerId = (row['peer_id'] as String?) ?? '';
-              if (peerId.isEmpty) continue;
-              final isDirectSession = appState.isDirectSessionWithPeer(peerId);
-              if (isDirectSession) {
-                directRows.add(row);
-              } else {
-                meshRows.add(row);
-              }
+          rows.sort((a, b) {
+            final aPeerId = (a['peer_id'] as String?) ?? '';
+            final bPeerId = (b['peer_id'] as String?) ?? '';
+            final unreadA = unreadCounts[aPeerId] ?? 0;
+            final unreadB = unreadCounts[bPeerId] ?? 0;
+            if (unreadA != unreadB) {
+              return unreadB.compareTo(unreadA);
             }
+            final tsA = (a['last_timestamp'] as int?) ?? 0;
+            final tsB = (b['last_timestamp'] as int?) ?? 0;
+            return tsB.compareTo(tsA);
+          });
 
-            return TabBarView(
-              children: [
-                _buildRowsTab(
-                  rows: meshRows,
-                  emptyTitle: 'No mesh chats',
-                  emptySubtitle: 'Offline or routed conversations appear here',
-                  unreadCounts: unreadCounts,
-                  connectedPeerIds: connectedPeerIds,
-                  appState: appState,
-                ),
-                _buildRowsTab(
-                  rows: directRows,
-                  emptyTitle: 'No direct chats',
-                  emptySubtitle:
-                      'Shown only when both peers are in Direct profile and directly connected',
-                  unreadCounts: unreadCounts,
-                  connectedPeerIds: connectedPeerIds,
-                  appState: appState,
-                ),
-              ],
-            );
-          },
-        ),
+          final filteredRows = rows.where((row) {
+            final peerId = (row['peer_id'] as String?) ?? '';
+            return peerId.isNotEmpty;
+          }).toList();
+
+          return _buildRowsTab(
+            rows: filteredRows,
+            emptyTitle: 'No chats yet',
+            emptySubtitle:
+                'Conversations route over mesh automatically when peers are reachable',
+            unreadCounts: unreadCounts,
+            connectedPeerIds: connectedPeerIds,
+            appState: appState,
+          );
+        },
       ),
     );
   }

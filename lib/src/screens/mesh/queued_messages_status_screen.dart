@@ -73,6 +73,8 @@ class _QueuedMessagesStatusScreenState
         return AppTheme.danger;
       case 1:
         return AppTheme.warning;
+      case 2:
+        return AppTheme.textSecondary;
       default:
         return AppTheme.textSecondary;
     }
@@ -103,7 +105,8 @@ class _QueuedMessagesStatusScreenState
 
   Future<void> _promoteMessageToMesh(String messageId) async {
     final appState = Provider.of<AppState>(context, listen: false);
-    final moved = await appState.meshRouter.promoteQueuedMessageToMesh(messageId);
+    final moved =
+        await appState.meshRouter.promoteQueuedMessageToMesh(messageId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -271,7 +274,8 @@ class _QueuedMessagesStatusScreenState
                       if (origin == QueueOrigin.local)
                         IconButton(
                           tooltip: 'Move to mesh queue',
-                          onPressed: () => _promoteMessageToMesh(message.messageId),
+                          onPressed: () =>
+                              _promoteMessageToMesh(message.messageId),
                           icon: const Icon(
                             Icons.alt_route_rounded,
                             color: AppTheme.warning,
@@ -355,4 +359,3 @@ class _QueuedMessagesStatusScreenState
     );
   }
 }
-

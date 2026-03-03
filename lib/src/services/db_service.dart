@@ -21,7 +21,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 17,
+      version: 18,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -76,6 +76,9 @@ class DBService {
         }
         if (oldVersion < 17) {
           await _migrateTo17(db);
+        }
+        if (oldVersion < 18) {
+          await _migrateTo18(db);
         }
       },
     );
@@ -163,7 +166,7 @@ class DBService {
     await db.execute(
         'CREATE INDEX idx_queue_next_hop ON message_queue(next_hop_peer_id)');
     await db.execute(
-        'CREATE INDEX idx_queue_priority ON message_queue(priority DESC, queued_timestamp ASC)');
+        'CREATE INDEX idx_queue_priority ON message_queue(priority ASC, queued_timestamp ASC)');
     await db.execute(
         'CREATE INDEX idx_routes_next_hop ON routes(next_hop_peer_id)');
     await db.execute(
@@ -185,26 +188,6 @@ class DBService {
         endpoint_id TEXT PRIMARY KEY,
         last_connected_timestamp INTEGER NOT NULL,
         reconnect_attempts INTEGER DEFAULT 0
-      )
-    ''');
-
-    // File transfer persistent state - version 11
-    await db.execute('''
-      CREATE TABLE file_transfers (
-        file_id TEXT PRIMARY KEY,
-        peer_id TEXT NOT NULL,
-        file_name TEXT NOT NULL,
-        file_size INTEGER NOT NULL,
-        mime_type TEXT NOT NULL,
-        sha256_hash BLOB NOT NULL,
-        total_chunks INTEGER NOT NULL,
-        received_chunks INTEGER DEFAULT 0,
-        direction INTEGER NOT NULL,
-        state INTEGER NOT NULL,
-        file_path TEXT,
-        ack_timeout_ms INTEGER,
-        last_activity INTEGER NOT NULL,
-        start_timestamp INTEGER NOT NULL
       )
     ''');
 
@@ -264,25 +247,7 @@ class DBService {
   }
 
   Future<void> _migrateTo11(Database db) async {
-    // Add file_transfers table for state persistence
-    await db.execute('''
-      CREATE TABLE file_transfers (
-        file_id TEXT PRIMARY KEY,
-        peer_id TEXT NOT NULL,
-        file_name TEXT NOT NULL,
-        file_size INTEGER NOT NULL,
-        mime_type TEXT NOT NULL,
-        sha256_hash BLOB NOT NULL,
-        total_chunks INTEGER NOT NULL,
-        received_chunks INTEGER DEFAULT 0,
-        direction INTEGER NOT NULL,
-        state INTEGER NOT NULL,
-        file_path TEXT,
-        ack_timeout_ms INTEGER,
-        last_activity INTEGER NOT NULL,
-        start_timestamp INTEGER NOT NULL
-      )
-    ''');
+    // Reserved migration slot (legacy file transfer table removed).
   }
 
   Future<void> _migrateTo12(Database db) async {
@@ -347,6 +312,10 @@ class DBService {
     } catch (_) {}
   }
 
+  Future<void> _migrateTo18(Database db) async {
+    await _ensureQueuePriorityIndex(db);
+  }
+
   Future<void> _ensureCriticalSchema(Database db) async {
     final dedupHasOriginalTs =
         await _hasColumn(db, 'deduplication_cache', 'original_timestamp');
@@ -386,8 +355,11 @@ class DBService {
           'ALTER TABLE message_queue ADD COLUMN origin_type INTEGER NOT NULL DEFAULT 0');
     }
 
+    await _ensureQueuePriorityIndex(db);
+
     // Remove obsolete delivery-ACK table from older installations.
     await db.execute('DROP TABLE IF EXISTS pending_acks');
+    await db.execute('DROP TABLE IF EXISTS file_transfers');
   }
 
   Future<bool> _hasColumn(Database db, String table, String column) async {
@@ -398,6 +370,12 @@ class DBService {
       }
     }
     return false;
+  }
+
+  Future<void> _ensureQueuePriorityIndex(Database db) async {
+    await db.execute('DROP INDEX IF EXISTS idx_queue_priority');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_queue_priority ON message_queue(priority ASC, queued_timestamp ASC)');
   }
 
   Future<void> _migrateTo10(Database db) async {
@@ -451,7 +429,7 @@ class DBService {
     await db.execute(
         'CREATE INDEX idx_queue_next_hop ON message_queue(next_hop_peer_id)');
     await db.execute(
-        'CREATE INDEX idx_queue_priority ON message_queue(priority DESC, queued_timestamp ASC)');
+        'CREATE INDEX idx_queue_priority ON message_queue(priority ASC, queued_timestamp ASC)');
     await db.execute(
         'CREATE INDEX idx_routes_next_hop ON routes(next_hop_peer_id)');
     await db.execute(

@@ -4,7 +4,6 @@ import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import '../app_state.dart';
-import '../models/runtime_profile.dart';
 import '../theme.dart';
 import 'menu/menu_screen.dart';
 import 'mesh/routes_status_screen.dart';
@@ -126,8 +125,6 @@ class HomeScreen extends StatelessWidget {
                   publicKey: pub,
                 ),
                 const SizedBox(height: 20),
-                _RuntimeProfileSection(),
-                const SizedBox(height: 20),
 
                 // ─── Mesh Network Status ───
                 _MeshStatusSection(),
@@ -136,85 +133,6 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-class _RuntimeProfileSection extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Consumer<AppState>(
-      builder: (context, appState, _) {
-        final isBatterySaver = appState.isEmergencyBatteryProfile;
-        final selectedProfile = isBatterySaver
-            ? RuntimeProfile.normalMesh
-            : appState.runtimeProfile;
-
-        return Container(
-          decoration: AppTheme.glassCard(),
-          padding: const EdgeInsets.all(14),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(7),
-                    decoration: BoxDecoration(
-                      color: AppTheme.accent.withValues(alpha: 0.12),
-                      borderRadius: BorderRadius.circular(9),
-                    ),
-                    child: const Icon(
-                      Icons.tune_rounded,
-                      color: AppTheme.accent,
-                      size: 18,
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      'Network Profile',
-                      style: GoogleFonts.inter(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w700,
-                        color: AppTheme.textPrimary,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                children: const [
-                  RuntimeProfile.normalDirect,
-                  RuntimeProfile.normalMesh,
-                ].map((profile) {
-                  final selected = selectedProfile == profile;
-                  return ChoiceChip(
-                    label: Text(profile.shortLabel),
-                    selected: selected,
-                    onSelected: isBatterySaver
-                        ? null
-                        : (_) => appState.setNormalRuntimeProfile(profile),
-                  );
-                }).toList(),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                isBatterySaver
-                    ? 'Battery Saver active. Network profile selection is disabled and routing stays on Mesh (passive). Disable Battery Saver to switch Direct/Mesh.'
-                    : appState.runtimeProfile.description,
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  color: AppTheme.textSecondary,
-                ),
-              ),
-            ],
-          ),
-        );
-      },
     );
   }
 }

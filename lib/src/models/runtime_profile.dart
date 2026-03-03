@@ -19,9 +19,9 @@ extension RuntimeProfileX on RuntimeProfile {
   String get shortLabel {
     switch (this) {
       case RuntimeProfile.normalDirect:
-        return 'Direct';
+        return 'Standard';
       case RuntimeProfile.normalMesh:
-        return 'Mesh';
+        return 'Legacy Mesh';
       case RuntimeProfile.emergencyBattery:
         return 'Battery';
     }
@@ -30,9 +30,9 @@ extension RuntimeProfileX on RuntimeProfile {
   String get description {
     switch (this) {
       case RuntimeProfile.normalDirect:
-        return 'Direct chats prioritized. Mesh stays passive.';
+        return 'Standard routing profile.';
       case RuntimeProfile.normalMesh:
-        return 'Mesh-first operation. Direct/file features are disabled.';
+        return 'Legacy mesh-first profile.';
       case RuntimeProfile.emergencyBattery:
         return 'Battery saver profile with slower discovery and mesh-first traffic.';
     }
@@ -42,7 +42,8 @@ extension RuntimeProfileX on RuntimeProfile {
 RuntimeProfile runtimeProfileFromStorage(String? value) {
   switch (value) {
     case 'normal_mesh':
-      return RuntimeProfile.normalMesh;
+      // Legacy stored value, normalized to standard mode.
+      return RuntimeProfile.normalDirect;
     case 'emergency_battery':
       return RuntimeProfile.emergencyBattery;
     case 'normal_direct':

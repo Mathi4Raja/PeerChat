@@ -8,12 +8,9 @@ import '../services/mesh_router_service.dart';
 import '../models/mesh_message.dart';
 import '../models/chat_payload.dart';
 import '../models/chat_message.dart';
-import '../models/file_transfer.dart';
 import '../models/peer.dart';
-import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
-import 'file_transfer_screen.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 
@@ -29,14 +26,11 @@ class ChatScreen extends StatefulWidget {
 class _ChatScreenState extends State<ChatScreen> {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
-  final Set<String> _shownTransferSuccess = {};
   String? _selectedPeerId;
   List<ChatMessage> _messages = [];
   bool _isLoading = true;
   StreamSubscription<ChatMessage>? _incomingMessageSubscription;
   StreamSubscription<String>? _statusChangeSubscription;
-  StreamSubscription<FileTransferSession>? _transferUpdateSubscription;
-  List<FileTransferSession> _peerTransfers = [];
   ChatMessage? _replyingTo;
 
   @override
@@ -79,66 +73,23 @@ class _ChatScreenState extends State<ChatScreen> {
       }
     });
 
-    // Listen for local status updates (queue/routing/direct transitions).
+    // Listen for local status updates (queue/routing transitions).
     _statusChangeSubscription =
         appState.meshRouter.onMessageStatusChanged.listen((messageId) {
       if (_selectedPeerId == null || !mounted) return;
       _applyStatusUpdate(messageId);
     });
 
-    _transferUpdateSubscription =
-        appState.fileTransferService.onTransferUpdate.listen((session) {
-      if (!mounted) return;
-      if (_selectedPeerId != null && session.peerId == _selectedPeerId) {
-        setState(() {
-          _refreshPeerTransfers(appState);
-        });
-      }
-      _maybeShowTransferSuccess(session);
-    });
-
-    _refreshPeerTransfers(appState);
-  }
-
-  void _maybeShowTransferSuccess(FileTransferSession session) {
-    if (session.state != FileTransferState.completed) return;
-    if (session.direction != TransferDirection.receiving) return;
-
-    final key = '${session.fileId}:recv';
-    if (_shownTransferSuccess.contains(key)) return;
-    _shownTransferSuccess.add(key);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          'File received and saved: ${session.metadata.fileName}',
-        ),
-      ),
-    );
+    // File transfer feature removed.
   }
 
   @override
   void dispose() {
     _incomingMessageSubscription?.cancel();
     _statusChangeSubscription?.cancel();
-    _transferUpdateSubscription?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _refreshPeerTransfers(AppState appState) {
-    if (_selectedPeerId == null) {
-      _peerTransfers = [];
-      return;
-    }
-    _peerTransfers = appState.fileTransferService
-        .transfersForPeer(_selectedPeerId!)
-        .where((t) =>
-            t.state != FileTransferState.completed &&
-            t.state != FileTransferState.cancelled)
-        .toList();
   }
 
   Peer? _findPeerById(AppState appState, String peerId) {
@@ -330,7 +281,6 @@ class _ChatScreenState extends State<ChatScreen> {
     });
 
     // Send via mesh router
-    final isDirectSession = appState.isDirectSessionWithPeer(_selectedPeerId!);
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: _selectedPeerId!,
       content: wireContent,
@@ -341,10 +291,6 @@ class _ChatScreenState extends State<ChatScreen> {
     // Update message status
     MessageStatus newStatus;
     switch (result) {
-      case SendResult.direct:
-        newStatus =
-            isDirectSession ? MessageStatus.sent : MessageStatus.routing;
-        break;
       case SendResult.routed:
         newStatus = MessageStatus.routing;
         break;
@@ -407,21 +353,8 @@ class _ChatScreenState extends State<ChatScreen> {
     final isConnected = _selectedPeerId != null &&
         appState.meshRouter.getConnectedPeerIds().contains(_selectedPeerId);
     final selectedPeerId = _selectedPeerId;
-    final isDirectSession = selectedPeerId != null
-        ? appState.isDirectSessionWithPeer(selectedPeerId)
-        : false;
-    final peerSupportsFileTransfer = selectedPeerId != null
-        ? appState.peerSupportsFileTransfer(
-            selectedPeerId,
-            defaultValue: false,
-          )
-        : false;
-    final remoteProfile = selectedPeerId != null
-        ? appState.peerRuntimeProfile(selectedPeerId)
-        : null;
-    final canSendFiles =
-        selectedPeerId != null && appState.canSendFileToPeer(selectedPeerId);
-    _refreshPeerTransfers(appState);
+    final hasMeshLink =
+        selectedPeerId != null && appState.isPeerTransportLinked(selectedPeerId);
 
     return Scaffold(
       appBar: AppBar(
@@ -491,20 +424,18 @@ class _ChatScreenState extends State<ChatScreen> {
                         ),
                         const SizedBox(width: 8),
                         Icon(
-                          isDirectSession
-                              ? Icons.link_rounded
-                              : Icons.hub_rounded,
+                          hasMeshLink ? Icons.hub_rounded : Icons.hub_outlined,
                           size: 10,
-                          color: isDirectSession
+                          color: hasMeshLink
                               ? AppTheme.online
                               : AppTheme.textSecondary,
                         ),
                         const SizedBox(width: 3),
                         Text(
-                          isDirectSession ? 'Direct' : 'Mesh',
+                          hasMeshLink ? 'Mesh link active' : 'Mesh',
                           style: GoogleFonts.inter(
                             fontSize: 11,
-                            color: isDirectSession
+                            color: hasMeshLink
                                 ? AppTheme.online
                                 : AppTheme.textSecondary,
                             fontWeight: FontWeight.w600,
@@ -538,61 +469,9 @@ class _ChatScreenState extends State<ChatScreen> {
                       )
                     : _buildMessagesList(appState),
           ),
-          if (_selectedPeerId != null && !appState.allowsFileTransfers)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: AppTheme.warning.withValues(alpha: 0.25),
-                ),
-              ),
-              child: Text(
-                'File transfer is disabled in this profile.',
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  color: AppTheme.warning,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          if (_selectedPeerId != null &&
-              appState.allowsFileTransfers &&
-              isConnected &&
-              !peerSupportsFileTransfer)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.warning.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: AppTheme.warning.withValues(alpha: 0.25),
-                ),
-              ),
-              child: Text(
-                remoteProfile == RuntimeProfile.normalMesh
-                    ? 'Peer is in Mesh profile. File transfer is unavailable.'
-                    : remoteProfile == RuntimeProfile.emergencyBattery
-                        ? 'Peer is in Battery Saver profile. File transfer is unavailable.'
-                        : 'Peer has file transfer disabled.',
-                style: GoogleFonts.inter(
-                  fontSize: 12,
-                  color: AppTheme.warning,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          if (_selectedPeerId != null && _peerTransfers.isNotEmpty)
-            _buildTransferStrip(appState),
-
           // Message input
           if (_selectedPeerId != null)
-            _buildMessageInput(isConnected, canSendFiles, appState),
+            _buildMessageInput(appState),
         ],
       ),
     );
@@ -877,7 +756,7 @@ class _ChatScreenState extends State<ChatScreen> {
       case MessageStatus.routing:
         return Icons.alt_route_rounded;
       case MessageStatus.sent:
-        return Icons.check_rounded;
+        return Icons.alt_route_rounded;
       case MessageStatus.delivered:
       case MessageStatus.seen:
         return Icons.done_all_rounded;
@@ -1015,11 +894,7 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  Widget _buildMessageInput(
-    bool isConnected,
-    bool canSendFiles,
-    AppState appState,
-  ) {
+  Widget _buildMessageInput(AppState appState) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
@@ -1090,21 +965,6 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             Row(
               children: [
-                if (isConnected && canSendFiles)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    decoration: BoxDecoration(
-                      color: AppTheme.bgSurface,
-                      shape: BoxShape.circle,
-                      border: Border.all(
-                          color: Colors.white.withValues(alpha: 0.06)),
-                    ),
-                    child: IconButton(
-                      icon: const Icon(Icons.attach_file_rounded,
-                          color: AppTheme.primary),
-                      onPressed: _openFileTransfer,
-                    ),
-                  ),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
@@ -1161,101 +1021,6 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildTransferStrip(AppState appState) {
-    return Container(
-      constraints: const BoxConstraints(maxHeight: 180),
-      margin: const EdgeInsets.fromLTRB(10, 0, 10, 8),
-      child: ListView.builder(
-        shrinkWrap: true,
-        itemCount: _peerTransfers.length,
-        itemBuilder: (context, index) {
-          final transfer = _peerTransfers[index];
-          final isSender = transfer.direction == TransferDirection.sending;
-          final statusText =
-              (!isSender && transfer.state == FileTransferState.paused)
-                  ? 'Sender paused sending'
-                  : transfer.state.name;
-          return Card(
-            color: AppTheme.bgSurface,
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            child: Padding(
-              padding: const EdgeInsets.all(10),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          transfer.metadata.fileName,
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AppTheme.textPrimary,
-                          ),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        const SizedBox(height: 6),
-                        LinearProgressIndicator(value: transfer.progress),
-                        const SizedBox(height: 4),
-                        Text(
-                          '$statusText • ${(transfer.progress * 100).toStringAsFixed(0)}%',
-                          style: GoogleFonts.inter(
-                              fontSize: 11, color: AppTheme.textSecondary),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  if (isSender &&
-                      transfer.state == FileTransferState.transferring)
-                    IconButton(
-                      tooltip: 'Pause',
-                      onPressed: () => appState.fileTransferService
-                          .pauseTransfer(transfer.fileId),
-                      icon: const Icon(Icons.pause_circle_outline),
-                    ),
-                  if (isSender &&
-                      (transfer.state == FileTransferState.paused ||
-                          transfer.state == FileTransferState.failed))
-                    IconButton(
-                      tooltip: 'Resume',
-                      onPressed: () => appState.fileTransferService
-                          .resumeTransfer(transfer.fileId),
-                      icon: const Icon(Icons.play_circle_outline),
-                    ),
-                  IconButton(
-                    tooltip: 'Cancel',
-                    onPressed: () => appState.fileTransferService
-                        .cancelTransfer(transfer.fileId),
-                    icon: const Icon(Icons.close_rounded),
-                  ),
-                ],
-              ),
-            ),
-          );
-        },
-      ),
-    );
-  }
-
-  void _openFileTransfer() {
-    if (_selectedPeerId == null) return;
-    final appState = Provider.of<AppState>(context, listen: false);
-    if (!appState.canSendFileToPeer(_selectedPeerId!)) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('File transfer unavailable for this peer')),
-      );
-      return;
-    }
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => FileTransferScreen(peerId: _selectedPeerId!),
       ),
     );
   }
@@ -1352,7 +1117,6 @@ class _ChatScreenState extends State<ChatScreen> {
                         setState(() {
                           _selectedPeerId = peer.id;
                           _replyingTo = null;
-                          _refreshPeerTransfers(appState);
                         });
                         Navigator.pop(context);
                         _loadMessages();

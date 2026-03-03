@@ -9,7 +9,6 @@ import 'dart:typed_data';
 import 'dart:async';
 
 import 'models/peer.dart';
-import 'models/file_transfer.dart';
 import 'models/runtime_profile.dart';
 import 'config/timer_config.dart';
 import 'config/network_config.dart';
@@ -22,7 +21,6 @@ import 'services/signature_verifier.dart';
 import 'services/message_queue.dart';
 import 'services/transport_service.dart';
 import 'services/connection_manager.dart';
-import 'services/file_transfer_service.dart';
 import 'services/route_manager.dart';
 import 'services/message_manager.dart';
 import 'services/emergency_broadcast_service.dart';
@@ -35,13 +33,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final DBService _db = DBService();
   final DiscoveryService _discovery = DiscoveryService();
   late final MeshRouterService meshRouter;
-  late final FileTransferService fileTransferService;
   late final EmergencyBroadcastService emergencyBroadcastService;
   bool _hasEmergencyBroadcastService = false;
   Timer? _peerRefreshTimer;
   Timer? _batteryPollTimer;
-  StreamSubscription<FileTransferSession>? _transferPolicySubscription;
-  StreamSubscription<FileTransferSession>? _incomingTransferPolicySubscription;
   StreamSubscription<WiFiDiscoveryFailure>? _wifiDiscoveryFailureSubscription;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   final BatteryStatusService _batteryStatusService = BatteryStatusService();
@@ -68,30 +63,14 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   int get batteryLevel => _batteryLevel;
   RuntimeProfile get runtimeProfile => _runtimeProfile;
   RuntimeProfile get preferredNormalRuntimeProfile => _lastNormalRuntimeProfile;
-  bool get allowsFileTransfers =>
-      _runtimeProfile == RuntimeProfile.normalDirect;
-  bool get forceMeshRouting => _runtimeProfile != RuntimeProfile.normalDirect;
+  bool get forceMeshRouting => true;
   bool get isEmergencyBatteryProfile =>
       _runtimeProfile == RuntimeProfile.emergencyBattery;
   RuntimeProfile? peerRuntimeProfile(String peerId) =>
       meshRouter.getPeerRuntimeProfile(peerId);
-  bool peerSupportsFileTransfer(
-    String peerId, {
-    bool defaultValue = false,
-  }) =>
-      meshRouter.peerSupportsFileTransfer(peerId, defaultValue: defaultValue);
-  bool isDirectSessionWithPeer(String peerId) {
-    final remote = peerRuntimeProfile(peerId);
-    return _runtimeProfile == RuntimeProfile.normalDirect &&
-        remote == RuntimeProfile.normalDirect &&
-        meshRouter.getConnectedPeerIds().contains(peerId);
+  bool isPeerTransportLinked(String peerId) {
+    return meshRouter.getConnectedPeerIds().contains(peerId);
   }
-
-  bool isMeshSessionWithPeer(String peerId) => !isDirectSessionWithPeer(peerId);
-
-  bool canSendFileToPeer(String peerId) =>
-      isDirectSessionWithPeer(peerId) &&
-      peerSupportsFileTransfer(peerId, defaultValue: false);
   WiFiDiscoveryFailure? get pendingDiscoveryFailure => _pendingDiscoveryFailure;
   int get pendingDiscoveryFailureVersion => _pendingDiscoveryFailureVersion;
 
@@ -186,7 +165,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _runtimeProfile = await _loadRuntimeProfile();
       _lastNormalRuntimeProfile = await _loadLastNormalRuntimeProfile();
       if (_runtimeProfile != RuntimeProfile.emergencyBattery) {
-        _lastNormalRuntimeProfile = _runtimeProfile;
+        _lastNormalRuntimeProfile = RuntimeProfile.normalDirect;
         await _persistLastNormalRuntimeProfile(_lastNormalRuntimeProfile);
       }
 
@@ -197,8 +176,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final messageQueue = MessageQueue(_db);
       final transportService = MultiTransportService();
       final connectionManager = ConnectionManager(_db, cryptoService);
-      fileTransferService =
-          FileTransferService(_db, transportService, connectionManager);
       emergencyBroadcastService = EmergencyBroadcastService(
         cryptoService: cryptoService,
         connectionManager: connectionManager,
@@ -220,6 +197,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
               ? await transportService.sendMessage(transportId, data)
               : false;
         },
+        () => connectionManager.getConnectedCryptoPeerIds(),
       );
 
       // MessageManager needs a transport callback for relay/ACKs
@@ -251,7 +229,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         messageManager: messageManager,
         transportService: transportService,
         connectionManager: connectionManager,
-        fileTransferService: fileTransferService,
         emergencyBroadcastService: emergencyBroadcastService,
       );
 
@@ -261,18 +238,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
           meshRouter.onWiFiDiscoveryFailure.listen(
         _handleWiFiDiscoveryFailure,
       );
-      await fileTransferService
-          .init(); // Initialize file transfer recovery last
-      _transferPolicySubscription =
-          fileTransferService.onTransferUpdate.listen((_) {
-        _applyDiscoveryPolicy();
-      });
-      _incomingTransferPolicySubscription =
-          fileTransferService.onIncomingRequest.listen((session) async {
-        if (!allowsFileTransfers) {
-          await fileTransferService.rejectTransfer(session.fileId);
-        }
-      });
       await _requestBatteryOptimizationExemption();
       await _startBatteryMonitoring();
 
@@ -413,12 +378,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     final activeConnectedCount =
         connectedPeerCount ?? meshRouter.getConnectedPeerIds().length;
-    final hasActiveTransfer = fileTransferService.activeTransfers.any(
-      (t) =>
-          t.state == FileTransferState.transferring ||
-          t.state == FileTransferState.pending ||
-          t.state == FileTransferState.verifying,
-    );
+    const hasActiveTransfer = false;
 
     _discovery.updateAdaptiveDiscoveryPolicy(
       connectedPeerCount: activeConnectedCount,
@@ -453,7 +413,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       final raw =
           await _secureStorage.read(key: _lastNormalRuntimeProfileStorageKey);
       final parsed = runtimeProfileFromStorage(raw);
-      if (parsed == RuntimeProfile.emergencyBattery) {
+      if (parsed == RuntimeProfile.emergencyBattery ||
+          parsed == RuntimeProfile.normalMesh) {
         return RuntimeProfile.normalDirect;
       }
       return parsed;
@@ -497,7 +458,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setNormalRuntimeProfile(RuntimeProfile profile) async {
     if (profile == RuntimeProfile.emergencyBattery) return;
-    await setRuntimeProfile(profile);
+    await setRuntimeProfile(RuntimeProfile.normalDirect);
   }
 
   Future<void> enableBatterySaver() async {
@@ -605,8 +566,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     WidgetsBinding.instance.removeObserver(this);
     _peerRefreshTimer?.cancel();
     _batteryPollTimer?.cancel();
-    _transferPolicySubscription?.cancel();
-    _incomingTransferPolicySubscription?.cancel();
     _wifiDiscoveryFailureSubscription?.cancel();
     if (_hasEmergencyBroadcastService) {
       emergencyBroadcastService.dispose();

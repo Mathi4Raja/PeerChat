@@ -4,7 +4,6 @@ import 'package:flutter_blue_classic/flutter_blue_classic.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../config/timer_config.dart';
 import '../config/protocol_config.dart';
-import '../config/limits_config.dart';
 import 'transport_service.dart';
 
 class BluetoothTransport implements TransportService {
@@ -227,27 +226,19 @@ class BluetoothTransport implements TransportService {
 
   @override
   Future<bool> sendMessage(String peerId, Uint8List data) async {
-    final isFileTransferFrame =
-        data.isNotEmpty && data[0] == FileTransferLimits.protocolMarker;
-    if (!isFileTransferFrame) {
-      debugPrint('BluetoothTransport.sendMessage to $peerId');
-    }
+    debugPrint('BluetoothTransport.sendMessage to $peerId');
 
     // Fail fast for non-Bluetooth transport IDs so MultiTransport can
     // immediately fall back to WiFi instead of waiting on Bluetooth logic.
     if (!_bluetoothMacPattern.hasMatch(peerId)) {
-      if (!isFileTransferFrame) {
-        debugPrint('  Not a Bluetooth MAC address, skipping Bluetooth send');
-      }
+      debugPrint('  Not a Bluetooth MAC address, skipping Bluetooth send');
       return false;
     }
 
     final connection = _connections[peerId];
     if (connection == null || !connection.isConnected) {
-      if (!isFileTransferFrame) {
-        debugPrint('  No active connection to $peerId');
-        debugPrint('  Available connections: ${_connections.keys.toList()}');
-      }
+      debugPrint('  No active connection to $peerId');
+      debugPrint('  Available connections: ${_connections.keys.toList()}');
 
       // Fallback behavior: attempt reconnect on Bluetooth path.
       final bondedDevices = await _bluetooth.bondedDevices;
@@ -269,14 +260,10 @@ class BluetoothTransport implements TransportService {
           // Check again after reconnection attempt
           final newConnection = _connections[peerId];
           if (newConnection != null && newConnection.isConnected) {
-            if (!isFileTransferFrame) {
-              debugPrint('  Reconnected! Sending message...');
-            }
+            debugPrint('  Reconnected! Sending message...');
             try {
               newConnection.output.add(data);
-              if (!isFileTransferFrame) {
-                debugPrint('  Data sent successfully');
-              }
+              debugPrint('  Data sent successfully');
               return true;
             } catch (e) {
               debugPrint('  Error sending after reconnect: $e');
@@ -290,13 +277,9 @@ class BluetoothTransport implements TransportService {
     }
 
     try {
-      if (!isFileTransferFrame) {
-        debugPrint('  Sending ${data.length} bytes...');
-      }
+      debugPrint('  Sending ${data.length} bytes...');
       connection.output.add(data);
-      if (!isFileTransferFrame) {
-        debugPrint('  Data sent successfully');
-      }
+      debugPrint('  Data sent successfully');
       return true;
     } catch (e) {
       debugPrint('  Error sending: $e');
@@ -311,6 +294,12 @@ class BluetoothTransport implements TransportService {
       final connection = _connections[peerId];
       return connection != null && connection.isConnected;
     }).toList();
+  }
+
+  @override
+  void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {
+    // Bluetooth transport writes directly to the socket output stream and
+    // does not maintain an internal outbound queue to flush.
   }
 
   @override

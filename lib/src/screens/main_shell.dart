@@ -1,20 +1,18 @@
-import 'package:flutter/material.dart';
 import 'dart:async';
+
+import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
+
 import '../app_state.dart';
-import '../models/file_transfer.dart';
 import '../config/limits_config.dart';
-import '../config/identity_ui_config.dart';
 import '../config/timer_config.dart';
 import '../theme.dart';
-import '../utils/file_size_formatter.dart';
-import '../utils/name_generator.dart';
-import 'home_screen.dart';
 import 'chats_list_screen.dart';
-import 'peers_screen.dart';
-import 'emergency_broadcast_screen.dart';
 import 'debug/routing_debug_screen.dart';
+import 'emergency_broadcast_screen.dart';
+import 'home_screen.dart';
+import 'peers_screen.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -27,16 +25,8 @@ class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
   int _lastDiscoveryFailureVersion = 0;
   bool _isLocationDialogOpen = false;
-  bool _isIncomingTransferDialogOpen = false;
-  bool _incomingTransferListenerAttached = false;
   int _emergencyUnreadCount = 0;
-  final List<FileTransferSession> _pendingIncomingTransfers = [];
-  StreamSubscription<FileTransferSession>? _incomingTransferSubscription;
-  StreamSubscription<FileTransferSession>? _transferUpdateSubscription;
   StreamSubscription<Map<String, Object?>>? _broadcastBadgeSubscription;
-  final Set<String> _shownSenderTransferToasts = {};
-  final Map<String, FileTransferState> _lastTransferStateByFileId = {};
-  String? _activeIncomingDialogFileId;
 
   final List<Widget> _screens = const [
     HomeScreen(),
@@ -49,118 +39,13 @@ class _MainShellState extends State<MainShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (_incomingTransferListenerAttached) return;
-    _incomingTransferListenerAttached = true;
-
-    final appState = Provider.of<AppState>(context, listen: false);
-    _incomingTransferSubscription =
-        appState.fileTransferService.onIncomingRequest.listen((session) {
-      _pendingIncomingTransfers.add(session);
-      _scheduleIncomingTransferDialogIfNeeded(appState);
-    });
-    _transferUpdateSubscription =
-        appState.fileTransferService.onTransferUpdate.listen((session) {
+    _broadcastBadgeSubscription ??=
+        Provider.of<AppState>(context, listen: false)
+            .emergencyBroadcastService
+            .onBroadcastMessage
+            .listen((event) {
       if (!mounted) return;
-      final previousState = _lastTransferStateByFileId[session.fileId];
-      _lastTransferStateByFileId[session.fileId] = session.state;
-
-      if (session.direction == TransferDirection.receiving &&
-          session.state == FileTransferState.cancelled) {
-        _pendingIncomingTransfers
-            .removeWhere((s) => s.fileId == session.fileId);
-        if (_isIncomingTransferDialogOpen &&
-            _activeIncomingDialogFileId == session.fileId) {
-          _activeIncomingDialogFileId = null;
-          Navigator.of(context, rootNavigator: true).maybePop();
-        }
-        _lastTransferStateByFileId.remove(session.fileId);
-        return;
-      }
-
-      if (session.direction == TransferDirection.receiving &&
-          session.state == FileTransferState.paused &&
-          previousState != FileTransferState.paused) {
-        final senderName = _peerDisplayName(appState, session.peerId);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$senderName paused sending ${session.metadata.fileName}',
-            ),
-          ),
-        );
-      }
-
-      if (session.direction == TransferDirection.receiving &&
-          session.state == FileTransferState.transferring &&
-          previousState == FileTransferState.paused) {
-        final senderName = _peerDisplayName(appState, session.peerId);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              '$senderName resumed sending ${session.metadata.fileName}',
-            ),
-          ),
-        );
-      }
-
-      if (session.state == FileTransferState.completed ||
-          session.state == FileTransferState.cancelled ||
-          session.state == FileTransferState.failed) {
-        _lastTransferStateByFileId.remove(session.fileId);
-      }
-
-      if (session.direction != TransferDirection.sending) return;
-
-      if (session.state == FileTransferState.cancelled &&
-          session.cancelledByPeer) {
-        final key = '${session.fileId}:sender_cancelled_by_peer';
-        if (!_shownSenderTransferToasts.contains(key)) {
-          _shownSenderTransferToasts.add(key);
-          final peerName = _peerDisplayName(appState, session.peerId);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '$peerName cancelled ${session.metadata.fileName}',
-              ),
-            ),
-          );
-        }
-      }
-
-      if (session.state == FileTransferState.completed) {
-        final key = '${session.fileId}:sender_completed';
-        if (!_shownSenderTransferToasts.contains(key)) {
-          _shownSenderTransferToasts.add(key);
-          final peerName = _peerDisplayName(appState, session.peerId);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                'File sent to $peerName: ${session.metadata.fileName}',
-              ),
-            ),
-          );
-        }
-      }
-
-      if (session.state == FileTransferState.failed && session.rejectedByPeer) {
-        final key = '${session.fileId}:sender_rejected';
-        if (!_shownSenderTransferToasts.contains(key)) {
-          _shownSenderTransferToasts.add(key);
-          final peerName = _peerDisplayName(appState, session.peerId);
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '$peerName rejected ${session.metadata.fileName}',
-              ),
-            ),
-          );
-        }
-      }
-      _lastTransferStateByFileId.remove(session.fileId);
-    });
-    _broadcastBadgeSubscription =
-        appState.emergencyBroadcastService.onBroadcastMessage.listen((event) {
-      if (!mounted) return;
+      final appState = Provider.of<AppState>(context, listen: false);
       final senderId = (event['sender_id'] as String?) ?? '';
       final localPeerId = appState.publicKey ?? '';
       if (senderId.isEmpty) return;
@@ -174,8 +59,6 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
-    _incomingTransferSubscription?.cancel();
-    _transferUpdateSubscription?.cancel();
     _broadcastBadgeSubscription?.cancel();
     super.dispose();
   }
@@ -240,103 +123,10 @@ class _MainShellState extends State<MainShell> {
     _isLocationDialogOpen = false;
   }
 
-  void _scheduleIncomingTransferDialogIfNeeded(AppState appState) {
-    if (_isIncomingTransferDialogOpen ||
-        _isLocationDialogOpen ||
-        _pendingIncomingTransfers.isEmpty) {
-      return;
-    }
-
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted ||
-          _isIncomingTransferDialogOpen ||
-          _isLocationDialogOpen ||
-          _pendingIncomingTransfers.isEmpty) {
-        return;
-      }
-      final session = _pendingIncomingTransfers.removeAt(0);
-      await _showIncomingTransferDialog(appState, session);
-      if (mounted) {
-        _scheduleIncomingTransferDialogIfNeeded(appState);
-      }
-    });
-  }
-
-  String _peerDisplayName(AppState appState, String peerId) {
-    for (final peer in appState.peers) {
-      if (peer.id != peerId) continue;
-      final displayName = peer.displayName.trim();
-      if (displayName.isNotEmpty &&
-          displayName != IdentityUiConfig.defaultDisplayName) {
-        return displayName;
-      }
-      break;
-    }
-    return NameGenerator.generateShortName(peerId);
-  }
-
-  Future<void> _showIncomingTransferDialog(
-    AppState appState,
-    FileTransferSession session,
-  ) async {
-    _isIncomingTransferDialogOpen = true;
-    _activeIncomingDialogFileId = session.fileId;
-    final senderName = _peerDisplayName(appState, session.peerId);
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) {
-        return AlertDialog(
-          title: const Text('Incoming File'),
-          content: Text(
-            '$senderName is sending:\n'
-            '${session.metadata.fileName}\n'
-            '${formatFileSizeBy1024(session.metadata.fileSize)}',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(dialogContext, 'reject'),
-              child: const Text('Reject'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, 'accept'),
-              child: const Text('Accept'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (_activeIncomingDialogFileId != session.fileId) {
-      _isIncomingTransferDialogOpen = false;
-      return;
-    }
-
-    if (result == 'accept') {
-      await appState.fileTransferService.acceptTransfer(session.fileId);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Accepted file from $senderName')),
-        );
-      }
-    } else if (result == 'reject') {
-      await appState.fileTransferService.rejectTransfer(session.fileId);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Rejected file from $senderName')),
-        );
-      }
-    }
-
-    _activeIncomingDialogFileId = null;
-    _isIncomingTransferDialogOpen = false;
-  }
-
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
     _scheduleDiscoveryFailureDialogIfNeeded(appState);
-    _scheduleIncomingTransferDialogIfNeeded(appState);
     final int totalUnread =
         appState.unreadCounts.values.fold(0, (sum, count) => sum + count);
 
@@ -451,7 +241,7 @@ class _NavItem extends StatelessWidget {
         ? null
         : (badge! > UiLimits.badgeDisplayCap
             ? '${UiLimits.badgeDisplayCap}+'
-            : '${badge!}');
+            : '$badge');
 
     return InkWell(
       borderRadius: BorderRadius.circular(14),
@@ -524,4 +314,3 @@ class _NavItem extends StatelessWidget {
     );
   }
 }
-

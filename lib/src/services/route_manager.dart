@@ -18,6 +18,7 @@ class RouteManager {
   final CryptoService _cryptoService;
   final Future<bool> Function(String peerId, Uint8List data)
       sendTransportMessage;
+  final List<String> Function() connectedPeerIdsProvider;
 
   final Map<String, Completer<bool>> _pendingDiscoveries = {};
   final Map<String, int> _discoveryAttempts = {};
@@ -33,6 +34,7 @@ class RouteManager {
     this._signatureVerifier,
     this._cryptoService,
     this.sendTransportMessage,
+    this.connectedPeerIdsProvider,
   );
 
   // Find next hop for a destination
@@ -142,9 +144,13 @@ class RouteManager {
       ),
     );
 
-    // Broadcast to all connected peers
-    final peers = await _db.allPeers();
-    // Better to rely on TransportService for knowing who is connected, but iterating known peers is a start
+    // Broadcast only to currently connected peers to avoid O(N all-peers) churn.
+    final peers = connectedPeerIdsProvider().toSet().toList();
+    if (peers.isEmpty) {
+      completer.complete(false);
+      _pendingDiscoveries.remove(destinationPeerId);
+      return false;
+    }
 
     // Convert request to MeshMessage for transport
     // Note: We need to wrap RouteRequest in a MeshMessage structure or send as raw bytes depending on protocol
@@ -193,11 +199,8 @@ class RouteManager {
 
     final messageBytes = signedWrapper.toBytes();
 
-    for (final peer in peers) {
-      // Send to all known peers (flooding)
-      // Ideally we only send to currently CONNECTED peers
-      // The sendTransportMessage callback should handle connection check or fail gracefully
-      await sendTransportMessage(peer.id, messageBytes);
+    for (final peerId in peers) {
+      await sendTransportMessage(peerId, messageBytes);
     }
 
     // Set timeout for discovery
@@ -224,7 +227,7 @@ class RouteManager {
 
   // Update routing table when peer connectivity changes
   Future<void> onPeerConnected(Peer peer) async {
-    // Add direct route to newly connected peer
+    // Add single-hop route to newly connected peer.
     final route = Route(
       destinationPeerId: peer.id,
       nextHopPeerId: peer.id,

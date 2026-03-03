@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'package:flutter/foundation.dart';
 import 'package:nearby_connections/nearby_connections.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -53,11 +54,38 @@ class WiFiTransport implements TransportService {
   int _lastDiscoveryRefreshTimestamp = 0;
   int _lastEndpointFoundTimestamp = 0;
   int _lastDiscoveryFailureNoticeAt = 0;
+  bool _turboTransferMode = false;
+  final Queue<_OutboundFrame> _controlSendQueue = Queue<_OutboundFrame>();
+  final Queue<_OutboundFrame> _bulkSendQueue = Queue<_OutboundFrame>();
+  int _queuedOutboundBytes = 0;
+  bool _outboundPumpActive = false;
 
   WiFiTransport({this.onPeerDiscovered});
 
   @override
   Stream<TransportMessage> get onMessageReceived => _messageController.stream;
+
+  Future<void> setTurboTransferMode(bool enabled) async {
+    if (_turboTransferMode == enabled) return;
+    _turboTransferMode = enabled;
+
+    if (enabled) {
+      debugPrint('WiFiTransport: turbo transfer mode enabled');
+      if (_isDiscovering) {
+        try {
+          await _nearby.stopDiscovery();
+          _isDiscovering = false;
+          debugPrint('WiFiTransport: discovery paused for active transfer');
+        } catch (e) {
+          debugPrint('WiFiTransport: failed pausing discovery: $e');
+        }
+      }
+      return;
+    }
+
+    debugPrint('WiFiTransport: turbo transfer mode disabled');
+    await _startDiscovery();
+  }
 
   @override
   Future<void> init() async {
@@ -90,6 +118,9 @@ class WiFiTransport implements TransportService {
   void _startReconnectionCheck() {
     // Periodically check reconnect state and refresh discovery if needed.
     Timer.periodic(WiFiTimerConfig.reconnectCheckInterval, (timer) async {
+      if (_turboTransferMode) {
+        return;
+      }
       debugPrint('=== RECONNECTION CHECK ===');
       debugPrint('Known peers: ${_knownPeers.length}');
       debugPrint('Connected peers: ${_connectedPeers.length}');
@@ -205,6 +236,7 @@ class WiFiTransport implements TransportService {
     debugPrint('Disconnecting stale connection: $endpointId');
     _connectedPeers.remove(endpointId);
     _lastActivity.remove(endpointId);
+    _dropQueuedFramesForEndpoint(endpointId);
 
     // Notify connection lost
     if (onConnectionLost != null) {
@@ -223,8 +255,20 @@ class WiFiTransport implements TransportService {
     _lastActivity[endpointId] = DateTime.now().millisecondsSinceEpoch;
   }
 
+  bool get _isOutboundQueueUnderPressure {
+    return _queuedOutboundBytes >=
+        (TransportLimits.maxOutboundBytes *
+                TransportLimits.keepAliveBackpressureThreshold)
+            .round();
+  }
+
   void _sendKeepalives() {
     if (_connectedPeers.isEmpty) return;
+    if (_isOutboundQueueUnderPressure) {
+      debugPrint(
+          'WiFiTransport: skipping keepalive tick due to outbound queue pressure');
+      return;
+    }
 
     final now = DateTime.now();
     debugPrint(
@@ -232,15 +276,15 @@ class WiFiTransport implements TransportService {
     debugPrint('Sending to ${_connectedPeers.length} peers');
 
     for (final endpointId in _connectedPeers.keys) {
-      try {
-        _nearby.sendBytesPayload(endpointId, keepAlivePacket);
-        // Update activity on successful send to prevent self-timeout
-        _updateActivity(endpointId);
-        debugPrint('  ✓ Sent keepalive to $endpointId');
-      } catch (e) {
-        debugPrint('  ✗ Error sending keepalive to $endpointId: $e');
-        // Don't update activity if send failed
-      }
+      unawaited(_enqueuePayload(
+        endpointId: endpointId,
+        data: keepAlivePacket,
+        isControl: true,
+      ).then((sent) {
+        if (!sent) {
+          debugPrint('  ✗ Error sending keepalive to $endpointId');
+        }
+      }));
     }
     debugPrint('=== END KEEPALIVES ===');
   }
@@ -255,6 +299,10 @@ class WiFiTransport implements TransportService {
   }
 
   Future<void> restartWiFiDirect() async {
+    if (_turboTransferMode && _connectedPeers.isNotEmpty) {
+      debugPrint('WiFiTransport: restart skipped (turbo transfer active)');
+      return;
+    }
     debugPrint('Restarting WiFi Direct advertising and discovery...');
     try {
       // Reset in-flight attempt state to avoid request deadlocks after process restart.
@@ -372,6 +420,7 @@ class WiFiTransport implements TransportService {
   }
 
   Future<void> _startDiscovery() async {
+    if (_turboTransferMode) return;
     if (_isDiscovering) return;
 
     try {
@@ -442,6 +491,9 @@ class WiFiTransport implements TransportService {
 
   void _onEndpointFound(
       String endpointId, String endpointName, String serviceId) async {
+    if (_turboTransferMode) {
+      return;
+    }
     debugPrint('WiFi Direct endpoint found: $endpointId ($endpointName)');
     _cleanupStalePendingAttempts();
     _lastEndpointFoundTimestamp = DateTime.now().millisecondsSinceEpoch;
@@ -461,6 +513,20 @@ class WiFiTransport implements TransportService {
     }
     if (_pendingConnectionAttempts.contains(endpointId)) {
       debugPrint('Connection attempt already in progress for $endpointId');
+      return;
+    }
+    if (_connectedPeers.length >= TransportLimits.maxConnectedWiFiPeers) {
+      debugPrint(
+          'WiFiTransport: connection cap reached (${TransportLimits.maxConnectedWiFiPeers}), skipping $endpointId');
+      return;
+    }
+    if (_pendingConnectionAttempts.length >=
+        TransportLimits.maxPendingWiFiConnections) {
+      _scheduleQuickRetry(
+        endpointId,
+        endpointName: endpointName,
+        reason: 'pending_connection_budget_exhausted',
+      );
       return;
     }
 
@@ -542,6 +608,13 @@ class WiFiTransport implements TransportService {
     // Skip if already connected or currently trying.
     if (_connectedPeers.containsKey(endpointId) ||
         _pendingConnectionAttempts.contains(endpointId)) {
+      return;
+    }
+    if (_connectedPeers.length >= TransportLimits.maxConnectedWiFiPeers) {
+      return;
+    }
+    if (_pendingConnectionAttempts.length >=
+        TransportLimits.maxPendingWiFiConnections) {
       return;
     }
 
@@ -650,6 +723,7 @@ class WiFiTransport implements TransportService {
       _cancelWaitForInitiator(endpointId);
       _clearQuickRetryState(endpointId);
       _endpointNamesById.remove(endpointId);
+      _dropQueuedFramesForEndpoint(endpointId);
     }
     // NOTE: Don't remove from _connectedPeers here!
     // onEndpointLost means the endpoint stopped advertising, not that the connection dropped.
@@ -719,6 +793,7 @@ class WiFiTransport implements TransportService {
     debugPrint('WiFi Direct disconnected: $endpointId');
     _connectedPeers.remove(endpointId);
     _lastActivity.remove(endpointId);
+    _dropQueuedFramesForEndpoint(endpointId);
     _pendingConnectionAttempts.remove(endpointId);
     _pendingAttemptStartedAt.remove(endpointId);
     _cancelWaitForInitiator(endpointId);
@@ -742,7 +817,9 @@ class WiFiTransport implements TransportService {
     if (nowMs - _lastDiscoveryRefreshTimestamp >
         WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
       _lastDiscoveryRefreshTimestamp = nowMs;
-      await restartWiFiDirect();
+      if (!_turboTransferMode) {
+        await restartWiFiDirect();
+      }
     }
   }
 
@@ -794,11 +871,7 @@ class WiFiTransport implements TransportService {
 
   @override
   Future<bool> sendMessage(String peerId, Uint8List data) async {
-    final isFileTransferFrame =
-        data.isNotEmpty && data[0] == FileTransferLimits.protocolMarker;
-    if (!isFileTransferFrame) {
-      debugPrint('WiFiTransport.sendMessage to $peerId');
-    }
+    debugPrint('WiFiTransport.sendMessage to $peerId');
 
     // Find endpoint ID for peer
     String? endpointId;
@@ -810,25 +883,169 @@ class WiFiTransport implements TransportService {
     }
 
     if (endpointId == null) {
-      if (!isFileTransferFrame) {
-        debugPrint('  No endpoint found for $peerId');
-        debugPrint('  Connected peers: $_connectedPeers');
-      }
+      debugPrint('  No endpoint found for $peerId');
+      debugPrint('  Connected peers: $_connectedPeers');
       return false;
     }
 
-    try {
-      if (!isFileTransferFrame) {
-        debugPrint('  Sending ${data.length} bytes to endpoint $endpointId...');
+    final sent = await _enqueuePayload(
+      endpointId: endpointId,
+      data: data,
+      isControl: true,
+    );
+    if (!sent) {
+      debugPrint('  Error sending (queue/transport)');
+    }
+    return sent;
+  }
+
+  Future<bool> _enqueuePayload({
+    required String endpointId,
+    required Uint8List data,
+    required bool isControl,
+  }) {
+    if (!_connectedPeers.containsKey(endpointId)) {
+      return Future.value(false);
+    }
+
+    final projectedFrameCount =
+        _controlSendQueue.length + _bulkSendQueue.length + 1;
+    final projectedBytes = _queuedOutboundBytes + data.length;
+    if (projectedFrameCount > TransportLimits.maxOutboundFrames ||
+        projectedBytes > TransportLimits.maxOutboundBytes) {
+      debugPrint(
+          'WiFiTransport: outbound queue full, dropping ${isControl ? 'control' : 'bulk'} frame ($projectedFrameCount frames, $projectedBytes bytes)');
+      return Future.value(false);
+    }
+
+    final completer = Completer<bool>();
+    final frame = _OutboundFrame(
+      endpointId: endpointId,
+      data: data,
+      completer: completer,
+    );
+    if (isControl) {
+      _controlSendQueue.addLast(frame);
+    } else {
+      _bulkSendQueue.addLast(frame);
+    }
+    _queuedOutboundBytes = projectedBytes;
+    _drainOutboundQueue();
+    return completer.future;
+  }
+
+  @override
+  void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {
+    String? endpointId;
+    for (final entry in _connectedPeers.entries) {
+      if (entry.key == peerId || entry.value == peerId) {
+        endpointId = entry.key;
+        break;
       }
-      await _nearby.sendBytesPayload(endpointId, data);
-      if (!isFileTransferFrame) {
-        debugPrint('  Data sent successfully');
+    }
+    if (endpointId == null) {
+      return;
+    }
+    _dropQueuedFramesForEndpoint(endpointId, bulkOnly: bulkOnly);
+  }
+
+  void _drainOutboundQueue() {
+    if (_outboundPumpActive) return;
+    _outboundPumpActive = true;
+
+    unawaited(() async {
+      while (_controlSendQueue.isNotEmpty || _bulkSendQueue.isNotEmpty) {
+        final frame = _takeNextFrame();
+        if (frame == null) break;
+
+        // Endpoint can disappear while queued.
+        if (!_connectedPeers.containsKey(frame.endpointId)) {
+          frame.completer.complete(false);
+          _queuedOutboundBytes =
+              ((_queuedOutboundBytes - frame.data.length).clamp(0, 1 << 30))
+                  .toInt();
+          continue;
+        }
+
+        try {
+          await _nearby.sendBytesPayload(frame.endpointId, frame.data);
+          _updateActivity(frame.endpointId);
+          frame.completer.complete(true);
+        } catch (e) {
+          frame.completer.complete(false);
+          debugPrint('WiFiTransport: send failed to ${frame.endpointId}: $e');
+        } finally {
+          _queuedOutboundBytes =
+              ((_queuedOutboundBytes - frame.data.length).clamp(0, 1 << 30))
+                  .toInt();
+        }
       }
-      return true;
-    } catch (e) {
-      debugPrint('  Error sending: $e');
-      return false;
+
+      _outboundPumpActive = false;
+      // Handle race where new frames were enqueued while we were unwinding.
+      if (_controlSendQueue.isNotEmpty || _bulkSendQueue.isNotEmpty) {
+        _drainOutboundQueue();
+      }
+    }());
+  }
+
+  _OutboundFrame? _takeNextFrame() {
+    if (_controlSendQueue.isEmpty && _bulkSendQueue.isEmpty) {
+      return null;
+    }
+
+    if (_controlSendQueue.isNotEmpty) {
+      return _controlSendQueue.removeFirst();
+    }
+
+    // Control queue empty, continue draining bulk payloads.
+    return _bulkSendQueue.removeFirst();
+  }
+
+  void _dropQueuedFramesForEndpoint(
+    String endpointId, {
+    bool bulkOnly = false,
+  }) {
+    var removedBytes = 0;
+    final removed = <_OutboundFrame>[];
+
+    if (!bulkOnly) {
+      _controlSendQueue.removeWhere((frame) {
+        final shouldDrop = frame.endpointId == endpointId;
+        if (shouldDrop) {
+          removedBytes += frame.data.length;
+          removed.add(frame);
+        }
+        return shouldDrop;
+      });
+    }
+    _bulkSendQueue.removeWhere((frame) {
+      final shouldDrop = frame.endpointId == endpointId;
+      if (shouldDrop) {
+        removedBytes += frame.data.length;
+        removed.add(frame);
+      }
+      return shouldDrop;
+    });
+
+    if (removed.isEmpty) return;
+    _queuedOutboundBytes =
+        ((_queuedOutboundBytes - removedBytes).clamp(0, 1 << 30)).toInt();
+    for (final frame in removed) {
+      frame.completer.complete(false);
+    }
+  }
+
+  void _clearQueuedFrames() {
+    final pending = <_OutboundFrame>[
+      ..._controlSendQueue,
+      ..._bulkSendQueue,
+    ];
+    _controlSendQueue.clear();
+    _bulkSendQueue.clear();
+    _queuedOutboundBytes = 0;
+    for (final frame in pending) {
+      frame.completer.complete(false);
     }
   }
 
@@ -851,6 +1068,7 @@ class WiFiTransport implements TransportService {
     _quickRetryTimers.clear();
     _quickRetryCounts.clear();
     _endpointNamesById.clear();
+    _clearQueuedFrames();
     if (_isAdvertising) {
       await _nearby.stopAdvertising();
       _isAdvertising = false;
@@ -862,6 +1080,18 @@ class WiFiTransport implements TransportService {
     await _nearby.stopAllEndpoints();
     await _messageController.close();
   }
+}
+
+class _OutboundFrame {
+  final String endpointId;
+  final Uint8List data;
+  final Completer<bool> completer;
+
+  _OutboundFrame({
+    required this.endpointId,
+    required this.data,
+    required this.completer,
+  });
 }
 
 enum WiFiDiscoveryFailureCode {

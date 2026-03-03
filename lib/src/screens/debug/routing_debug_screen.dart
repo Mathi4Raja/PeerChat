@@ -650,10 +650,12 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
 
   Color _priorityColor(int priority) {
     switch (priority) {
-      case 2:
+      case 0:
         return AppTheme.danger;
       case 1:
         return AppTheme.warning;
+      case 2:
+        return AppTheme.textSecondary;
       default:
         return AppTheme.textSecondary;
     }
@@ -661,13 +663,14 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
 
   String _priorityLabel(int priority) {
     switch (priority) {
-      case 2:
+      case 0:
         return 'HIGH';
       case 1:
         return 'NORMAL';
+      case 2:
+        return 'LOW';
       default:
         return 'LOW';
     }
   }
 }
-

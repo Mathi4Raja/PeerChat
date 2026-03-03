@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import '../config/limits_config.dart';
 
 // Abstract transport interface
 abstract class TransportService {
@@ -8,6 +7,7 @@ abstract class TransportService {
   Future<void> init();
   Future<bool> sendMessage(String peerId, Uint8List data);
   List<String> getConnectedPeerIds(); // Get list of connected peer IDs
+  void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {}
   Future<void> dispose();
 }
 
@@ -49,30 +49,21 @@ class MultiTransportService extends ChangeNotifier {
   }
 
   Future<bool> sendMessage(String peerId, Uint8List data) async {
-    final isFileTransferFrame =
-        data.isNotEmpty && data[0] == FileTransferLimits.protocolMarker;
-
-    if (!isFileTransferFrame) {
-      debugPrint('=== TRANSPORT SEND ===');
-      debugPrint('Target peer: $peerId');
-      debugPrint('Data size: ${data.length} bytes');
-      debugPrint('Trying ${_transports.length} transports...');
-    }
+    debugPrint('=== TRANSPORT SEND ===');
+    debugPrint('Target peer: $peerId');
+    debugPrint('Data size: ${data.length} bytes');
+    debugPrint('Trying ${_transports.length} transports...');
 
     // Try each transport until one succeeds
     for (int i = 0; i < _transports.length; i++) {
       final transport = _transports[i];
       try {
-        if (!isFileTransferFrame) {
-          debugPrint('  Transport ${i + 1}: ${transport.runtimeType}');
-        }
+        debugPrint('  Transport ${i + 1}: ${transport.runtimeType}');
         final success = await transport.sendMessage(peerId, data);
         if (success) {
-          if (!isFileTransferFrame) {
-            debugPrint('  ✓ SUCCESS via ${transport.runtimeType}');
-          }
+          debugPrint('  ✓ SUCCESS via ${transport.runtimeType}');
           return true;
-        } else if (!isFileTransferFrame) {
+        } else {
           debugPrint('  ✗ FAILED via ${transport.runtimeType}');
         }
       } catch (e) {
@@ -94,6 +85,17 @@ class MultiTransportService extends ChangeNotifier {
       }
     }
     return connectedIds.toList();
+  }
+
+  void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {
+    for (final transport in _transports) {
+      try {
+        transport.clearPendingForPeer(peerId, bulkOnly: bulkOnly);
+      } catch (e) {
+        debugPrint(
+            'Error clearing pending frames for $peerId on ${transport.runtimeType}: $e');
+      }
+    }
   }
 
   @override

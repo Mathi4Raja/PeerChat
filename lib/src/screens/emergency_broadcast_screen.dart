@@ -135,7 +135,7 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     if (!mounted) return;
     setState(() => _sending = false);
 
-    if (result == SendResult.routed || result == SendResult.direct) {
+    if (result == SendResult.routed) {
       _inputController.clear();
       await _loadMessages();
       if (!mounted) return;

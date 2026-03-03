@@ -140,3 +140,8 @@
 - [x] Model, Service (sliding window, cumulative ACKs, SHA-256), DB v11
 - [x] Composition Root injection in AppState
 - [x] Protocol wiring (0xFE) in MeshRouterService
+
+## Phase 20: Fix Priority Enum Inconsistency (Mar 2, 2026)
+- [x] Reordered `MessagePriority` enum from `high(0), normal(1), low(2)` → `low(0), normal(1), high(2)`
+- [x] Aligned enum indices with SQL `ORDER BY priority DESC` and debug screen color/label mappings
+- [x] Verified `routing_debug_screen.dart` and `queued_messages_status_screen.dart` priority displays are correct

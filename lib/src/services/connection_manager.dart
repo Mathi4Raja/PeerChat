@@ -18,8 +18,9 @@ class ConnectionManager extends ChangeNotifier {
   // Map transport ID -> crypto peer ID
   final Map<String, String> _transportToCrypto = {};
 
-  // Map crypto peer ID -> transport ID
+  // Map crypto peer ID -> currently preferred transport ID
   final Map<String, String> _cryptoToTransport = {};
+  final Map<String, Set<String>> _peerTransports = {};
 
   // Track which peers have completed handshake
   final Set<String> _handshakeComplete = {};
@@ -27,7 +28,6 @@ class ConnectionManager extends ChangeNotifier {
 
   // Peer capability cache keyed by crypto peer ID.
   final Map<String, RuntimeProfile> _peerRuntimeProfiles = {};
-  final Map<String, bool> _peerSupportsFileTransfer = {};
 
   // Display name for handshakes
   String _displayName = IdentityUiConfig.defaultDisplayName;
@@ -67,6 +67,7 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Get transport ID from cryptographic peer ID
   String? getTransportId(String cryptoPeerId) {
+    _updatePreferredTransportForPeer(cryptoPeerId);
     return _cryptoToTransport[cryptoPeerId];
   }
 
@@ -110,7 +111,6 @@ class ConnectionManager extends ChangeNotifier {
       encryptionPublicKey: _crypto.encryptionPublicKey,
       displayName: _displayName,
       runtimeProfile: _runtimeProfile.storageValue,
-      supportsFileTransfer: _runtimeProfile == RuntimeProfile.normalDirect,
       timestamp: DateTime.now().millisecondsSinceEpoch,
     );
 
@@ -150,8 +150,6 @@ class ConnectionManager extends ChangeNotifier {
     );
     _peerRuntimeProfiles[handshake.peerId] =
         runtimeProfileFromStorage(handshake.runtimeProfile);
-    _peerSupportsFileTransfer[handshake.peerId] =
-        handshake.supportsFileTransfer;
 
     // Delete old peer entry with transport ID (if exists)
     await _db.deletePeer(transportId);
@@ -188,16 +186,21 @@ class ConnectionManager extends ChangeNotifier {
     required String peerId,
     required String newTransportId,
   }) {
-    final oldTransportId = _cryptoToTransport[peerId];
-    if (oldTransportId != null && oldTransportId != newTransportId) {
-      debugPrint('Transport ID changed: $oldTransportId -> $newTransportId');
-      _transportToCrypto.remove(oldTransportId);
-      _handshakeComplete.remove(oldTransportId);
+    final previousPeerForTransport = _transportToCrypto[newTransportId];
+    if (previousPeerForTransport != null &&
+        previousPeerForTransport != peerId) {
+      final previousSet = _peerTransports[previousPeerForTransport];
+      previousSet?.remove(newTransportId);
+      if (previousSet != null && previousSet.isEmpty) {
+        _peerTransports.remove(previousPeerForTransport);
+      }
+      _updatePreferredTransportForPeer(previousPeerForTransport);
     }
 
     _transportToCrypto[newTransportId] = peerId;
-    _cryptoToTransport[peerId] = newTransportId;
+    _peerTransports.putIfAbsent(peerId, () => <String>{}).add(newTransportId);
     _handshakeComplete.add(newTransportId);
+    _updatePreferredTransportForPeer(peerId);
   }
 
   /// Handle connection lost.
@@ -211,11 +214,14 @@ class ConnectionManager extends ChangeNotifier {
 
     final cryptoId = _transportToCrypto[transportId];
     if (cryptoId != null) {
-      // Only remove crypto→transport if it still points to THIS transport.
-      // If a new transport already replaced it (race), don't touch it.
-      if (_cryptoToTransport[cryptoId] == transportId) {
-        _cryptoToTransport.remove(cryptoId);
+      final transports = _peerTransports[cryptoId];
+      if (transports != null) {
+        transports.remove(transportId);
+        if (transports.isEmpty) {
+          _peerTransports.remove(cryptoId);
+        }
       }
+      _updatePreferredTransportForPeer(cryptoId);
     }
     _transportToCrypto.remove(transportId);
     _handshakeComplete.remove(transportId);
@@ -264,7 +270,7 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Get all connected crypto peer IDs
   List<String> getConnectedCryptoPeerIds() {
-    return _cryptoToTransport.keys.toList();
+    return _peerTransports.keys.toList();
   }
 
   /// Get all connected transport IDs
@@ -276,10 +282,27 @@ class ConnectionManager extends ChangeNotifier {
     return _peerRuntimeProfiles[peerId];
   }
 
-  bool peerSupportsFileTransfer(
-    String peerId, {
-    bool defaultValue = false,
-  }) {
-    return _peerSupportsFileTransfer[peerId] ?? defaultValue;
+  void _updatePreferredTransportForPeer(String peerId) {
+    final transports = _peerTransports[peerId];
+    if (transports == null || transports.isEmpty) {
+      _cryptoToTransport.remove(peerId);
+      return;
+    }
+
+    String? selected = _cryptoToTransport[peerId];
+    if (selected != null && _transportToCrypto[selected] != peerId) {
+      selected = null;
+    }
+
+    selected ??= transports.firstWhere(
+      (transportId) => _transportToCrypto[transportId] == peerId,
+      orElse: () => '',
+    );
+    if (selected.isEmpty) {
+      _cryptoToTransport.remove(peerId);
+      return;
+    }
+
+    _cryptoToTransport[peerId] = selected;
   }
 }

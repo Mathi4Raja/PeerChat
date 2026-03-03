@@ -106,7 +106,7 @@ class _RoutesStatusScreenState extends State<RoutesStatusScreen> {
                     final destination =
                         _peerName(appState, route.destinationPeerId);
                     final nextHop = _peerName(appState, route.nextHopPeerId);
-                    final isDirect =
+                    final isSingleHop =
                         route.destinationPeerId == route.nextHopPeerId;
                     final statusColor =
                         route.isStale ? AppTheme.warning : AppTheme.online;
@@ -127,7 +127,7 @@ class _RoutesStatusScreenState extends State<RoutesStatusScreen> {
                           Row(
                             children: [
                               Icon(
-                                isDirect
+                                isSingleHop
                                     ? Icons.near_me_rounded
                                     : Icons.alt_route_rounded,
                                 color: statusColor,
@@ -157,8 +157,8 @@ class _RoutesStatusScreenState extends State<RoutesStatusScreen> {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            isDirect
-                                ? 'Direct route'
+                            isSingleHop
+                                ? 'Single-hop route'
                                 : 'Via $nextHop • ${route.hopCount} hops',
                             style: GoogleFonts.inter(
                               fontSize: 13,
