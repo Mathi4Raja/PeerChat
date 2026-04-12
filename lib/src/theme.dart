@@ -15,6 +15,7 @@ class AppTheme {
   static const Color textPrimary  = Color(0xFFF5F3FF); // ivory
   static const Color textSecondary= Color(0xFFD4D0E0); // mist
   static const Color online       = Color(0xFF10B981); // Emerald
+  static const Color success      = Color(0xFF10B981); // Emerald (alias for online)
   static const Color danger       = Color(0xFFF43F5E); // Rose
   static const Color warning      = Color(0xFFF59E0B); // Amber
   static const Color sent         = Color(0xFF6366F1); // sage
