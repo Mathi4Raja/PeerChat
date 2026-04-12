@@ -1,10 +1,13 @@
 import 'dart:async';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../app_state.dart';
 import '../services/mesh_router_service.dart';
+import '../services/menu_settings_service.dart';
+import '../services/notification_sound_service.dart';
 import '../models/mesh_message.dart';
 import '../models/chat_payload.dart';
 import '../models/chat_message.dart';
@@ -13,6 +16,9 @@ import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
+import 'first_sign_in_screen.dart';
+import 'web_share_asset_picker.dart';
+import 'direct_transfer_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? preselectedPeerId;
@@ -24,14 +30,21 @@ class ChatScreen extends StatefulWidget {
 }
 
 class _ChatScreenState extends State<ChatScreen> {
+  static const int _messageLineChunk = 20;
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
+  final NotificationSoundService _notificationSoundService =
+      NotificationSoundService();
   String? _selectedPeerId;
   List<ChatMessage> _messages = [];
   bool _isLoading = true;
   StreamSubscription<ChatMessage>? _incomingMessageSubscription;
   StreamSubscription<String>? _statusChangeSubscription;
   ChatMessage? _replyingTo;
+  final Map<String, int> _messageLineLimits = {};
+  final Map<String, GlobalKey> _messageKeys = {};
+  String? _highlightedMessageId;
+  Timer? _highlightResetTimer;
 
   @override
   void initState() {
@@ -87,6 +100,7 @@ class _ChatScreenState extends State<ChatScreen> {
   void dispose() {
     _incomingMessageSubscription?.cancel();
     _statusChangeSubscription?.cancel();
+    _highlightResetTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -139,6 +153,78 @@ class _ChatScreenState extends State<ChatScreen> {
     final compact = content.replaceAll(RegExp(r'\s+'), ' ').trim();
     if (compact.length <= 80) return compact;
     return '${compact.substring(0, 80)}...';
+  }
+
+  int _lineLimitForMessage(String messageId) {
+    return _messageLineLimits[messageId] ?? _messageLineChunk;
+  }
+
+  void _expandMessageLines(String messageId) {
+    setState(() {
+      _messageLineLimits[messageId] =
+          _lineLimitForMessage(messageId) + _messageLineChunk;
+    });
+  }
+
+  void _collapseExpandedMessages() {
+    if (_messageLineLimits.isEmpty) return;
+    setState(() {
+      _messageLineLimits.clear();
+    });
+  }
+
+  GlobalKey _messageKeyFor(String messageId) {
+    return _messageKeys.putIfAbsent(messageId, () => GlobalKey());
+  }
+
+  Future<void> _jumpToRepliedMessage(String? targetMessageId) async {
+    if (!mounted || targetMessageId == null || targetMessageId.isEmpty) return;
+
+    final targetIndex = _messages.indexWhere((m) => m.id == targetMessageId);
+    if (targetIndex == -1) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Original replied message not found')),
+      );
+      return;
+    }
+
+    final targetKey = _messageKeyFor(targetMessageId);
+    if (_scrollController.hasClients && _messages.length > 1) {
+      final maxOffset = _scrollController.position.maxScrollExtent;
+      final fraction = targetIndex / (_messages.length - 1);
+      final roughOffset = (maxOffset * fraction).clamp(0.0, maxOffset);
+      await _scrollController.animateTo(
+        roughOffset,
+        duration: UiTimerConfig.chatAutoScrollAnimation,
+        curve: Curves.easeOut,
+      );
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final targetContext = targetKey.currentContext;
+      if (targetContext != null) {
+        await Scrollable.ensureVisible(
+          targetContext,
+          duration: UiTimerConfig.chatAutoScrollAnimation,
+          curve: Curves.easeOut,
+          alignment: 0.25,
+        );
+      }
+      if (!mounted) return;
+      setState(() {
+        _highlightedMessageId = targetMessageId;
+      });
+      _highlightResetTimer?.cancel();
+      _highlightResetTimer = Timer(const Duration(seconds: 2), () {
+        if (!mounted) return;
+        setState(() {
+          if (_highlightedMessageId == targetMessageId) {
+            _highlightedMessageId = null;
+          }
+        });
+      });
+    });
   }
 
   String _replyAuthorLabelForStored(AppState appState, String? replyPeerId) {
@@ -219,6 +305,10 @@ class _ChatScreenState extends State<ChatScreen> {
     }
 
     final appState = Provider.of<AppState>(context, listen: false);
+    final soundEnabled =
+        Provider.of<MenuSettingsController>(context, listen: false)
+            .notifications
+            .sound;
     final content = _messageController.text.trim();
     final replyTarget = _replyingTo;
     final localPeerId = appState.publicKey ?? 'localpeer';
@@ -293,6 +383,9 @@ class _ChatScreenState extends State<ChatScreen> {
     switch (result) {
       case SendResult.routed:
         newStatus = MessageStatus.routing;
+        if (soundEnabled) {
+          unawaited(_notificationSoundService.playSentTick());
+        }
         break;
       case SendResult.noRoute:
       case SendResult.queued:
@@ -456,8 +549,11 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
         ],
       ),
-      body: Column(
-        children: [
+      body: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onTap: _collapseExpandedMessages,
+        child: Column(
+          children: [
           // Messages list
           Expanded(
             child: _selectedPeerId == null
@@ -472,7 +568,8 @@ class _ChatScreenState extends State<ChatScreen> {
           // Message input
           if (_selectedPeerId != null)
             _buildMessageInput(appState),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -529,13 +626,13 @@ class _ChatScreenState extends State<ChatScreen> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             Icon(
-              Icons.lock_outline_rounded,
+              Icons.forum_outlined,
               size: 48,
               color: AppTheme.primary.withValues(alpha: 0.3),
             ),
             const SizedBox(height: 16),
             Text(
-              'No messages yet',
+              'Start a conversation',
               style: GoogleFonts.inter(
                 fontSize: 16,
                 fontWeight: FontWeight.w600,
@@ -544,10 +641,12 @@ class _ChatScreenState extends State<ChatScreen> {
             ),
             const SizedBox(height: 6),
             Text(
-              'Send the first encrypted message',
+              'Messages are end-to-end encrypted\nand routed over mesh automatically',
+              textAlign: TextAlign.center,
               style: GoogleFonts.inter(
                 fontSize: 13,
                 color: AppTheme.textSecondary,
+                height: 1.4,
               ),
             ),
           ],
@@ -618,10 +717,18 @@ class _ChatScreenState extends State<ChatScreen> {
 
   Widget _buildMessageBubble(ChatMessage message, AppState appState) {
     final isMe = message.isSentByMe;
+    final isHighlighted = _highlightedMessageId == message.id;
+    final messageTextStyle = GoogleFonts.inter(
+      fontSize: 14,
+      color: isMe ? Colors.white : AppTheme.textPrimary,
+      height: 1.4,
+    );
+    final lineLimit = _lineLimitForMessage(message.id);
 
     return Align(
       alignment: isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
+        key: _messageKeyFor(message.id),
         margin: const EdgeInsets.only(bottom: 6),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
         constraints: BoxConstraints(
@@ -630,7 +737,7 @@ class _ChatScreenState extends State<ChatScreen> {
         decoration: BoxDecoration(
           gradient: isMe
               ? const LinearGradient(
-                  colors: [Color(0xFF00897B), Color(0xFF00ACC1)],
+                  colors: [AppTheme.primary, AppTheme.accentPurple],
                   begin: Alignment.topLeft,
                   end: Alignment.bottomRight,
                 )
@@ -644,9 +751,23 @@ class _ChatScreenState extends State<ChatScreen> {
             bottomRight:
                 isMe ? const Radius.circular(4) : const Radius.circular(18),
           ),
-          border: isMe
-              ? null
-              : Border.all(color: Colors.white.withValues(alpha: 0.06)),
+          border: Border.all(
+            color: isHighlighted
+                ? AppTheme.warning.withValues(alpha: 0.85)
+                : (isMe
+                    ? Colors.white.withValues(alpha: 0.12)
+                    : Colors.white.withValues(alpha: 0.06)),
+            width: isHighlighted ? 1.5 : 1.0,
+          ),
+          boxShadow: isHighlighted
+              ? [
+                  BoxShadow(
+                    color: AppTheme.warning.withValues(alpha: 0.30),
+                    blurRadius: 10,
+                    spreadRadius: 0.5,
+                  ),
+                ]
+              : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -658,65 +779,102 @@ class _ChatScreenState extends State<ChatScreen> {
             if (message.replyToMessageId != null ||
                 (message.replyToContent != null &&
                     message.replyToContent!.isNotEmpty)) ...[
-              Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
-                ),
-                decoration: BoxDecoration(
-                  color: isMe
-                      ? Colors.white.withValues(alpha: 0.12)
-                      : AppTheme.bgDeep.withValues(alpha: 0.45),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border(
-                    left: BorderSide(
-                      color: isMe ? Colors.white70 : AppTheme.primary,
-                      width: 3,
+              GestureDetector(
+                onTap: () => _jumpToRepliedMessage(message.replyToMessageId),
+                child: Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.only(bottom: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: isMe
+                        ? Colors.white.withValues(alpha: 0.12)
+                        : AppTheme.bgDeep.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border(
+                      left: BorderSide(
+                        color: isMe ? Colors.white70 : AppTheme.primary,
+                        width: 3,
+                      ),
                     ),
                   ),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      _replyAuthorLabelForStored(
-                          appState, message.replyToPeerId),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: isMe
-                            ? Colors.white.withValues(alpha: 0.95)
-                            : AppTheme.primary,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _replyAuthorLabelForStored(
+                            appState, message.replyToPeerId),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: isMe
+                              ? Colors.white.withValues(alpha: 0.95)
+                              : AppTheme.primary,
+                        ),
                       ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      message.replyToContent ?? '[Message]',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: isMe
-                            ? Colors.white.withValues(alpha: 0.85)
-                            : AppTheme.textSecondary,
-                        height: 1.25,
+                      const SizedBox(height: 2),
+                      Text(
+                        message.replyToContent ?? '[Message]',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          color: isMe
+                              ? Colors.white.withValues(alpha: 0.85)
+                              : AppTheme.textSecondary,
+                          height: 1.25,
+                        ),
                       ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ],
-            Text(
-              message.content,
-              style: GoogleFonts.inter(
-                fontSize: 14,
-                color: isMe ? Colors.white : AppTheme.textPrimary,
-                height: 1.4,
-              ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final painter = TextPainter(
+                  text: TextSpan(
+                    text: message.content,
+                    style: messageTextStyle,
+                  ),
+                  maxLines: lineLimit,
+                  textDirection: TextDirection.ltr,
+                )..layout(maxWidth: constraints.maxWidth);
+
+                final hasMore = painter.didExceedMaxLines;
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      message.content,
+                      maxLines: lineLimit,
+                      overflow: TextOverflow.ellipsis,
+                      style: messageTextStyle,
+                    ),
+                    if (hasMore) ...[
+                      const SizedBox(height: 4),
+                      GestureDetector(
+                        onTap: () => _expandMessageLines(message.id),
+                        child: Text(
+                          'Read more...',
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: isMe
+                                ? Colors.white.withValues(alpha: 0.9)
+                                : AppTheme.primary,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                );
+              },
             ),
             const SizedBox(height: 4),
             Row(
@@ -863,33 +1021,26 @@ class _ChatScreenState extends State<ChatScreen> {
   Widget _buildDateSeparator(int timestamp) {
     final label = _formatDateSeparatorLabel(timestamp);
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: Divider(
-              color: AppTheme.textSecondary.withValues(alpha: 0.25),
-              thickness: 0.8,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      child: Center(
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: AppTheme.bgSurface.withValues(alpha: 0.8),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.06),
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 10),
-            child: Text(
-              label,
-              style: GoogleFonts.inter(
-                fontSize: 11,
-                color: AppTheme.textSecondary,
-                fontWeight: FontWeight.w600,
-              ),
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 11,
+              color: AppTheme.textSecondary,
+              fontWeight: FontWeight.w600,
             ),
           ),
-          Expanded(
-            child: Divider(
-              color: AppTheme.textSecondary.withValues(alpha: 0.25),
-              thickness: 0.8,
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -919,8 +1070,12 @@ class _ChatScreenState extends State<ChatScreen> {
                 decoration: BoxDecoration(
                   color: AppTheme.bgSurface,
                   borderRadius: BorderRadius.circular(10),
-                  border:
-                      Border.all(color: Colors.white.withValues(alpha: 0.06)),
+                  border: const Border(
+                    left: BorderSide(
+                      color: AppTheme.primary,
+                      width: 3,
+                    ),
+                  ),
                 ),
                 child: Row(
                   children: [
@@ -965,6 +1120,20 @@ class _ChatScreenState extends State<ChatScreen> {
               ),
             Row(
               children: [
+                IconButton(
+                  onPressed: _selectedPeerId == null ? null : () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => DirectTransferScreen(peerId: _selectedPeerId!),
+                      ),
+                    );
+                  },
+                  icon: Icon(
+                    Icons.attach_file_rounded,
+                    color: _selectedPeerId == null ? AppTheme.textSecondary : AppTheme.primary,
+                  ),
+                  tooltip: 'Transfers & Add Files',
+                ),
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
@@ -993,7 +1162,8 @@ class _ChatScreenState extends State<ChatScreen> {
                           vertical: 10,
                         ),
                       ),
-                      maxLines: null,
+                      minLines: 1,
+                      maxLines: 5,
                       textCapitalization: TextCapitalization.sentences,
                     ),
                   ),

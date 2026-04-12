@@ -29,7 +29,7 @@ class EmergencyBroadcastService {
   static const int _maxGlobalBroadcastRows = BroadcastLimits.maxGlobalRows;
   static const int _maxBroadcastRowsPerSender =
       BroadcastLimits.maxRowsPerSender;
-  final Map<String, List<int>> _senderBroadcastTimestamps = {};
+  final Map<String, _SenderQuotaBucket> _senderQuotaBuckets = {};
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
 
   Stream<Map<String, Object?>> get onBroadcastMessage =>
@@ -337,14 +337,16 @@ class EmergencyBroadcastService {
   }
 
   bool _allowBroadcastFromSender(String senderId) {
-    final timestamps = _activeTimestampsForSender(senderId);
-    if (timestamps.length >= _maxBroadcastsPerMinute) return false;
-    timestamps.add(DateTime.now().millisecondsSinceEpoch);
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final bucket = _activeBucketForSender(senderId, nowMs);
+    if (bucket.used >= _maxBroadcastsPerMinute) return false;
+    bucket.used++;
     return true;
   }
 
   int remainingQuotaForSender(String senderId) {
-    final used = _activeTimestampsForSender(senderId).length;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    final used = _activeBucketForSender(senderId, nowMs).used;
     final remaining = _maxBroadcastsPerMinute - used;
     return remaining < 0 ? 0 : remaining;
   }
@@ -353,17 +355,33 @@ class EmergencyBroadcastService {
     return remainingQuotaForSender(_cryptoService.localPeerId) > 0;
   }
 
-  List<int> _activeTimestampsForSender(String senderId) {
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final windowStart = now -
+  _SenderQuotaBucket _activeBucketForSender(String senderId, int nowMs) {
+    final bucketWindowMs =
         EmergencyBroadcastPolicyConfig.senderRateLimitWindow.inMilliseconds;
-    final timestamps =
-        _senderBroadcastTimestamps.putIfAbsent(senderId, () => []);
-    timestamps.removeWhere((ts) => ts < windowStart);
-    return timestamps;
+    final currentBucketId = nowMs ~/ bucketWindowMs;
+    final bucket = _senderQuotaBuckets.putIfAbsent(
+      senderId,
+      () => _SenderQuotaBucket(bucketId: currentBucketId, used: 0),
+    );
+    if (bucket.bucketId != currentBucketId) {
+      bucket
+        ..bucketId = currentBucketId
+        ..used = 0;
+    }
+    return bucket;
   }
 
   void dispose() {
     _broadcastStreamController.close();
   }
+}
+
+class _SenderQuotaBucket {
+  int bucketId;
+  int used;
+
+  _SenderQuotaBucket({
+    required this.bucketId,
+    required this.used,
+  });
 }

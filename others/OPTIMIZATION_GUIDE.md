@@ -1,4 +1,4 @@
-# PeerChat Secure - Optimization for Disaster Relief
+# PeerChat - Optimization for Disaster Relief
 
 ## Current App Size (Release Build)
 
@@ -201,3 +201,4 @@ Play Store automatically serves optimal APK per device.
 6. No internet required
 
 The app is already well-optimized for low-end devices and disaster scenarios!
+

@@ -10,6 +10,7 @@ enum MessageType {
   readReceipt,
   connectionUpgradeRequest,
   connectionUpgradeResponse,
+  fileTransfer,
 }
 
 enum MessagePriority {

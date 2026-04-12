@@ -291,24 +291,24 @@ class _PeerTile extends StatelessWidget {
             children: [
               // Avatar
               CircleAvatar(
-                radius: 20,
+                radius: 22,
                 backgroundColor: avatarColor.withValues(alpha: 0.12),
                 child: isVerified
                     ? Text(
                         initials,
                         style: GoogleFonts.inter(
-                          fontSize: 13,
+                          fontSize: 14,
                           fontWeight: FontWeight.w700,
                           color: avatarColor,
                         ),
                       )
                     : Icon(
                         Icons.devices_other_rounded,
-                        size: 18,
+                        size: 20,
                         color: avatarColor,
                       ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 14),
 
               // Name & address
               Expanded(
@@ -321,34 +321,33 @@ class _PeerTile extends StatelessWidget {
                           child: Text(
                             displayName,
                             style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w600,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w700,
                               color: AppTheme.textPrimary,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
-                        if (isWiFi) _badge(Icons.wifi_rounded, Colors.blue),
-                        if (isBT) _badge(Icons.bluetooth_rounded, Colors.indigo),
+                        if (isWiFi) _badge(Icons.wifi_rounded, AppTheme.primary),
+                        if (isBT) _badge(Icons.bluetooth_rounded, AppTheme.accentPurple),
                       ],
                     ),
-                    const SizedBox(height: 3),
+                    const SizedBox(height: 4),
                     Row(
                       children: [
                         Expanded(
                           child: Text(
                             peer.address,
                             style: GoogleFonts.firaCode(
-                              fontSize: 10,
+                              fontSize: 11,
                               color: AppTheme.textSecondary,
                             ),
                             overflow: TextOverflow.ellipsis,
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                           decoration: BoxDecoration(
-                            color: statusColor.withValues(alpha: 0.1),
                             borderRadius: BorderRadius.circular(6),
                           ),
                           child: Text(

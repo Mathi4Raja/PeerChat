@@ -1,4 +1,4 @@
-# PeerChat Secure — Project State Snapshot (Migration Handoff)
+# PeerChat — Project State Snapshot (Migration Handoff)
 
 Last updated: February 25, 2026  
 Primary scope: current code in `lib/src/**` and Android host glue in `android/app/src/main/**`  
@@ -142,7 +142,7 @@ These are the key behavior changes intentionally made in this branch:
   - Direct chat list contains only peers where both sides are in direct profile and directly connected.
   - Others appear in mesh list.
 - Kept emergency broadcast as dedicated channel and UI tab.
-- Added battery saver quick toggle as icon near “PeerChat Secure” title.
+- Added battery saver quick toggle as icon near “PeerChat” title.
   - Removed battery mode from network-profile chip list.
 - Added global runtime location-failure UX:
   - popup + “Open Settings” path when discovery/reconnect fails due to location constraints.
@@ -336,3 +336,4 @@ This checklist maps the user-requested behavior changes to current implementatio
   - Covered by receiver temp cleanup + sender toast in `FileTransferService` and shell toast handlers.
 - Sender should receive completion toast when file send succeeds.
   - Covered by completed transfer toast in `lib/src/screens/main_shell.dart`.
+

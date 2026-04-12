@@ -1,25 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
+import 'package:provider/provider.dart';
+
+import '../../services/menu_settings_service.dart';
 import '../../theme.dart';
 
-class NotificationSettingsScreen extends StatefulWidget {
+class NotificationSettingsScreen extends StatelessWidget {
   const NotificationSettingsScreen({super.key});
 
   @override
-  State<NotificationSettingsScreen> createState() =>
-      _NotificationSettingsScreenState();
-}
-
-class _NotificationSettingsScreenState
-    extends State<NotificationSettingsScreen> {
-  bool _sound = true;
-  bool _vibration = true;
-  bool _messages = true;
-  bool _relayUpdates = true;
-  bool _broadcast = true;
-
-  @override
   Widget build(BuildContext context) {
+    final settings = Provider.of<MenuSettingsController>(context);
+    final notifications = settings.notifications;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
@@ -34,14 +27,14 @@ class _NotificationSettingsScreenState
             title: 'General',
             children: [
               SwitchListTile(
-                value: _sound,
-                onChanged: (value) => setState(() => _sound = value),
-                title: const Text('Sound'),
-              ),
-              SwitchListTile(
-                value: _vibration,
-                onChanged: (value) => setState(() => _vibration = value),
-                title: const Text('Vibration'),
+                value: notifications.sound,
+                onChanged: (value) {
+                  settings.setNotifications(
+                    notifications.copyWith(sound: value),
+                  );
+                },
+                title: const Text('Overall sound'),
+                subtitle: const Text('Master switch for all app sounds'),
               ),
             ],
           ),
@@ -50,32 +43,33 @@ class _NotificationSettingsScreenState
             title: 'Chat Notifications',
             children: [
               SwitchListTile(
-                value: _messages,
-                onChanged: (value) => setState(() => _messages = value),
-                title: const Text('Chat messages'),
+                value: notifications.chatMessages,
+                onChanged: (value) {
+                  settings.setNotifications(
+                    notifications.copyWith(chatMessages: value),
+                  );
+                },
+                title: const Text('Chat notification panel'),
+                subtitle: const Text('Show chat notifications in notification panel'),
               ),
               SwitchListTile(
-                value: _relayUpdates,
-                onChanged: (value) => setState(() => _relayUpdates = value),
-                title: const Text('Relay/queue updates'),
-              ),
-              SwitchListTile(
-                value: _broadcast,
-                onChanged: (value) => setState(() => _broadcast = value),
+                value: notifications.broadcastChannel,
+                onChanged: (value) {
+                  settings.setNotifications(
+                    notifications.copyWith(broadcastChannel: value),
+                  );
+                },
                 title: const Text('Broadcast channel'),
               ),
             ],
           ),
           const SizedBox(height: 12),
-          FilledButton(
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Notification settings UI only for now'),
-                ),
-              );
-            },
-            child: const Text('Save'),
+          Text(
+            'Notification settings are saved automatically.',
+            style: GoogleFonts.inter(
+              fontSize: 12,
+              color: AppTheme.textSecondary,
+            ),
           ),
         ],
       ),
@@ -116,4 +110,3 @@ class _SectionCard extends StatelessWidget {
     );
   }
 }
-

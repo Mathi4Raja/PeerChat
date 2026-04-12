@@ -103,29 +103,80 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    Center(
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(16),
+                        child: Image.asset(
+                          'assets/image.png',
+                          height: 80,
+                          fit: BoxFit.contain,
+                          errorBuilder: (context, error, stackTrace) => Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              gradient: AppTheme.primaryGradient,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: const Icon(Icons.shield,
+                                size: 40, color: AppTheme.bgDeep),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 24),
                     Text(
-                      'Welcome to PeerChat Secure',
+                      'Secure Mesh Messaging',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
-                        fontSize: 22,
+                        fontSize: 24,
                         fontWeight: FontWeight.w800,
                         color: AppTheme.textPrimary,
+                        letterSpacing: -0.5,
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     Text(
-                      'Internet is available. Choose your first sign-in method.',
+                      'Your privacy is our priority. Connect securely using your preferred method.',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.inter(
-                        fontSize: 13,
+                        fontSize: 14,
                         color: AppTheme.textSecondary,
+                        height: 1.4,
                       ),
                     ),
-                    const SizedBox(height: 20),
-                    FilledButton.icon(
-                      onPressed: _submitting ? null : _submitGoogle,
-                      icon: const Icon(Icons.account_circle_rounded),
-                      label: const Text('Google'),
+                    const SizedBox(height: 32),
+                    Container(
+                      decoration: BoxDecoration(
+                        gradient: AppTheme.primaryGradient,
+                        borderRadius: BorderRadius.circular(12),
+                        boxShadow: [
+                          BoxShadow(
+                            color: AppTheme.primary.withValues(alpha: 0.3),
+                            blurRadius: 12,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: ElevatedButton.icon(
+                        onPressed: _submitting ? null : _submitGoogle,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.transparent,
+                          shadowColor: Colors.transparent,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        icon: const Icon(Icons.account_circle_rounded),
+                        label: Text(
+                          'Sign in with Google',
+                          style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 15,
+                          ),
+                        ),
+                      ),
                     ),
                     if (_googleError != null) ...[
                       const SizedBox(height: 8),
@@ -138,7 +189,25 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
                         ),
                       ),
                     ],
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 20),
+                    Row(
+                      children: [
+                        const Expanded(child: Divider()),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16),
+                          child: Text(
+                            'OR',
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.textSecondary.withValues(alpha: 0.5),
+                            ),
+                          ),
+                        ),
+                        const Expanded(child: Divider()),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
                     TextField(
                       controller: _emailController,
                       enabled: !_submitting,
@@ -150,38 +219,82 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
                         });
                       },
                       decoration: InputDecoration(
-                        labelText: 'Email Sign In',
+                        labelText: 'Email Address',
                         hintText: 'name@example.com',
                         errorText: _emailError,
                         prefixIcon: const Icon(Icons.alternate_email_rounded),
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 16,
+                          vertical: 16,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 14),
                     OutlinedButton(
                       onPressed: _submitting ? null : _submitEmail,
-                      child: const Text('Continue with Email'),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: Text(
+                        'Continue with Email',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                      ),
                     ),
-                    const SizedBox(height: 10),
+                    const SizedBox(height: 12),
                     TextButton(
                       onPressed: _submitting ? null : _submitGuest,
-                      child: const Text('Continue as Guest'),
+                      child: Text(
+                        'Continue as Guest',
+                        style: GoogleFonts.inter(
+                          color: AppTheme.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
                     ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'This prompt appears only on first sign in.',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: AppTheme.textSecondary,
+                    const SizedBox(height: 24),
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.primary.withValues(alpha: 0.05),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: AppTheme.primary.withValues(alpha: 0.1),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline_rounded,
+                            size: 18,
+                            color: AppTheme.primary.withValues(alpha: 0.6),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              'All messages are end-to-end encrypted. Sign-in is only used for identity verification.',
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                color: AppTheme.textSecondary,
+                                height: 1.3,
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     if (_submitting) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 20),
                       const Center(
                         child: SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
+                          width: 24,
+                          height: 24,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            valueColor: AlwaysStoppedAnimation<Color>(AppTheme.primary),
+                          ),
                         ),
                       ),
                     ],
@@ -195,3 +308,4 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
     );
   }
 }
+

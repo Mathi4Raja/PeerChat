@@ -208,8 +208,8 @@ export default function HeroSection() {
           animate={stage >= 4 ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 1, ease: [0.16, 1, 0.3, 1] }}
         >
-          Peer-to-peer encrypted messaging. No servers. No infrastructure.
-          Your device becomes the network.
+          Peer-to-peer encrypted messaging and file transfers. No servers. No infrastructure.
+          Connect via BLE, WiFi Direct, or WiFi Hotspot — your device becomes the network.
         </motion.p>
 
         {/* CTA */}

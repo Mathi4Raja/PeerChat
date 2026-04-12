@@ -1,4 +1,4 @@
-# Device Setup Guide for PeerChat Secure Testing
+# Device Setup Guide for PeerChat Testing
 
 ## Physical Android Devices Setup
 
@@ -83,7 +83,7 @@ flutter emulators --launch <emulator_name>
 
 ### Step 4: Emulator Permissions
 Permissions are auto-granted in debug mode, but you can verify:
-1. Settings → Apps → PeerChat Secure → Permissions
+1. Settings → Apps → PeerChat → Permissions
 2. Ensure all permissions are granted
 
 ## Network Configuration
@@ -207,7 +207,7 @@ adb start-server
 4. Try different USB cable/port
 
 ### Permissions Not Granted
-1. Go to Settings → Apps → PeerChat Secure → Permissions
+1. Go to Settings → Apps → PeerChat → Permissions
 2. Manually grant all permissions
 3. Restart the app
 
@@ -302,3 +302,4 @@ flutter run -d all
 Once all devices show each other in the Peers list, you're ready to follow the TESTING_GUIDE.md for detailed test scenarios.
 
 Good luck! 🚀
+

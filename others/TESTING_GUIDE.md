@@ -1,4 +1,4 @@
-# PeerChat Secure - Testing Guide
+# PeerChat - Testing Guide
 
 ## Setup Requirements
 
@@ -343,3 +343,4 @@ flutter logs | grep "Mesh\|Route\|Message"
 8. Add voice message support
 
 Happy Testing! 🚀
+

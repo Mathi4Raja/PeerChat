@@ -6,6 +6,7 @@ import 'src/app_state.dart';
 import 'src/screens/first_sign_in_screen.dart';
 import 'src/screens/main_shell.dart';
 import 'src/services/first_sign_in_service.dart';
+import 'src/services/menu_settings_service.dart';
 import 'src/theme.dart';
 
 void main() async {
@@ -31,6 +32,8 @@ class BootstrapApp extends StatefulWidget {
 
 class _BootstrapAppState extends State<BootstrapApp> {
   final FirstSignInService _firstSignInService = FirstSignInService();
+  final MenuSettingsController _menuSettingsController =
+      MenuSettingsController();
   AppState? _appState;
   Object? _fatalError;
   bool _isLoading = true;
@@ -42,8 +45,15 @@ class _BootstrapAppState extends State<BootstrapApp> {
     _bootstrap();
   }
 
+  @override
+  void dispose() {
+    _appState?.dispose();
+    super.dispose();
+  }
+
   Future<void> _bootstrap() async {
     try {
+      await _menuSettingsController.init();
       final decision = await _firstSignInService.evaluateFirstSignIn();
       if (decision.shouldShowChoice) {
         if (!mounted) return;
@@ -109,6 +119,7 @@ class _BootstrapAppState extends State<BootstrapApp> {
   Widget build(BuildContext context) {
     if (_fatalError != null) {
       return MaterialApp(
+        theme: AppTheme.darkTheme,
         themeMode: ThemeMode.dark,
         darkTheme: AppTheme.darkTheme,
         home: Scaffold(
@@ -123,11 +134,15 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     if (_appState != null) {
-      return ChangeNotifierProvider.value(
-        value: _appState!,
+      return MultiProvider(
+        providers: [
+          ChangeNotifierProvider.value(value: _menuSettingsController),
+          ChangeNotifierProvider.value(value: _appState!),
+        ],
         child: MaterialApp(
-          title: 'PeerChat Secure',
+          title: 'PeerChat',
           debugShowCheckedModeBanner: false,
+          theme: AppTheme.darkTheme,
           themeMode: ThemeMode.dark,
           darkTheme: AppTheme.darkTheme,
           home: const MainShell(),
@@ -136,8 +151,9 @@ class _BootstrapAppState extends State<BootstrapApp> {
     }
 
     return MaterialApp(
-      title: 'PeerChat Secure',
+      title: 'PeerChat',
       debugShowCheckedModeBanner: false,
+      theme: AppTheme.darkTheme,
       themeMode: ThemeMode.dark,
       darkTheme: AppTheme.darkTheme,
       home: _isLoading

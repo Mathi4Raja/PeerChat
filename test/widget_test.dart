@@ -4,9 +4,9 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   testWidgets('renders app title text in a simple widget', (WidgetTester tester) async {
     await tester.pumpWidget(
-      const MaterialApp(home: Scaffold(body: Text('PeerChat Secure'))),
+      const MaterialApp(home: Scaffold(body: Text('PeerChat'))),
     );
 
-    expect(find.text('PeerChat Secure'), findsOneWidget);
+    expect(find.text('PeerChat'), findsOneWidget);
   });
 }

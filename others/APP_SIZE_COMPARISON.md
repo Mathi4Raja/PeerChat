@@ -1,4 +1,4 @@
-# PeerChat Secure - App Size Comparison
+# PeerChat - App Size Comparison
 
 ## Build Comparison
 
@@ -122,3 +122,4 @@ build/app/outputs/flutter-apk/
 4. Confirm faster startup time
 
 The app is now optimized for disaster relief scenarios! 🚀
+

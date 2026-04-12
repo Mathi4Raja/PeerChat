@@ -24,6 +24,7 @@ class DiscoveryService {
   String? _localId;
   String? _localName;
   final Random _scanJitterRandom = Random();
+  bool _bluetoothDiscoverySuspended = false;
 
   // Track discovered peers to avoid duplicates
   final Set<String> _discoveredPeerIds = {};
@@ -156,7 +157,7 @@ class DiscoveryService {
   }
 
   Future<void> _startBluetoothDiscovery(String myId, String name) async {
-    if (_bluetoothScanning) return;
+    if (_bluetoothScanning || _bluetoothDiscoverySuspended) return;
 
     try {
       // Check if Bluetooth is supported
@@ -207,10 +208,34 @@ class DiscoveryService {
   }
 
   void _scheduleBluetoothRestart(String myId, String name) {
+    if (_bluetoothDiscoverySuspended) return;
     _scanRestartTimer?.cancel();
     _scanRestartTimer = Timer(_nextScanIntervalWithJitter(), () {
       _startBluetoothDiscovery(myId, name);
     });
+  }
+
+  Future<void> suspendBluetoothDiscovery() async {
+    _bluetoothDiscoverySuspended = true;
+    _scanStopTimer?.cancel();
+    _scanRestartTimer?.cancel();
+    await _scanSubscription?.cancel();
+    _scanSubscription = null;
+    try {
+      _bluetooth.stopScan();
+    } catch (_) {}
+    _bluetoothScanning = false;
+    debugPrint('DiscoveryService: Bluetooth discovery suspended');
+  }
+
+  Future<void> resumeBluetoothDiscovery() async {
+    if (!_bluetoothDiscoverySuspended) return;
+    _bluetoothDiscoverySuspended = false;
+    final localId = _localId;
+    final localName = _localName;
+    if (localId == null || localName == null) return;
+    await _startBluetoothDiscovery(localId, localName);
+    debugPrint('DiscoveryService: Bluetooth discovery resumed');
   }
 
   /// Update adaptive discovery policy.

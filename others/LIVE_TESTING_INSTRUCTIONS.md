@@ -10,7 +10,7 @@ Both devices now have the app installed:
 
 ### Step 1: Open the App on Both Devices
 
-1. Find "PeerChat Secure" app on both devices
+1. Find "PeerChat" app on both devices
 2. Open it on both devices
 3. Grant ALL permissions when asked:
    - ✅ Bluetooth
@@ -97,3 +97,4 @@ Then I can analyze and fix any bugs immediately!
 ---
 
 **Ready to test! Open the app on both devices and let me know what happens!**
+

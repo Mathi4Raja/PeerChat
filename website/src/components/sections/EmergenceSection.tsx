@@ -21,12 +21,12 @@ export default function EmergenceSection() {
   const features = [
     {
       title: 'Zero Infrastructure',
-      desc: 'Bluetooth and WiFi Direct create connections where none existed. Your phone becomes a relay tower.',
+      desc: 'Bluetooth, WiFi Direct, and WiFi Hotspot create connections where none existed. Your phone becomes a relay tower.',
       accent: 'var(--color-ember)',
     },
     {
-      title: 'Multi-Hop Routing',
-      desc: 'Messages traverse multiple devices to reach their destination. If one path fails, another is found.',
+      title: 'File Transfers',
+      desc: 'Share any file — photos, documents, videos — directly over WiFi Direct or WiFi Hotspot at full LAN speed. No cloud, no size limit.',
       accent: 'var(--color-copper)',
     },
     {

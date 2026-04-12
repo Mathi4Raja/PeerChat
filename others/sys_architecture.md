@@ -1,4 +1,4 @@
-PeerChat Secure - System Architecture (Current)
+PeerChat - System Architecture (Current)
 
 Last updated: February 25, 2026
 Source of truth: current implementation in lib/src/** and Android host glue.
@@ -372,3 +372,4 @@ Core tables:
 - Opportunistic multi-transport sending
 - Signed emergency broadcast channel
 - Recovery-first behavior for reconnects and interrupted transfers
+

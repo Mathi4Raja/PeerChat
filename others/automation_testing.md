@@ -18,7 +18,7 @@ powershell -ExecutionPolicy Bypass -File tools/two_device_smoke.ps1 `
   -DeviceA 1207031462120918 `
   -DeviceB 9T19545LA1222404340 `
   -DurationSec 180 `
-  -AdbPath "C:\Android\platform-tools\adb.exe"
+  -AdbPath ".\platform-tools\adb.exe"
 ```
 
 What it does:
@@ -37,7 +37,7 @@ powershell -ExecutionPolicy Bypass -File tools/two_device_smoke.ps1 `
   -DurationSec 120 `
   -VisibleRelaunch `
   -RelaunchEverySec 30 `
-  -AdbPath "C:\Android\platform-tools\adb.exe"
+  -AdbPath ".\platform-tools\adb.exe"
 ```
 
 Output:
@@ -66,3 +66,4 @@ Search for:
 - `STATUS_OUT_OF_ORDER_API_CALL`
 - `couldNotConnect`
 - `RenderFlex overflowed`
+

@@ -54,7 +54,7 @@ class WiFiTransport implements TransportService {
   int _lastDiscoveryRefreshTimestamp = 0;
   int _lastEndpointFoundTimestamp = 0;
   int _lastDiscoveryFailureNoticeAt = 0;
-  bool _turboTransferMode = false;
+  bool _nearbySuspended = false;
   final Queue<_OutboundFrame> _controlSendQueue = Queue<_OutboundFrame>();
   final Queue<_OutboundFrame> _bulkSendQueue = Queue<_OutboundFrame>();
   int _queuedOutboundBytes = 0;
@@ -65,26 +65,59 @@ class WiFiTransport implements TransportService {
   @override
   Stream<TransportMessage> get onMessageReceived => _messageController.stream;
 
-  Future<void> setTurboTransferMode(bool enabled) async {
-    if (_turboTransferMode == enabled) return;
-    _turboTransferMode = enabled;
+  Future<void> suspendNearbyConnections() async {
+    if (_nearbySuspended) return;
+    _nearbySuspended = true;
+    debugPrint('WiFiTransport: suspending Nearby advertising/discovery');
 
-    if (enabled) {
-      debugPrint('WiFiTransport: turbo transfer mode enabled');
-      if (_isDiscovering) {
-        try {
-          await _nearby.stopDiscovery();
-          _isDiscovering = false;
-          debugPrint('WiFiTransport: discovery paused for active transfer');
-        } catch (e) {
-          debugPrint('WiFiTransport: failed pausing discovery: $e');
-        }
+    _pendingConnectionAttempts.clear();
+    _pendingAttemptStartedAt.clear();
+    _lastConnectionAttempt.clear();
+    for (final timer in _waitForInitiatorTimers.values) {
+      timer.cancel();
+    }
+    _waitForInitiatorTimers.clear();
+    for (final timer in _quickRetryTimers.values) {
+      timer.cancel();
+    }
+    _quickRetryTimers.clear();
+    _quickRetryCounts.clear();
+    _endpointNamesById.clear();
+    _clearQueuedFrames();
+
+    if (_isAdvertising) {
+      try {
+        await _nearby.stopAdvertising();
+      } catch (e) {
+        debugPrint('WiFiTransport: failed stopping advertising: $e');
       }
-      return;
+      _isAdvertising = false;
     }
 
-    debugPrint('WiFiTransport: turbo transfer mode disabled');
-    await _startDiscovery();
+    if (_isDiscovering) {
+      try {
+        await _nearby.stopDiscovery();
+      } catch (e) {
+        debugPrint('WiFiTransport: failed stopping discovery: $e');
+      }
+      _isDiscovering = false;
+    }
+
+    try {
+      await _nearby.stopAllEndpoints();
+    } catch (e) {
+      debugPrint('WiFiTransport: failed disconnecting endpoints: $e');
+    }
+
+    _connectedPeers.clear();
+    _lastActivity.clear();
+  }
+
+  Future<void> resumeNearbyConnections() async {
+    if (!_nearbySuspended) return;
+    _nearbySuspended = false;
+    debugPrint('WiFiTransport: resuming Nearby advertising/discovery');
+    await restartWiFiDirect();
   }
 
   @override
@@ -118,7 +151,7 @@ class WiFiTransport implements TransportService {
   void _startReconnectionCheck() {
     // Periodically check reconnect state and refresh discovery if needed.
     Timer.periodic(WiFiTimerConfig.reconnectCheckInterval, (timer) async {
-      if (_turboTransferMode) {
+      if (_nearbySuspended) {
         return;
       }
       debugPrint('=== RECONNECTION CHECK ===');
@@ -293,14 +326,14 @@ class WiFiTransport implements TransportService {
     _localName = name;
 
     // Restart advertising with new name if already advertising
-    if (_isAdvertising) {
+    if (_isAdvertising && !_nearbySuspended) {
       _restartAdvertising();
     }
   }
 
   Future<void> restartWiFiDirect() async {
-    if (_turboTransferMode && _connectedPeers.isNotEmpty) {
-      debugPrint('WiFiTransport: restart skipped (turbo transfer active)');
+    if (_nearbySuspended) {
+      debugPrint('WiFiTransport: restart skipped (nearby suspended)');
       return;
     }
     debugPrint('Restarting WiFi Direct advertising and discovery...');
@@ -398,7 +431,7 @@ class WiFiTransport implements TransportService {
   }
 
   Future<void> _startAdvertising() async {
-    if (_isAdvertising) return;
+    if (_isAdvertising || _nearbySuspended) return;
 
     try {
       final strategy = Strategy.P2P_CLUSTER;
@@ -420,7 +453,7 @@ class WiFiTransport implements TransportService {
   }
 
   Future<void> _startDiscovery() async {
-    if (_turboTransferMode) return;
+    if (_nearbySuspended) return;
     if (_isDiscovering) return;
 
     try {
@@ -491,7 +524,7 @@ class WiFiTransport implements TransportService {
 
   void _onEndpointFound(
       String endpointId, String endpointName, String serviceId) async {
-    if (_turboTransferMode) {
+    if (_nearbySuspended) {
       return;
     }
     debugPrint('WiFi Direct endpoint found: $endpointId ($endpointName)');
@@ -817,7 +850,7 @@ class WiFiTransport implements TransportService {
     if (nowMs - _lastDiscoveryRefreshTimestamp >
         WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
       _lastDiscoveryRefreshTimestamp = nowMs;
-      if (!_turboTransferMode) {
+      if (!_nearbySuspended) {
         await restartWiFiDirect();
       }
     }

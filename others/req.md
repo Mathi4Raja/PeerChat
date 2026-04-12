@@ -2,7 +2,7 @@
 
 ## Introduction
 
-This document specifies requirements for a message store-and-forward system with mesh routing capabilities for PeerChat Secure, an offline-first disaster communication Flutter application. The system enables messages to travel through multiple devices to reach destinations beyond direct connectivity range, which is critical for disaster scenarios where people are spread out and traditional communication infrastructure is unavailable.
+This document specifies requirements for a message store-and-forward system with mesh routing capabilities for PeerChat, an offline-first disaster communication Flutter application. The system enables messages to travel through multiple devices to reach destinations beyond direct connectivity range, which is critical for disaster scenarios where people are spread out and traditional communication infrastructure is unavailable.
 
 ## Glossary
 
@@ -217,3 +217,4 @@ This document specifies requirements for a message store-and-forward system with
 3. WHEN a malformed message is received, THE Mesh_Router SHALL discard it and log the error
 4. WHEN storage operations fail, THE Mesh_Router SHALL notify the application layer
 5. WHEN cryptographic operations fail, THE Mesh_Router SHALL discard the message and log the error
+

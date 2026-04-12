@@ -19,7 +19,7 @@ $ErrorActionPreference = "Stop"
 $adb = $AdbPath
 
 if (-not (Get-Command $adb -ErrorAction SilentlyContinue)) {
-    throw "ADB not found. Pass -AdbPath with your adb.exe full path, e.g. -AdbPath `"C:\Android\platform-tools\adb.exe`"."
+    throw "ADB not found. Pass -AdbPath with your adb.exe full path, e.g. -AdbPath `".\platform-tools\adb.exe`"."
 }
 
 function Ensure-DeviceConnected {
@@ -234,3 +234,4 @@ Write-QuickSummary -Serial $DeviceA -LogPath $logA
 Write-QuickSummary -Serial $DeviceB -LogPath $logB
 Write-Host ""
 Write-Host "Next step: inspect both logs for reconnect latency and queued/pending ACK transitions."
+

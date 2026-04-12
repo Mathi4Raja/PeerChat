@@ -1,23 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 
-/// PeerChat Secure – Premium dark theme
+/// PeerChat – Premium dark theme inspired by the website
 class AppTheme {
   AppTheme._();
 
-  // ─── Brand Colors ───
-  static const Color bgDeep       = Color(0xFF0A0E21);
-  static const Color bgCard       = Color(0xFF111631);
-  static const Color bgSurface    = Color(0xFF1A1F3D);
-  static const Color primary      = Color(0xFF00BFA6); // teal
-  static const Color accent       = Color(0xFF00E5FF); // cyan
-  static const Color accentPurple = Color(0xFF7C4DFF);
-  static const Color textPrimary  = Color(0xFFECEFF1);
-  static const Color textSecondary= Color(0xFF90A4AE);
-  static const Color online       = Color(0xFF66BB6A);
-  static const Color danger       = Color(0xFFEF5350);
-  static const Color warning      = Color(0xFFFFB74D);
-  static const Color sent         = Color(0xFF26A69A);
+  // ─── Brand Colors (Violet Theme) ───
+  static const Color bgDeep       = Color(0xFF181626); // graphite (dark violet)
+  static const Color bgCard       = Color(0xFF262438); // slate (medium violet background)
+  static const Color bgSurface    = Color(0xFF383554); // lighter violet surface
+  static const Color primary      = Color(0xFF8B5CF6); // ember
+  static const Color accent       = Color(0xFFA78BFA); // copper
+  static const Color accentPurple = Color(0xFFC4B5FD); // gold (light purple option)
+  static const Color textPrimary  = Color(0xFFF5F3FF); // ivory
+  static const Color textSecondary= Color(0xFFD4D0E0); // mist
+  static const Color online       = Color(0xFF10B981); // Emerald
+  static const Color danger       = Color(0xFFF43F5E); // Rose
+  static const Color warning      = Color(0xFFF59E0B); // Amber
+  static const Color sent         = Color(0xFF6366F1); // sage
 
   // ─── Gradients ───
   static const LinearGradient primaryGradient = LinearGradient(
@@ -27,13 +27,13 @@ class AppTheme {
   );
 
   static const LinearGradient cardGradient = LinearGradient(
-    colors: [Color(0xFF141938), Color(0xFF0F1229)],
+    colors: [bgCard, bgDeep],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
   static const LinearGradient appBarGradient = LinearGradient(
-    colors: [Color(0xFF0D1127), Color(0xFF121735)],
+    colors: [bgDeep, bgCard],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
@@ -123,8 +123,8 @@ class AppTheme {
         unselectedLabelColor: textSecondary,
         indicatorColor: primary,
         indicatorSize: TabBarIndicatorSize.label,
-        labelStyle: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 13),
-        unselectedLabelStyle: GoogleFonts.inter(fontWeight: FontWeight.w500, fontSize: 13),
+        labelStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 14),
+        unselectedLabelStyle: GoogleFonts.inter(fontWeight: FontWeight.w500, fontSize: 14),
       ),
 
       // Elevated buttons
@@ -133,9 +133,9 @@ class AppTheme {
           backgroundColor: primary,
           foregroundColor: bgDeep,
           elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          textStyle: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 14),
+          textStyle: GoogleFonts.inter(fontWeight: FontWeight.w700, fontSize: 15),
         ),
       ),
 
@@ -151,8 +151,8 @@ class AppTheme {
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
         fillColor: bgSurface,
-        hintStyle: GoogleFonts.inter(color: textSecondary, fontSize: 14),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        hintStyle: GoogleFonts.inter(color: textSecondary, fontSize: 15),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(14),
           borderSide: BorderSide.none,
@@ -176,7 +176,7 @@ class AppTheme {
       // SnackBar
       snackBarTheme: SnackBarThemeData(
         backgroundColor: bgSurface,
-        contentTextStyle: GoogleFonts.inter(color: textPrimary, fontSize: 14),
+        contentTextStyle: GoogleFonts.inter(color: textPrimary, fontSize: 15),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         behavior: SnackBarBehavior.floating,
       ),
@@ -198,4 +198,3 @@ class AppTheme {
     );
   }
 }
-

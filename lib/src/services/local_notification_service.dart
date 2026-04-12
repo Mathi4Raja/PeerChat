@@ -1,0 +1,197 @@
+import 'dart:async';
+import 'dart:convert';
+
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'
+    as fln;
+
+enum NotificationTapTarget {
+  chat,
+  emergency,
+}
+
+class NotificationTapAction {
+  final NotificationTapTarget target;
+  final String? peerId;
+
+  const NotificationTapAction({
+    required this.target,
+    this.peerId,
+  });
+}
+
+class LocalNotificationService {
+  static final LocalNotificationService _instance =
+      LocalNotificationService._internal();
+  factory LocalNotificationService() => _instance;
+  LocalNotificationService._internal();
+
+  static const String _chatChannelId = 'chat_messages';
+  static const String _chatChannelName = 'Chat messages';
+  static const String _chatChannelDescription =
+      'Incoming direct chat messages';
+  static const String _broadcastChannelId = 'broadcast_mentions';
+  static const String _broadcastChannelName = 'Broadcast mentions';
+  static const String _broadcastChannelDescription =
+      'Emergency broadcasts that mention you';
+
+  final fln.FlutterLocalNotificationsPlugin _plugin =
+      fln.FlutterLocalNotificationsPlugin();
+  final StreamController<NotificationTapAction> _tapController =
+      StreamController<NotificationTapAction>.broadcast();
+
+  bool _initialized = false;
+  NotificationTapAction? _pendingTapAction;
+
+  Stream<NotificationTapAction> get onTapAction => _tapController.stream;
+
+  Future<void> init() async {
+    if (_initialized) return;
+
+    const androidInit = fln.AndroidInitializationSettings('@mipmap/ic_launcher');
+    const initSettings = fln.InitializationSettings(
+      android: androidInit,
+    );
+
+    await _plugin.initialize(
+      initSettings,
+      onDidReceiveNotificationResponse: (response) {
+        _handlePayload(response.payload);
+      },
+    );
+
+    await _plugin
+        .resolvePlatformSpecificImplementation<
+            fln.AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
+
+    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+    if (launchDetails?.didNotificationLaunchApp == true) {
+      _handlePayload(launchDetails?.notificationResponse?.payload);
+    }
+
+    _initialized = true;
+  }
+
+  NotificationTapAction? takePendingTapAction() {
+    final value = _pendingTapAction;
+    _pendingTapAction = null;
+    return value;
+  }
+
+  Future<void> showChatMessage({
+    required String peerId,
+    required String senderLabel,
+    required String content,
+    required bool playSound,
+  }) async {
+    final me = const fln.Person(
+      key: 'local_user',
+      name: 'You',
+    );
+    final sender = fln.Person(
+      key: peerId,
+      name: senderLabel,
+    );
+
+    final details = fln.NotificationDetails(
+      android: fln.AndroidNotificationDetails(
+        _chatChannelId,
+        _chatChannelName,
+        channelDescription: _chatChannelDescription,
+        importance: fln.Importance.high,
+        priority: fln.Priority.high,
+        category: fln.AndroidNotificationCategory.message,
+        playSound: playSound,
+        enableVibration: playSound,
+        styleInformation: fln.MessagingStyleInformation(
+          me,
+          conversationTitle: senderLabel,
+          groupConversation: false,
+          messages: <fln.Message>[
+            fln.Message(content, DateTime.now(), sender),
+          ],
+        ),
+      ),
+    );
+
+    final payload = jsonEncode(<String, String>{
+      'type': 'chat',
+      'peer_id': peerId,
+    });
+
+    await _plugin.show(
+      peerId.hashCode & 0x7fffffff,
+      senderLabel,
+      content,
+      details,
+      payload: payload,
+    );
+  }
+
+  Future<void> showBroadcastMention({
+    required String messageId,
+    required String senderLabel,
+    required String content,
+    required bool playSound,
+  }) async {
+    final fullBody = '$senderLabel: $content';
+    final details = fln.NotificationDetails(
+      android: fln.AndroidNotificationDetails(
+        _broadcastChannelId,
+        _broadcastChannelName,
+        channelDescription: _broadcastChannelDescription,
+        importance: fln.Importance.high,
+        priority: fln.Priority.high,
+        category: fln.AndroidNotificationCategory.message,
+        playSound: playSound,
+        enableVibration: playSound,
+        styleInformation: fln.BigTextStyleInformation(
+          fullBody,
+          contentTitle: 'Broadcast mention',
+          summaryText: 'Emergency channel',
+        ),
+      ),
+    );
+
+    const payload = '{"type":"emergency"}';
+    await _plugin.show(
+      messageId.hashCode & 0x7fffffff,
+      'Broadcast mention',
+      fullBody,
+      details,
+      payload: payload,
+    );
+  }
+
+  Future<void> dispose() async {
+    await _tapController.close();
+  }
+
+  void _handlePayload(String? payload) {
+    if (payload == null || payload.isEmpty) return;
+    try {
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map<String, dynamic>) return;
+      final type = decoded['type'] as String?;
+      NotificationTapAction? action;
+      if (type == 'chat') {
+        final peerId = decoded['peer_id'] as String?;
+        if (peerId == null || peerId.isEmpty) return;
+        action = NotificationTapAction(
+          target: NotificationTapTarget.chat,
+          peerId: peerId,
+        );
+      } else if (type == 'emergency') {
+        action = const NotificationTapAction(
+          target: NotificationTapTarget.emergency,
+        );
+      }
+
+      if (action == null) return;
+      _pendingTapAction = action;
+      _tapController.add(action);
+    } catch (_) {
+      // Ignore malformed payload.
+    }
+  }
+}

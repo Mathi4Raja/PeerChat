@@ -265,7 +265,7 @@ export default function SolutionSection() {
             },
             {
               title: 'Resilient',
-              description: 'Works via BLE and WiFi Direct. Messages propagate when reconnected.',
+              description: 'Works via BLE, WiFi Direct, and WiFi Hotspot. Transfer files or messages — the mesh adapts when reconnected.',
               color: '#6366F1',
             },
             {

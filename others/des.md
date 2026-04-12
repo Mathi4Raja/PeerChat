@@ -2,7 +2,7 @@
 
 ## Overview
 
-This design specifies a message store-and-forward system with mesh routing capabilities for PeerChat Secure. The system enables multi-hop message delivery through intermediate peers, allowing communication beyond direct connectivity range in disaster scenarios where traditional infrastructure is unavailable.
+This design specifies a message store-and-forward system with mesh routing capabilities for PeerChat. The system enables multi-hop message delivery through intermediate peers, allowing communication beyond direct connectivity range in disaster scenarios where traditional infrastructure is unavailable.
 
 The design integrates with the existing Flutter application architecture, leveraging:
 - **libsodium (sodium package)** for cryptographic operations (signing, encryption)
@@ -1075,4 +1075,5 @@ A property is a characteristic or behavior that should hold true across all vali
 *For any* received message that cannot be deserialized or is missing required fields, the message should be discarded without processing.
 
 **Validates: Requirements 16.3**
+
 

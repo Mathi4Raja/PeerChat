@@ -43,7 +43,7 @@ export default function PropagationSection() {
     {
       num: '01',
       title: 'Discover',
-      desc: 'Devices scan for nearby peers using Bluetooth LE and WiFi Direct. No manual setup.',
+      desc: 'Devices scan for nearby peers using Bluetooth LE, WiFi Direct, and WiFi Hotspot. No manual setup.',
       hex: '0xA3F1…signal_scan',
     },
     {

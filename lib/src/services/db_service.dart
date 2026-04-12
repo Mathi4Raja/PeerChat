@@ -21,7 +21,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 18,
+      version: 19,
       onCreate: (db, version) async {
         await _createTables(db);
       },
@@ -79,6 +79,9 @@ class DBService {
         }
         if (oldVersion < 18) {
           await _migrateTo18(db);
+        }
+        if (oldVersion < 19) {
+          await _migrateTo19(db);
         }
       },
     );
@@ -202,6 +205,23 @@ class DBService {
     ''');
     await db.execute(
         'CREATE INDEX idx_broadcast_timestamp ON broadcast_messages(timestamp DESC)');
+
+    await db.execute('''
+      CREATE TABLE file_transfers (
+        id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        file_path TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        total_chunks INTEGER NOT NULL,
+        received_chunks BLOB,
+        last_acked_chunk INTEGER DEFAULT -1,
+        file_hash TEXT,
+        is_incoming INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL
+      )
+    ''');
   }
 
   Future<void> _migrateTo6(Database db) async {
@@ -316,6 +336,25 @@ class DBService {
     await _ensureQueuePriorityIndex(db);
   }
 
+  Future<void> _migrateTo19(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_transfers (
+        id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        file_path TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        total_chunks INTEGER NOT NULL,
+        received_chunks BLOB,
+        last_acked_chunk INTEGER DEFAULT -1,
+        file_hash TEXT,
+        is_incoming INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL
+      )
+    ''');
+  }
+
   Future<void> _ensureCriticalSchema(Database db) async {
     final dedupHasOriginalTs =
         await _hasColumn(db, 'deduplication_cache', 'original_timestamp');
@@ -359,7 +398,24 @@ class DBService {
 
     // Remove obsolete delivery-ACK table from older installations.
     await db.execute('DROP TABLE IF EXISTS pending_acks');
-    await db.execute('DROP TABLE IF EXISTS file_transfers');
+    // Version 19+: Ensure file_transfers table exists
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS file_transfers (
+        id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        file_name TEXT NOT NULL,
+        file_size INTEGER NOT NULL,
+        file_path TEXT NOT NULL,
+        status INTEGER NOT NULL,
+        total_chunks INTEGER NOT NULL,
+        received_chunks BLOB,
+        last_acked_chunk INTEGER DEFAULT -1,
+        file_hash TEXT,
+        is_incoming INTEGER NOT NULL,
+        timestamp INTEGER NOT NULL
+      )
+    ''');
+
   }
 
   Future<bool> _hasColumn(Database db, String table, String column) async {
@@ -774,6 +830,16 @@ class DBService {
     return rows.cast<Map<String, Object?>>();
   }
 
+  /// Delete a specific broadcast message.
+  Future<void> deleteBroadcastMessage(String id) async {
+    final d = await db;
+    await d.delete(
+      'broadcast_messages',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   /// Purge broadcast messages older than [maxAge].
   Future<int> purgeOldBroadcastMessages({
     Duration maxAge = DatabaseTimerConfig.defaultBroadcastMaxAge,
@@ -786,6 +852,82 @@ class DBService {
       where: 'timestamp < ?',
       whereArgs: [cutoff],
     );
+  }
+
+  // File Transfer operations
+
+  Future<void> insertFileTransfer(Map<String, dynamic> transfer) async {
+    final d = await db;
+    await d.insert('file_transfers', transfer,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<Map<String, dynamic>?> getFileTransfer(String id) async {
+    final d = await db;
+    final rows = await d.query(
+      'file_transfers',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+    if (rows.isEmpty) return null;
+    return rows.first;
+  }
+
+  Future<List<Map<String, dynamic>>> getFileTransfersForPeer(String peerId) async {
+    final d = await db;
+    return await d.query(
+      'file_transfers',
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+      orderBy: 'timestamp DESC',
+    );
+  }
+
+  Future<void> updateFileTransferStatus(String id, int status) async {
+    final d = await db;
+    await d.update(
+      'file_transfers',
+      {'status': status},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateFileTransferProgress(String id, Uint8List bitmask) async {
+    final d = await db;
+    await d.update(
+      'file_transfers',
+      {'received_chunks': bitmask},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> updateFileTransferLastAcked(String id, int lastAcked) async {
+    final d = await db;
+    await d.update(
+      'file_transfers',
+      {'last_acked_chunk': lastAcked},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getFileTransferHistory() async {
+    final d = await db;
+    return d.query('file_transfers', orderBy: 'timestamp DESC');
+  }
+
+  Future<void> deleteFileTransfer(String id) async {
+    final d = await db;
+    await d.delete('file_transfers', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> purgeOldFileTransfers({int days = 30}) async {
+    final d = await db;
+    final cutoff = DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch;
+    return d.delete('file_transfers', where: 'timestamp < ?', whereArgs: [cutoff]);
   }
 
   // Known WiFi Direct endpoints operations

@@ -26,6 +26,9 @@ import 'services/message_manager.dart';
 import 'services/emergency_broadcast_service.dart';
 import 'services/battery_status_service.dart';
 import 'services/wifi_transport.dart';
+import 'services/web_share_service.dart';
+import 'services/file_transfer_service.dart';
+import 'services/app_icon_service.dart';
 import 'utils/name_generator.dart';
 
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
@@ -34,12 +37,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   final DiscoveryService _discovery = DiscoveryService();
   late final MeshRouterService meshRouter;
   late final EmergencyBroadcastService emergencyBroadcastService;
+  late final WebShareService webShareService;
+  late final FileTransferService fileTransferService;
+  late final AppIconService appIconService;
   bool _hasEmergencyBroadcastService = false;
   Timer? _peerRefreshTimer;
   Timer? _batteryPollTimer;
   StreamSubscription<WiFiDiscoveryFailure>? _wifiDiscoveryFailureSubscription;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  final BatteryStatusService _batteryStatusService = BatteryStatusService();
+  final DeviceSystemService deviceService = DeviceSystemService();
+
   static const String _runtimeProfileStorageKey = 'runtime_profile';
   static const String _lastNormalRuntimeProfileStorageKey =
       'last_normal_runtime_profile';
@@ -154,6 +161,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     return NameGenerator.generateInitials(key);
   }
 
+  bool get hasActiveTransfer => fileTransferService.activeSessions.isNotEmpty;
+
   Future<void> init() async {
     try {
       WidgetsBinding.instance.addObserver(this);
@@ -185,6 +194,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         db: _db,
       );
       _hasEmergencyBroadcastService = true;
+      webShareService = WebShareService(); 
+      appIconService = AppIconService(deviceService);
 
       // RouteManager needs a transport callback
       final routeManager = RouteManager(
@@ -233,6 +244,16 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       );
 
       meshRouter.setRuntimeProfile(_runtimeProfile);
+      
+      // Now we have the meshRouter, initialize file transfer
+      fileTransferService = FileTransferService(_db, meshRouter);
+      
+      // Monitor file transfers for discovery throttling
+      fileTransferService.onProgress.listen((_) => notifyListeners());
+
+      // Perform 30-day cleanup of old transfers
+      _db.purgeOldFileTransfers(days: 30);
+
       await meshRouter.init();
       _wifiDiscoveryFailureSubscription =
           meshRouter.onWiFiDiscoveryFailure.listen(
@@ -240,6 +261,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       );
       await _requestBatteryOptimizationExemption();
       await _startBatteryMonitoring();
+      
+      // Listen for Bluetooth state changes to update UI in real-time
+      deviceService.onBluetoothStateChanged.listen((_) {
+        notifyListeners();
+      });
 
       final cleanupStats = await clearStaleNetworkData(
         stalePeerAge: DatabaseTimerConfig.stalePeerAge,
@@ -350,8 +376,55 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     });
   }
 
+  Future<BatteryStatus> get batteryStatus => deviceService.getStatus();
+
+  bool _webShareIsolationActive = false;
+  bool _restoreBluetoothAfterWebShare = false;
+  bool get isWebShareIsolationActive => _webShareIsolationActive;
+
+  Future<bool> canControlBluetoothForWebShare() async {
+    return deviceService.checkSystemSettingsPermission();
+  }
+
+  Future<void> setWebShareIsolation(bool enabled) async {
+    if (_webShareIsolationActive == enabled) return;
+
+    if (enabled) {
+      await _discovery.suspendBluetoothDiscovery();
+      await meshRouter.suspendNearbyConnections();
+
+      final canControlBluetooth = await deviceService.checkSystemSettingsPermission();
+      if (canControlBluetooth) {
+        final wasBluetoothEnabled = await deviceService.isBluetoothEnabled();
+        _restoreBluetoothAfterWebShare = wasBluetoothEnabled;
+        if (wasBluetoothEnabled) {
+          await deviceService.toggleBluetooth(false);
+          debugPrint('AppState: Bluetooth disabled for Web Share isolation');
+        }
+      } else {
+        _restoreBluetoothAfterWebShare = false;
+      }
+
+      _webShareIsolationActive = true;
+      notifyListeners();
+      return;
+    }
+
+    if (_restoreBluetoothAfterWebShare) {
+      await deviceService.toggleBluetooth(true);
+      debugPrint('AppState: Bluetooth restored after Web Share');
+    }
+    _restoreBluetoothAfterWebShare = false;
+
+    await meshRouter.resumeNearbyConnections();
+    await _discovery.resumeBluetoothDiscovery();
+
+    _webShareIsolationActive = false;
+    notifyListeners();
+  }
+
   Future<void> _refreshBatteryStatus() async {
-    final status = await _batteryStatusService.getStatus();
+    final status = await deviceService.getStatus();
     final changed = _batteryLevel != status.level ||
         _isCharging != status.isCharging ||
         _batteryLow != status.isLow;
@@ -378,7 +451,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     final activeConnectedCount =
         connectedPeerCount ?? meshRouter.getConnectedPeerIds().length;
-    const hasActiveTransfer = false;
+    final hasActiveTransfer = fileTransferService.activeSessions.isNotEmpty;
 
     _discovery.updateAdaptiveDiscoveryPolicy(
       connectedPeerCount: activeConnectedCount,
@@ -495,7 +568,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   }
 
   Future<bool> openLocationSettings() async {
-    final opened = await _batteryStatusService.openLocationSettings();
+    final opened = await deviceService.openLocationSettings();
     if (opened) {
       clearPendingDiscoveryFailure();
     }

@@ -139,6 +139,20 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 
+  String _formatRelativeTime(int timestamp) {
+    if (timestamp == 0) return '';
+    final now = DateTime.now();
+    final date = DateTime.fromMillisecondsSinceEpoch(timestamp);
+    final diff = now.difference(date);
+
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    if (diff.inDays < 7) return '${diff.inDays}d ago';
+
+    return '${date.day}/${date.month}';
+  }
+
   Widget _buildRowsTab({
     required List<Map<String, Object?>> rows,
     required String emptyTitle,
@@ -223,17 +237,19 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           }
 
           final lastContent = (row['last_content'] as String?) ?? '';
+          final lastTimestamp = (row['last_timestamp'] as int?) ?? 0;
+          final isSentByMe = (row['is_sent_by_me'] as int?) == 1;
           final initials = NameGenerator.generateInitials(peerId);
           final avatarHue = (peerId.hashCode % 360).abs().toDouble();
           final avatarColor =
               HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();
 
           return Padding(
-            padding: const EdgeInsets.only(bottom: 4),
+            padding: const EdgeInsets.only(bottom: 6),
             child: Material(
               color: Colors.transparent,
               child: InkWell(
-                borderRadius: BorderRadius.circular(14),
+                borderRadius: BorderRadius.circular(16),
                 onTap: () {
                   Navigator.of(context).push(
                     MaterialPageRoute(
@@ -295,25 +311,25 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 },
                 child: Container(
                   padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
                   decoration: BoxDecoration(
                     color: unreadCount > 0
-                        ? AppTheme.primary.withValues(alpha: 0.04)
+                        ? AppTheme.primary.withValues(alpha: 0.05)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(16),
                   ),
                   child: Row(
                     children: [
                       Stack(
                         children: [
                           CircleAvatar(
-                            radius: 24,
+                            radius: 26,
                             backgroundColor:
                                 avatarColor.withValues(alpha: 0.15),
                             child: Text(
                               initials,
                               style: GoogleFonts.inter(
-                                fontSize: 14,
+                                fontSize: 16,
                                 fontWeight: FontWeight.w700,
                                 color: avatarColor,
                               ),
@@ -324,14 +340,14 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                               right: 0,
                               bottom: 0,
                               child: Container(
-                                width: 12,
-                                height: 12,
+                                width: 14,
+                                height: 14,
                                 decoration: BoxDecoration(
                                   color: AppTheme.online,
                                   shape: BoxShape.circle,
                                   border: Border.all(
                                     color: AppTheme.bgDeep,
-                                    width: 2,
+                                    width: 2.5,
                                   ),
                                   boxShadow: [
                                     BoxShadow(
@@ -345,37 +361,69 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                             ),
                         ],
                       ),
-                      const SizedBox(width: 14),
+                      const SizedBox(width: 16),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              displayName,
-                              style: GoogleFonts.inter(
-                                fontSize: 15,
-                                fontWeight: unreadCount > 0
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
-                                color: AppTheme.textPrimary,
-                              ),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    displayName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 16,
+                                      fontWeight: unreadCount > 0
+                                          ? FontWeight.w700
+                                          : FontWeight.w600,
+                                      color: AppTheme.textPrimary,
+                                    ),
+                                  ),
+                                ),
+                                if (lastTimestamp > 0)
+                                  Text(
+                                    _formatRelativeTime(lastTimestamp),
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      color: AppTheme.textSecondary
+                                          .withValues(alpha: 0.6),
+                                    ),
+                                  ),
+                              ],
                             ),
-                            const SizedBox(height: 3),
-                            Text(
-                              lastContent,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.inter(
-                                fontSize: 12,
-                                color: AppTheme.textSecondary,
-                              ),
+                            const SizedBox(height: 4),
+                            Row(
+                              children: [
+                                if (isSentByMe) ...[
+                                  Icon(
+                                    Icons.done_all_rounded,
+                                    size: 16,
+                                    color: AppTheme.textSecondary
+                                        .withValues(alpha: 0.5),
+                                  ),
+                                  const SizedBox(width: 6),
+                                ],
+                                Expanded(
+                                  child: Text(
+                                    lastContent,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      color: AppTheme.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
-                            const SizedBox(height: 3),
+                            const SizedBox(height: 4),
                             Row(
                               children: [
                                 Container(
-                                  width: 6,
-                                  height: 6,
+                                  width: 7,
+                                  height: 7,
                                   decoration: BoxDecoration(
                                     color: isConnected
                                         ? AppTheme.online
@@ -384,11 +432,11 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                                     shape: BoxShape.circle,
                                   ),
                                 ),
-                                const SizedBox(width: 6),
+                                const SizedBox(width: 8),
                                 Text(
                                   isConnected ? 'Online' : 'Offline',
                                   style: GoogleFonts.inter(
-                                    fontSize: 12,
+                                    fontSize: 13,
                                     color: isConnected
                                         ? AppTheme.online
                                         : AppTheme.textSecondary,
@@ -439,4 +487,3 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
     );
   }
 }
-

@@ -66,6 +66,11 @@ class MeshRouterService extends ChangeNotifier {
   Stream<ChatMessage> get onMessageReceived =>
       _incomingMessageController.stream;
 
+  // Stream for raw mesh messages — FileTransferService listens to this
+  final StreamController<MeshMessage> _rawMessageController =
+      StreamController<MeshMessage>.broadcast();
+  Stream<MeshMessage> get onRawMessageReceived => _rawMessageController.stream;
+
   // Stream for message status updates (IDs of changed messages)
   final StreamController<String> _statusUpdateController =
       StreamController<String>.broadcast();
@@ -132,6 +137,16 @@ class MeshRouterService extends ChangeNotifier {
   Future<void> restartWiFiDirect() async {
     debugPrint('Restarting WiFi Direct...');
     await _wifiTransport?.restartWiFiDirect();
+  }
+
+  Future<void> suspendNearbyConnections() async {
+    debugPrint('Suspending WiFi Direct/Nearby transport...');
+    await _wifiTransport?.suspendNearbyConnections();
+  }
+
+  Future<void> resumeNearbyConnections() async {
+    debugPrint('Resuming WiFi Direct/Nearby transport...');
+    await _wifiTransport?.resumeNearbyConnections();
   }
 
   void setRuntimeProfile(RuntimeProfile profile) {
@@ -266,8 +281,6 @@ class MeshRouterService extends ChangeNotifier {
     final prefix = localId.length >= MessageLimits.generatedIdSenderPrefixLength
         ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
         : localId;
-    // MeshMessage wire format currently reserves 36 bytes for messageId.
-    // Keep IDs <= 36 chars: "<8-char-prefix>_<27-char-uuid-fragment>"
     final compactUuid = const Uuid()
         .v4()
         .replaceAll('-', '')
@@ -316,6 +329,37 @@ class MeshRouterService extends ChangeNotifier {
       return forwarded;
     } catch (e) {
       debugPrint('ERROR sending message: $e');
+      _recordSendAttempt(SendResult.failed);
+      return SendResult.failed;
+    }
+  }
+
+  /// Send a mesh message with custom arbitrary data and type
+  Future<SendResult> sendDataMessage({
+    required String recipientPeerId,
+    required Uint8List data,
+    required MessageType type,
+    MessagePriority priority = MessagePriority.normal,
+  }) async {
+    try {
+      final recipientPublicKey =
+          await _signatureVerifier.getPeerPublicKey(recipientPeerId);
+      if (recipientPublicKey == null) return SendResult.failed;
+
+      final message = await _messageManager.createDataMessage(
+        recipientPeerId: recipientPeerId,
+        recipientPublicKey: recipientPublicKey,
+        data: data,
+        type: type,
+        priority: priority,
+      );
+
+      final forwarded = await _forwardMessageViaTransport(message);
+      _recordSendAttempt(forwarded);
+      notifyListeners();
+      return forwarded;
+    } catch (e) {
+      debugPrint('ERROR sending data message: $e');
       _recordSendAttempt(SendResult.failed);
       return SendResult.failed;
     }
@@ -429,6 +473,9 @@ class MeshRouterService extends ChangeNotifier {
           await _messageManager.processMessage(message, fromPeerAddress);
 
       if (result == ProcessResult.delivered) {
+        // Notify raw message listeners (like FileTransferService) only if intended for us
+        _rawMessageController.add(message);
+
         final content = await _messageManager.decryptContent(message);
         if (content != null) {
           _deliverToApplication(message, content);
@@ -511,8 +558,6 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   void _onPeerConnected(Peer peer) async {
-    // Discovery events are not authoritative connectivity.
-    // Route creation is done at handshake completion with crypto IDs.
     _scheduleQueueProcessing();
     notifyListeners();
   }
@@ -847,6 +892,7 @@ class MeshRouterService extends ChangeNotifier {
 
   RouteManager get routeManager => _routeManager;
   MessageQueue get messageQueue => _messageQueue;
+  MessageManager get messageManager => _messageManager;
   MultiTransportService get transportService => _transportService;
   String get localPeerId => _cryptoService.localPeerId;
 
@@ -868,28 +914,18 @@ class MeshRouterService extends ChangeNotifier {
     _incomingMessageController.close();
     _statusUpdateController.close();
     _wifiDiscoveryFailureController.close();
+    _rawMessageController.close();
     _transportService.dispose();
     super.dispose();
   }
 }
 
-/// Result of a send attempt.
 enum SendResult {
-  /// Successfully routed through one or more hops.
   routed,
-
-  /// No route found, message queued for later.
   noRoute,
-
-  /// Destination reached but message was queued (e.g. pending handshake).
   queued,
-
-  /// Send failed.
   failed,
 }
-
-/// Statistics about the message queue.
-// Note: QueueStats is already defined in message_queue.dart and imported.
 
 class RoutingStats {
   final int totalRoutes;
@@ -912,7 +948,6 @@ class RoutingStats {
     required this.activePeerCount,
   });
 
-  // Backward compatibility: "Queued" now represents local-origin queue only.
   int get queuedMessages => localQueuedMessages;
   int get totalQueuedMessages => localQueuedMessages + meshQueuedMessages;
 

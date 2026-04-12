@@ -1,4 +1,5 @@
 import 'dart:math';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'crypto_service.dart';
 import 'route_manager.dart';
@@ -43,7 +44,7 @@ class MessageManager {
     this.sendTransportMessage,
   );
 
-  // Create and encrypt a new message
+  // Create and encrypt a new message (text-based)
   Future<MeshMessage> createMessage({
     required String recipientPeerId,
     required Uint8List recipientPublicKey,
@@ -51,44 +52,27 @@ class MessageManager {
     required MessagePriority priority,
     String? messageId,
   }) async {
-    // Validate message size
     if (content.length > maxMessageSize) {
       throw Exception('Message exceeds maximum size of $maxMessageSize bytes');
     }
 
     final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final id = messageId ?? _generateMessageId();
 
-    // Keep wire-compatible message IDs (<= 36 chars).
-    final localId = _cryptoService.localPeerId;
-    final shortSenderId =
-        localId.length >= MessageLimits.generatedIdSenderPrefixLength
-            ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
-            : localId;
-    final compactUuid = _uuid
-        .v4()
-        .replaceAll('-', '')
-        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
-    final id = messageId ?? '${shortSenderId}_$compactUuid';
-
-    // Random TTL between configured min/max hops.
     final ttlRange = MessageLimits.ttlMax - MessageLimits.ttlMin + 1;
     final ttl = MessageLimits.ttlMin + _random.nextInt(ttlRange);
 
-    // Get recipient's encryption public key
     final recipientEncryptionKey =
         await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
     if (recipientEncryptionKey == null) {
-      throw Exception(
-          'Encryption key not found for peer $recipientPeerId. Handshake may be incomplete.');
+      throw Exception('Encryption key not found for peer $recipientPeerId');
     }
 
-    // Encrypt content
     final encryptedContent = _cryptoService.encryptContent(
       content,
       recipientEncryptionKey,
     );
 
-    // Create message without signature first
     final unsignedMessage = MeshMessage(
       messageId: id,
       type: MessageType.data,
@@ -102,13 +86,45 @@ class MessageManager {
       signature: Uint8List(0),
     );
 
-    // Sign the message
     final signature =
         _cryptoService.signMessage(unsignedMessage.toBytesForSigning());
 
-    return MeshMessage(
-      messageId: id,
-      type: MessageType.data,
+    return unsignedMessage.copyWithSignature(signature);
+  }
+
+  /// Create and encrypt a message with arbitrary byte data and custom type
+  Future<MeshMessage> createDataMessage({
+    required String recipientPeerId,
+    required Uint8List recipientPublicKey,
+    required Uint8List data,
+    required MessageType type,
+    required MessagePriority priority,
+    String? messageId,
+  }) async {
+    if (data.length > maxMessageSize) {
+      throw Exception('Data exceeds maximum size of $maxMessageSize bytes');
+    }
+
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final msgId = messageId ?? _generateMessageId();
+
+    final ttlRange = MessageLimits.ttlMax - MessageLimits.ttlMin + 1;
+    final ttl = MessageLimits.ttlMin + _random.nextInt(ttlRange);
+
+    final recipientEncryptionKey =
+        await _signatureVerifier.getPeerEncryptionKey(recipientPeerId);
+    if (recipientEncryptionKey == null) {
+      throw Exception('Encryption key not found for peer $recipientPeerId');
+    }
+
+    final encryptedContent = _cryptoService.encryptBytes(
+      data,
+      recipientEncryptionKey,
+    );
+
+    final unsignedMessage = MeshMessage(
+      messageId: msgId,
+      type: type,
       senderPeerId: _cryptoService.localPeerId,
       recipientPeerId: recipientPeerId,
       ttl: ttl,
@@ -116,19 +132,32 @@ class MessageManager {
       priority: priority,
       timestamp: timestamp,
       encryptedContent: encryptedContent,
-      signature: signature,
+      signature: Uint8List(0),
     );
+
+    final signature =
+        _cryptoService.signMessage(unsignedMessage.toBytesForSigning());
+
+    return unsignedMessage.copyWithSignature(signature);
+  }
+
+  String _generateMessageId() {
+    final localId = _cryptoService.localPeerId;
+    final shortSenderId =
+        localId.length >= MessageLimits.generatedIdSenderPrefixLength
+            ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
+            : localId;
+    final compactUuid = _uuid
+        .v4()
+        .replaceAll('-', '')
+        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
+    return '${shortSenderId}_$compactUuid';
   }
 
   // Process incoming message
   Future<ProcessResult> processMessage(
       MeshMessage message, String fromPeerAddress) async {
-    // Check if peer is blocked
-    if (await _signatureVerifier.isPeerBlocked(message.senderPeerId)) {
-      return ProcessResult.invalid;
-    }
-
-    // Verify signature (uses signing key)
+    // Verify signature
     final isValidSignature =
         await _signatureVerifier.verifyMessageSignature(message);
     if (!isValidSignature) {
@@ -137,12 +166,10 @@ class MessageManager {
       return ProcessResult.invalid;
     }
 
-    // Check timestamp validity with duration-based expiry.
+    // Check expiry
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
-    // Future tolerance: 5 minutes (clock skew guard)
     if (age < -MessageLimits.futureClockSkewToleranceMs || message.isExpired) {
-      debugPrint('Message hard-expired or from future: $age ms');
       return ProcessResult.expired;
     }
 
@@ -150,8 +177,6 @@ class MessageManager {
     if (await _deduplicationCache.hasSeen(message.messageId)) {
       return ProcessResult.duplicate;
     }
-
-    // Mark as seen, anchoring cache lifespan heavily to the original message creation time
     await _deduplicationCache.markSeen(message.messageId, message.timestamp);
 
     // Check TTL
@@ -161,79 +186,24 @@ class MessageManager {
 
     // Check if we are the destination
     if (message.recipientPeerId == _cryptoService.localPeerId) {
-      if (message.type == MessageType.data) {
-        return ProcessResult.delivered;
-      }
-      // Ignore legacy delivery/read control messages.
-      return ProcessResult.duplicate;
+      return ProcessResult.delivered;
     }
 
-    // We are a relay - forward the message
-    final forwardedMessage = message.copyForForwarding();
-    final forwarded = await forwardMessage(forwardedMessage);
-
-    return forwarded ? ProcessResult.forwarded : ProcessResult.queued;
+    // Relay
+    return ProcessResult.queued;
   }
 
-  // Forward message to next hop
-  Future<bool> forwardMessage(MeshMessage message) async {
-    // Get next hop
-    final nextHop = await _routeManager.getNextHop(message.recipientPeerId);
-
-    if (nextHop == null) {
-      // No route available - queue message and initiate discovery
-      final queuedMessage = QueuedMessage(
-        message: message,
-        nextHopPeerId: message.recipientPeerId,
-        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
-        origin: _queueOriginFor(message),
-      );
-      await _messageQueue.enqueue(queuedMessage);
-
-      // Initiate route discovery
-      _routeManager.discoverRoute(message.recipientPeerId);
-
-      return false;
-    }
-
-    // Send message to next hop via transport layer
-    final sent = await sendTransportMessage(nextHop, message.toBytes());
-
-    if (!sent) {
-      debugPrint('Transport send failed to $nextHop, queuing message');
-      // If send failed, queue it
-      final queuedMessage = QueuedMessage(
-        message: message,
-        nextHopPeerId: nextHop,
-        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
-        origin: _queueOriginFor(message),
-      );
-      await _messageQueue.enqueue(queuedMessage);
-      return false;
-    }
-
-    return true;
-  }
-
-  // Decrypt message content (only if we are the recipient)
+  // Decrypt text content
   Future<String?> decryptContent(MeshMessage message) async {
-    if (message.recipientPeerId != _cryptoService.localPeerId) {
-      return null; // Not the recipient
-    }
-
-    if (message.encryptedContent == null) {
+    if (message.recipientPeerId != _cryptoService.localPeerId ||
+        message.encryptedContent == null) {
       return null;
     }
 
     try {
-      // Use encryption public key for decryption
       final senderEncryptionKey =
           await _signatureVerifier.getPeerEncryptionKey(message.senderPeerId);
-      if (senderEncryptionKey == null) {
-        debugPrint(
-            'Encryption key not found for sender ${message.senderPeerId}');
-        return null;
-      }
+      if (senderEncryptionKey == null) return null;
 
       return _cryptoService.decryptContent(
         message.encryptedContent!,
@@ -243,6 +213,56 @@ class MessageManager {
       debugPrint('Decryption error: $e');
       return null;
     }
+  }
+
+  // Decrypt raw bytes content
+  Future<Uint8List?> decryptBytes(MeshMessage message) async {
+    if (message.recipientPeerId != _cryptoService.localPeerId ||
+        message.encryptedContent == null) {
+      return null;
+    }
+
+    try {
+      final senderEncryptionKey =
+          await _signatureVerifier.getPeerEncryptionKey(message.senderPeerId);
+      if (senderEncryptionKey == null) return null;
+
+      return _cryptoService.decryptBytes(
+        message.encryptedContent!,
+        senderEncryptionKey,
+      );
+    } catch (e) {
+      debugPrint('Byte decryption error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> forwardMessage(MeshMessage message) async {
+    final nextHop = await _routeManager.getNextHop(message.recipientPeerId);
+    if (nextHop == null) {
+      final queuedMessage = QueuedMessage(
+        message: message,
+        nextHopPeerId: message.recipientPeerId,
+        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: _queueOriginFor(message),
+      );
+      await _messageQueue.enqueue(queuedMessage);
+      _routeManager.discoverRoute(message.recipientPeerId);
+      return false;
+    }
+
+    final sent = await sendTransportMessage(nextHop, message.toBytes());
+    if (!sent) {
+      final queuedMessage = QueuedMessage(
+        message: message,
+        nextHopPeerId: nextHop,
+        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
+        origin: _queueOriginFor(message),
+      );
+      await _messageQueue.enqueue(queuedMessage);
+      return false;
+    }
+    return true;
   }
 
   QueueOrigin _queueOriginFor(MeshMessage message) {

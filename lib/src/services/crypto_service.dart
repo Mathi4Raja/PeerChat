@@ -107,6 +107,37 @@ class CryptoService {
     return utf8.decode(plaintext);
   }
 
+  // Encrypt raw bytes using recipient's public key
+  Uint8List encryptBytes(Uint8List data, Uint8List recipientPublicKey) {
+    final nonce = _sodium.randombytes.buf(24);
+    
+    final ciphertext = _sodium.crypto.box.easy(
+      message: data,
+      nonce: nonce,
+      publicKey: recipientPublicKey,
+      secretKey: _encryptionKeyPair!.secretKey,
+    );
+    
+    return Uint8List.fromList([...nonce, ...ciphertext]);
+  }
+
+  // Decrypt raw bytes using sender's public key
+  Uint8List decryptBytes(Uint8List encryptedData, Uint8List senderPublicKey) {
+    if (encryptedData.length < 24) {
+      throw Exception('Invalid encrypted data: too short');
+    }
+    
+    final nonce = encryptedData.sublist(0, 24);
+    final ciphertext = encryptedData.sublist(24);
+    
+    return _sodium.crypto.box.openEasy(
+      cipherText: ciphertext,
+      nonce: nonce,
+      publicKey: senderPublicKey,
+      secretKey: _encryptionKeyPair!.secretKey,
+    );
+  }
+
   // Sign message using signing keypair
   Uint8List signMessage(Uint8List messageBytes) {
     return _sodium.crypto.sign.detached(
