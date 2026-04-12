@@ -219,10 +219,17 @@ export default function HeroSection() {
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           className="flex justify-center"
         >
-          <button className="group relative px-6 py-3 sm:px-8 sm:py-4 rounded-full bg-[var(--color-ember)] text-white font-medium text-sm sm:text-base overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)]">
-            <span className="relative z-10">Get the Mobile app</span>
+          <a
+            href="https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/Peerchat.apk"
+            download
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group relative px-6 py-3 sm:px-8 sm:py-4 rounded-full bg-[var(--color-ember)] text-white font-medium text-sm sm:text-base overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] inline-block"
+            aria-label="Download PeerChat mobile app APK for Android"
+          >
+            <span className="relative z-10 font-[family-name:var(--font-display)]">Get the Mobile app</span>
             <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-ember)] to-[var(--color-copper)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          </button>
+          </a>
         </motion.div>
       </div>
 

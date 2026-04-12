@@ -31,18 +31,28 @@ export default function FooterSection() {
           </div>
 
           {/* Links */}
-          <div>
+          <nav aria-label="Footer navigation">
             <h4 className="mono-label mb-4 text-[var(--color-copper)]">Network</h4>
             <ul className="space-y-2 text-sm text-[var(--color-ash)]">
-              {['Documentation', 'GitHub', 'Protocol Spec', 'Security Audit'].map(link => (
-                <li key={link}>
-                  <a href="#" className="hover:text-[var(--color-ember)] transition-colors duration-300">
-                    {link}
+              {[
+                { label: 'GitHub', href: 'https://github.com/Mathi4Raja/P2P-app' },
+                { label: 'Documentation', href: 'https://github.com/Mathi4Raja/P2P-app#readme' },
+                { label: 'Protocol Spec', href: 'https://github.com/Mathi4Raja/P2P-app/blob/main/README.md' },
+                { label: 'Security Audit', href: '#' }
+              ].map(link => (
+                <li key={link.label}>
+                  <a 
+                    href={link.href} 
+                    target={link.href.startsWith('http') ? "_blank" : undefined}
+                    rel={link.href.startsWith('http') ? "noopener noreferrer" : undefined}
+                    className="hover:text-[var(--color-ember)] transition-colors duration-300"
+                  >
+                    {link.label}
                   </a>
                 </li>
               ))}
             </ul>
-          </div>
+          </nav>
 
           {/* Downloads */}
           <div>

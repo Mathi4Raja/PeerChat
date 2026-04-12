@@ -13,6 +13,7 @@ import MessageFlowSection from '@/components/sections/MessageFlowSection';
 import InteractionSection from '@/components/sections/InteractionSection';
 import DemoSection from '@/components/sections/DemoSection';
 import AccessSection from '@/components/sections/AccessSection';
+import FaqSection from '@/components/sections/FaqSection';
 import FooterSection from '@/components/sections/FooterSection';
 
 // Dynamically import MeshCanvas to avoid SSR issues with Three.js
@@ -141,6 +142,7 @@ function PageContent() {
           <InteractionSection />
           <DemoSection />
           <AccessSection />
+          <FaqSection />
           <FooterSection />
         </main>
       </SmoothScroll>
