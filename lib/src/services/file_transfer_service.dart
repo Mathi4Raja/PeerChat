@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
 import 'package:external_path/external_path.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:open_file_plus/open_file_plus.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../models/file_transfer.dart';
 import '../models/mesh_message.dart';
@@ -593,7 +593,7 @@ class FileTransferService {
     final dbRow = await _db.getFileTransfer(fileId);
     if (dbRow != null && dbRow['file_path'] != null) {
       final path = dbRow['file_path'];
-      final result = await OpenFile.open(path);
+      final result = await OpenFilex.open(path);
       if (result.type != ResultType.done) {
         print("Error opening file: ${result.message}");
       }

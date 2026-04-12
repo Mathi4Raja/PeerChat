@@ -528,5 +528,5 @@
 
 ## Phase 45: Build Stability & Bug Fixes (Apr 12, 2026)
 - [x] Fix: `Member not found: 'success'` in `AppTheme` (Broken build in `direct_transfer_screen.dart`)
-- [x] Fix: `open_file_plus` compatibility with newer Flutter SDKs (Update to ^4.1.3)
+- [x] Fix: `open_file_plus` compatibility (Switched to `open_filex` ^4.7.0 for V2 Android embedding)
 - [x] Stability: Update `sodium` and `sodium_libs` to ^3.5.0 for workspace resolution issues
