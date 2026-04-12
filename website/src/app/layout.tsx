@@ -74,7 +74,7 @@ const jsonLd = {
       "applicationCategory": "CommunicationApplication",
       "description": "Peer-to-peer encrypted mesh messaging that works without central servers using Bluetooth and WiFi.",
       "softwareVersion": "1.0.0",
-      "downloadUrl": "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/Peerchat.apk",
+      "downloadUrl": "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk",
       "offers": {
         "@type": "Offer",
         "price": "0",

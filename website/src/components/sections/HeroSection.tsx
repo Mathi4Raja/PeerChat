@@ -220,7 +220,7 @@ export default function HeroSection() {
           className="flex justify-center"
         >
           <a
-            href="https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/Peerchat.apk"
+            href="https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk"
             download
             target="_blank"
             rel="noopener noreferrer"

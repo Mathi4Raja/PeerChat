@@ -519,12 +519,14 @@
 - [x] Implement JSON-LD Structured Data (`SoftwareApplication`, `FAQPage`)
 - [x] Create `sitemap.xml` and `robots.txt`
 - [x] Implement FAQ Section for AEO (Answer Engine Optimization)
-- [x] Update Hero CTA with direct download link for `v1.0.0/Peerchat.apk`
+- [x] Update Hero CTA with direct download link for `v1.0.0/PeerChat.apk`
 - [x] Improve semantic HTML and ARIA labels across website
 
 ## Phase 44: CI/CD Automation (Apr 12, 2026)
 - [x] Create `.github/workflows/mobile-ci.yml` for automated releases
-- [x] Automate release tagging (v1.0.0) and APK renaming (Peerchat.apk)
+- [x] Automate release tagging (v1.0.0) and APK renaming (PeerChat.apk)
 
 ## Phase 45: Build Stability & Bug Fixes (Apr 12, 2026)
 - [x] Fix: `Member not found: 'success'` in `AppTheme` (Broken build in `direct_transfer_screen.dart`)
+- [x] Fix: `open_file_plus` compatibility with newer Flutter SDKs (Update to ^4.1.3)
+- [x] Stability: Update `sodium` and `sodium_libs` to ^3.5.0 for workspace resolution issues
