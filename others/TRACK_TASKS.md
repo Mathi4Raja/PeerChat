@@ -529,3 +529,16 @@
 ## Phase 45: Build Stability & Bug Fixes (Apr 12, 2026)
 - [x] Fix: `Member not found: 'success'` in `AppTheme` (Broken build in `direct_transfer_screen.dart`)
 - [x] Fix: `open_file_plus` compatibility (Switched to `open_filex` ^4.7.0 for V2 Android embedding)
+
+## Phase 46: GitHub Star Metrics (Apr 13, 2026)
+- [x] Implement dynamic GitHub star count fetching in website footer
+- [x] Update footer labels from "Downloads" to "GitHub Stars"
+- [x] Align footer metrics with 1.0.0 branding and open-source focus
+
+## Phase 47: Donation Card Implementation (Apr 13, 2026)
+- [x] Transform "Collective" card into "Patron" role
+- [x] Implement "Donate Us" CTA button
+- [x] Align pricing model for non-profit supporter role
+- [x] Expand Patron feature list with community-focused points
+- [x] Link Download button directly to APK
+

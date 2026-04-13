@@ -1,4 +1,4 @@
-'use client';
+'use client'; // Updated for Patron card transformation
 
 import { useRef, useState } from 'react';
 import { motion, useInView, AnimatePresence } from 'framer-motion';
@@ -34,21 +34,22 @@ const plans: Plan[] = [
     nodeLabel: 'INDEPENDENT',
   },
   {
-    id: 'collective',
-    name: 'Collective',
-    tagline: 'A relay supernode',
-    price: '$4',
-    period: '/month',
+    id: 'patron',
+    name: 'Patron',
+    tagline: 'Support the revolution',
+    price: 'Donate',
+    period: 'one-time / monthly',
     features: [
-      'Everything in Independent',
-      'Extended relay range',
-      'Priority routing',
-      'Offline message queuing',
-      'Network analytics dashboard',
-      'Support the mesh',
+      'Support Peer-to-peer R&D',
+      'Fund global relay infrastructure',
+      'Help keep PeerChat open source',
+      'Direct impact on net neutrality',
+      'No data harvesting, ever',
+      'Accelerate decentralized network growth',
+      'Empower community-led development',
     ],
     accent: 'var(--color-gold)',
-    nodeLabel: 'COLLECTIVE',
+    nodeLabel: 'SUPPORTER',
   },
 ];
 
@@ -193,8 +194,15 @@ export default function AccessSection() {
                 </AnimatePresence>
 
                 {/* CTA */}
-                <motion.button
-                  className="mt-8 w-full py-3 rounded-full text-sm font-medium transition-all duration-300"
+                <motion.a
+                  href={plan.price === 'Free' ? "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk" : "https://ko-fi.com/mathi4raja"}
+                  download={plan.price === 'Free' ? true : undefined}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                  }}
+                  className="mt-8 w-full block text-center py-3 rounded-full text-sm font-medium transition-all duration-300"
                   style={{
                     background: isSelected ? plan.accent : 'transparent',
                     color: isSelected ? '#0a0a0a' : plan.accent,
@@ -204,8 +212,8 @@ export default function AccessSection() {
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
                 >
-                  {plan.price === 'Free' ? 'Download Now' : 'Join Collective'}
-                </motion.button>
+                  {plan.price === 'Free' ? 'Download Now' : 'Donate Us'}
+                </motion.a>
               </motion.div>
             );
           })}

@@ -1,11 +1,23 @@
 'use client';
 
 import { motion, useInView } from 'framer-motion';
-import { useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
 
 export default function FooterSection() {
   const ref = useRef<HTMLDivElement>(null);
   const isInView = useInView(ref, { once: true, amount: 0.3 });
+  const [stars, setStars] = useState<number | null>(null);
+
+  useEffect(() => {
+    fetch('https://api.github.com/repos/Mathi4Raja/PeerChat')
+      .then(res => res.json())
+      .then(data => {
+        if (typeof data.stargazers_count === 'number') {
+          setStars(data.stargazers_count);
+        }
+      })
+      .catch(err => console.error('Error fetching stars:', err));
+  }, []);
 
   return (
     <footer ref={ref} className="px-4 sm:px-6 py-8 sm:py-20 border-t border-[var(--color-slate)]/30">
@@ -54,18 +66,18 @@ export default function FooterSection() {
             </ul>
           </nav>
 
-          {/* Downloads */}
+          {/* Metrics */}
           <div>
-            <h4 className="mono-label mb-4 text-[var(--color-sage)]">Downloads</h4>
+            <h4 className="mono-label mb-4 text-[var(--color-sage)]">GitHub Stars</h4>
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <div className="w-1.5 h-1.5 rounded-full bg-[var(--color-sage)]" />
                 <span className="font-[family-name:var(--font-display)] font-bold text-xl text-[var(--color-ivory)]">
-                  50K+
+                  {stars !== null ? stars : '0'}
                 </span>
               </div>
               <p className="text-sm text-[var(--color-ash)]">
-                Downloads on Google Play
+                Stars on GitHub
               </p>
             </div>
           </div>
