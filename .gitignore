@@ -46,3 +46,9 @@ app.*.map.json
 
 #automation logs
 automation_logs/
+
+# Unused and transient metadata
+.metadata
+analyze_output.txt
+logs/
+.kiro/
