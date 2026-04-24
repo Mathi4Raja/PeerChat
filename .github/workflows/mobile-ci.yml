@@ -46,7 +46,7 @@ jobs:
           echo "storeFile=keystore.jks" >> android/key.properties
 
       - name: Build release APK
-        run: flutter build apk --release
+        run: flutter build apk --release --target-platform android-arm,android-arm64
 
       - name: Publish to GitHub Releases
         env:

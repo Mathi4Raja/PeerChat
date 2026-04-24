@@ -1,6 +1,6 @@
 @import "tailwindcss";
 
-@theme inline {
+:root {
   --color-ink: #09090f;
   --color-charcoal: #0f0e18;
   --color-graphite: #181626;
@@ -118,12 +118,31 @@ html.lenis, html.lenis body { height: auto; }
   background-size: 256px 256px;
 }
 
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: rgba(139, 92, 246, 0.3);
-  border-radius: 2px;
+/* ── Custom scrollbar ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track {
+  background: rgba(9, 9, 15, 0.5);
 }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(139, 92, 246, 0.55) 0%,
+    rgba(99, 102, 241, 0.35) 100%
+  );
+  border-radius: 100px;
+  transition: background 0.25s ease;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(
+    180deg,
+    rgba(139, 92, 246, 0.85) 0%,
+    rgba(167, 139, 250, 0.65) 100%
+  );
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.4);
+}
+::-webkit-scrollbar-corner { background: transparent; }
+/* Firefox */
+* { scrollbar-width: thin; scrollbar-color: rgba(139, 92, 246, 0.5) rgba(9, 9, 15, 0.4); }
 
 .chat-bubble {
   backdrop-filter: blur(12px);

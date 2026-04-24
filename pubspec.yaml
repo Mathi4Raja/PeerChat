@@ -38,6 +38,9 @@ dependencies:
   app_links: ^6.3.2
   firebase_core: ^4.7.0
   firebase_auth: ^6.4.0
+  url_launcher: ^6.3.1
+  cloud_firestore: ^6.3.0
+  share_plus: ^10.1.4
 
 dev_dependencies:
   flutter_test:

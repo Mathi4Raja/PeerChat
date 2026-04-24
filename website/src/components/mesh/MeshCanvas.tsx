@@ -147,8 +147,8 @@ function MeshNodes() {
   const nodeCount = stateRef.current.nodes.length;
 
   useFrame(({ clock }) => {
-    if (!instancedRef.current || !glowRef.current) return;
     const time = clock.getElapsedTime();
+    if (!instancedRef.current || !glowRef.current) return;
     const nodes = stateRef.current.nodes;
     const scroll = stateRef.current.scrollProgress;
 

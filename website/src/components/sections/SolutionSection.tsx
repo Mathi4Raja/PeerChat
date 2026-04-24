@@ -99,7 +99,7 @@ export default function SolutionSection() {
                     y1={nodePositions[i].y * responsiveR}
                     x2={nodePositions[j].x * responsiveR}
                     y2={nodePositions[j].y * responsiveR}
-                    initial={{ opacity: 0, pathLength: 0 }}
+                    initial={{ opacity: 0, pathLength: 0, strokeWidth: 0.8 }}
                     animate={{
                       opacity: 1,
                       pathLength: 1,

@@ -43,7 +43,7 @@ class BootstrapApp extends StatefulWidget {
 
 class _BootstrapAppState extends State<BootstrapApp> {
   final FirstSignInService _firstSignInService = FirstSignInService();
-  final MenuSettingsController _menuSettingsController =
+  MenuSettingsController _menuSettingsController =
       MenuSettingsController();
   AppState? _appState;
   Object? _fatalError;
@@ -97,7 +97,22 @@ class _BootstrapAppState extends State<BootstrapApp> {
       appState.dispose();
       return;
     }
+
+    // Re-create controller with the live updateLocalName callback so any
+    // username change immediately re-broadcasts to mesh peers.
+    final newController = MenuSettingsController(
+      onDisplayNameChanged: appState.updateLocalName,
+    );
+    await newController.init();
+
+    // Apply stored username into mesh advertising on startup.
+    final storedUsername = newController.username;
+    if (storedUsername != null && storedUsername.isNotEmpty) {
+      appState.updateLocalName(storedUsername);
+    }
+
     setState(() {
+      _menuSettingsController = newController;
       _appState = appState;
       _showFirstSignIn = false;
       _isLoading = false;

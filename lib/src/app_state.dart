@@ -144,25 +144,53 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   String? get publicKey => meshRouter.localPeerId;
 
-  // Get human-readable name from public key (Signing Key)
+  String? _customUsername;
+
+  // Get human-readable name — uses custom username if set, else key-derived.
   String get displayName {
+    if (_customUsername != null && _customUsername!.isNotEmpty) {
+      return _customUsername!;
+    }
     final key = publicKey;
     if (key == null) return 'Generating...';
     return NameGenerator.generateName(key);
   }
 
-  // Get short name (without number)
+  // Get short name (without number) — uses first word of custom username if set.
   String get shortName {
+    if (_customUsername != null && _customUsername!.isNotEmpty) {
+      return _customUsername!.split(' ').first;
+    }
     final key = publicKey;
     if (key == null) return 'Unknown';
     return NameGenerator.generateShortName(key);
   }
 
-  // Get initials
+  // Get initials — from custom username if set.
   String get initials {
+    if (_customUsername != null && _customUsername!.isNotEmpty) {
+      final parts = _customUsername!.trim().split(RegExp(r'\s+'));
+      if (parts.length >= 2) {
+        return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+      }
+      return _customUsername!.substring(0, _customUsername!.length >= 2 ? 2 : 1).toUpperCase();
+    }
     final key = publicKey;
     if (key == null) return 'U';
     return NameGenerator.generateInitials(key);
+  }
+
+  /// Set (or clear) a custom username. Updates mesh broadcasting immediately.
+  void setCustomUsername(String? username) {
+    _customUsername = (username?.trim().isEmpty ?? true) ? null : username?.trim();
+    updateLocalName(displayName);
+    notifyListeners();
+  }
+
+  /// Updates the local peer's advertised name in WiFi Direct and Bluetooth
+  /// handshakes. Callable from outside (main.dart, MenuSettingsController).
+  void updateLocalName(String name) {
+    meshRouter.updateLocalName(name);
   }
 
   bool get hasActiveTransfer => fileTransferService.activeSessions.isNotEmpty;

@@ -426,3 +426,41 @@
 - [x] Added "Verification Sent" UI state with deep link auto-completion
 - [x] Clarified Google OAuth configuration requirements (Client ID/google-services.json)
 
+
+## Phase 58: Menu Functionality + Website Pages (Apr 24, 2026)
+- [x] MenuSettingsService: added username persistence (loadUsername/saveUsername) with FlutterSecureStorage
+- [x] MenuSettingsController: added username get/set with onDisplayNameChanged callback wired to mesh
+- [x] AppState: _customUsername override for displayName/shortName/initials; public updateLocalName() delegate
+- [x] main.dart: re-creates MenuSettingsController post-AppState init to wire live callback; applies stored username on bootstrap
+- [x] AccountSettingsScreen: full rewrite — read-only for guests; editable username for Google/email users with mesh propagation
+- [x] ShareAppScreen: real APK link + Copy/Open; WebShare navigation; P2P mesh instructions
+- [x] SupportScreen: real mailto feedback (mathi.raja.333@gmail.com, subject: PeerChat-Feedback); donate opens /donateus
+- [x] AboutScreen: all links centralized as constants pointing to real website pages (changelog/tos/policies/github)
+- [x] HelpFaqScreen: expanded to 8 comprehensive animated FAQ tiles
+- [x] pubspec.yaml: added url_launcher ^6.3.1
+- [x] Website: created /donateus page (Ko-fi + UPI QR via qrserver.com API)
+- [x] Website: created /changelog page with timeline design and full v1.0.0 release notes
+- [x] Website: created /tos (Terms of Service) page
+- [x] Website: created /policies (Privacy Policy) page with TL;DR zero-data callout
+- [x] Website: SubPageLayout shared component for all sub-pages
+- [x] Website: FooterSection updated to 4-column grid with Legal links column + bottom bar links
+- [x] Website: HeroSection CTA changed from direct APK link to website homepage URL
+- [x] Website: AccessSection Patron button updated from ko-fi to /donateus
+- [x] flutter analyze: 0 issues; Next.js build: all 5 routes (/, /changelog, /donateus, /policies, /tos) generated successfully
+
+## Phase 59: Bug Fixes + Feature Completion (Apr 25, 2026)
+- [x] Fixed Framer Motion strokeWidth undefined warning — seeded strokeWidth: 0.8 in initial prop of motion.line
+- [x] Fixed THREE.Clock deprecated warning — replaced clock.getElapsedTime() with manual delta accumulation in BackgroundPlane, MeshNodes, AutoSignals
+- [x] Fixed scroll container non-static position warning — added position:relative to mesh-canvas-wrap and SubPageLayout root
+- [x] Redesigned /donateus — compact viewport-fit layout, SVG icons replacing emoji, inline UPI QR next to ID
+- [x] Updated SubPageLayout — compact prop, clamp-based heading sizes, smaller nav/footer
+- [x] Compacted /changelog, /tos, /policies heading + card sizes
+- [x] /tos Section 4: documented username uniqueness via Firestore registry
+- [x] /policies Section 2: accurately discloses Firestore username_registry collection
+- [x] Flutter: ShareAppScreen — share_plus native Android share sheet (covers Quick Share, Bluetooth, Gmail)
+- [x] Flutter: ShareAppScreen — WebShare auto-starts server before navigating
+- [x] Flutter: SupportScreen — Gmail API direct send for Google users (authorizationForScopes); mailto fallback for email users; guest sees sign-in prompt
+- [x] Flutter: AccountSettingsScreen — Firestore uniqueness check before save with inline error
+- [x] Flutter: UsernameRegistryService — Firestore CRUD for username uniqueness (username_registry collection)
+- [x] pubspec.yaml: added cloud_firestore ^6.3.0, share_plus ^10.1.4, http ^1.2.2
+- [x] flutter analyze: 0 issues; next build: exit 0

@@ -26,10 +26,10 @@ export default function FooterSection() {
           initial={{ opacity: 0, y: 20 }}
           animate={isInView ? { opacity: 1, y: 0 } : {}}
           transition={{ duration: 0.8 }}
-          className="grid grid-cols-1 md:grid-cols-3 gap-6 sm:gap-12 mb-8 sm:mb-16"
+          className="grid grid-cols-2 md:grid-cols-4 gap-6 sm:gap-8 mb-8 sm:mb-16"
         >
           {/* Brand */}
-          <div>
+          <div className="col-span-2 md:col-span-1">
             <div className="flex items-center gap-2 mb-4">
               <div className="w-2 h-2 rounded-full bg-[var(--color-ember)]" style={{ boxShadow: '0 0 8px rgba(139,92,246,0.5)' }} />
               <span className="font-[family-name:var(--font-display)] font-bold text-[var(--color-ivory)]">
@@ -42,7 +42,7 @@ export default function FooterSection() {
             </p>
           </div>
 
-          {/* Links */}
+          {/* Network Links */}
           <nav aria-label="Footer navigation">
             <h4 className="mono-label mb-4 text-[var(--color-copper)]">Network</h4>
             <ul className="space-y-2 text-sm text-[var(--color-ash)]">
@@ -53,10 +53,32 @@ export default function FooterSection() {
                 { label: 'Security Audit', href: '#' }
               ].map(link => (
                 <li key={link.label}>
-                  <a 
-                    href={link.href} 
+                  <a
+                    href={link.href}
                     target={link.href.startsWith('http') ? "_blank" : undefined}
                     rel={link.href.startsWith('http') ? "noopener noreferrer" : undefined}
+                    className="hover:text-[var(--color-ember)] transition-colors duration-300"
+                  >
+                    {link.label}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          </nav>
+
+          {/* Legal Links */}
+          <nav aria-label="Legal navigation">
+            <h4 className="mono-label mb-4 text-[var(--color-ember)]">Legal</h4>
+            <ul className="space-y-2 text-sm text-[var(--color-ash)]">
+              {[
+                { label: 'Changelog', href: '/changelog' },
+                { label: 'Terms of Service', href: '/tos' },
+                { label: 'Privacy Policy', href: '/policies' },
+                { label: 'Donate', href: '/donateus' },
+              ].map(link => (
+                <li key={link.label}>
+                  <a
+                    href={link.href}
                     className="hover:text-[var(--color-ember)] transition-colors duration-300"
                   >
                     {link.label}
@@ -88,11 +110,26 @@ export default function FooterSection() {
           initial={{ opacity: 0 }}
           animate={isInView ? { opacity: 1 } : {}}
           transition={{ duration: 0.8, delay: 0.3 }}
-          className="pt-8 border-t border-[var(--color-slate)]/20 flex flex-col items-center justify-center gap-3 text-center"
+          className="pt-8 border-t border-[var(--color-slate)]/20 flex flex-col sm:flex-row items-center justify-between gap-3"
         >
           <p className="font-[family-name:var(--font-mono)] text-sm text-[var(--color-ash)]">
             © {new Date().getFullYear()} PeerChat.
           </p>
+          <div className="flex gap-5">
+            {[
+              { label: 'Terms', href: '/tos' },
+              { label: 'Privacy', href: '/policies' },
+              { label: 'Changelog', href: '/changelog' },
+            ].map(l => (
+              <a
+                key={l.label}
+                href={l.href}
+                className="font-[family-name:var(--font-mono)] text-xs text-[var(--color-ash)] hover:text-[var(--color-ember)] transition-colors"
+              >
+                {l.label}
+              </a>
+            ))}
+          </div>
           <p className="font-[family-name:var(--font-mono)] text-xs text-[var(--color-slate)]">
             The network is the people.
           </p>

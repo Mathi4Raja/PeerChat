@@ -1,19 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:peerchat_secure/src/services/deduplication_cache.dart';
+import 'package:peerchat_secure/src/services/db_service.dart';
 import 'package:peerchat_secure/src/config/limits_config.dart';
-
-// Use a simplified mock that doesn't try to extend the singleton factory directly
-// Since we only need the type match for the constructor
-class MockDBService {
-  Future<dynamic> get db async => null;
-}
 
 void main() {
   group('Security & Concurrency Hardening Tests', () {
     
     test('DeduplicationCache Enforces Strict LRU Boundary', () {
-      // Pass null casted to dynamic to avoid constructor issues in this specific test
-      final cache = DeduplicationCache(null as dynamic);
+      final cache = DeduplicationCache(DBService());
       const maxFingerprints = DeduplicationLimits.maxFingerprints;
       
       // Fill the cache up to the limit
