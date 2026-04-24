@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
@@ -16,14 +15,43 @@ import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
-import 'first_sign_in_screen.dart';
-import 'web_share_asset_picker.dart';
 import 'direct_transfer_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? preselectedPeerId;
 
   const ChatScreen({super.key, this.preselectedPeerId});
+
+  static Route<void> route({String? preselectedPeerId}) {
+    return PageRouteBuilder<void>(
+      settings: RouteSettings(
+        name: preselectedPeerId == null
+            ? 'chat'
+            : 'chat/$preselectedPeerId',
+      ),
+      transitionDuration: const Duration(milliseconds: 220),
+      reverseTransitionDuration: const Duration(milliseconds: 180),
+      pageBuilder: (context, animation, secondaryAnimation) =>
+          ChatScreen(preselectedPeerId: preselectedPeerId),
+      transitionsBuilder: (context, animation, secondaryAnimation, child) {
+        final curved = CurvedAnimation(
+          parent: animation,
+          curve: Curves.easeOutCubic,
+          reverseCurve: Curves.easeInCubic,
+        );
+        return FadeTransition(
+          opacity: Tween<double>(begin: 0.0, end: 1.0).animate(curved),
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0.0, 0.02),
+              end: Offset.zero,
+            ).animate(curved),
+            child: child,
+          ),
+        );
+      },
+    );
+  }
 
   @override
   State<ChatScreen> createState() => _ChatScreenState();
@@ -892,9 +920,9 @@ class _ChatScreenState extends State<ChatScreen> {
                 if (isMe) ...[
                   const SizedBox(width: 4),
                   Icon(
-                    _getStatusIcon(message.status),
+                    message.status.icon,
                     size: 15,
-                    color: _getStatusColor(message.status),
+                    color: message.status.color,
                   ),
                 ],
               ],
@@ -905,38 +933,6 @@ class _ChatScreenState extends State<ChatScreen> {
     );
   }
 
-  IconData _getStatusIcon(MessageStatus status) {
-    switch (status) {
-      case MessageStatus.sending:
-        return Icons.access_time_rounded;
-      case MessageStatus.queued:
-        return Icons.schedule_send_rounded;
-      case MessageStatus.routing:
-        return Icons.alt_route_rounded;
-      case MessageStatus.sent:
-        return Icons.alt_route_rounded;
-      case MessageStatus.delivered:
-      case MessageStatus.seen:
-        return Icons.done_all_rounded;
-      case MessageStatus.failed:
-        return Icons.error_outline_rounded;
-    }
-  }
-
-  Color _getStatusColor(MessageStatus status) {
-    switch (status) {
-      case MessageStatus.failed:
-        return AppTheme.danger;
-      case MessageStatus.delivered:
-      case MessageStatus.seen:
-        return Colors.white;
-      case MessageStatus.sending:
-      case MessageStatus.queued:
-      case MessageStatus.routing:
-      case MessageStatus.sent:
-        return Colors.white.withValues(alpha: 0.55);
-    }
-  }
 
   Widget _buildHopIndicator(int hopCount, bool isMe) {
     final accentColor = isMe

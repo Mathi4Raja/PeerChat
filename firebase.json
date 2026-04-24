@@ -1,0 +1,1 @@
+{"flutter":{"platforms":{"android":{"default":{"projectId":"peerchat-95c0b","appId":"1:257026329569:android:0183ac8abbd5f01d3fe0a0","fileOutput":"android/app/google-services.json"}},"dart":{"lib/firebase_options.dart":{"projectId":"peerchat-95c0b","configurations":{"android":"1:257026329569:android:0183ac8abbd5f01d3fe0a0","ios":"1:257026329569:ios:2bbe7d71870dc59c3fe0a0"}}}}}}

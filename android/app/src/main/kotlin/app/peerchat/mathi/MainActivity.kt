@@ -1,4 +1,4 @@
-package com.example.peerchat_secure
+package app.peerchat.mathi
 
 import android.content.Context
 import android.content.Intent

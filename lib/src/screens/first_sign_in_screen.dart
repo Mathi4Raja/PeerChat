@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'package:app_links/app_links.dart';
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../services/auth_service.dart';
@@ -19,14 +21,41 @@ class FirstSignInScreen extends StatefulWidget {
 
 class _FirstSignInScreenState extends State<FirstSignInScreen> {
   final AuthService _authService = AuthService();
+  final _appLinks = AppLinks();
+  StreamSubscription<Uri>? _linkSubscription;
+
   bool _submitting = false;
+  bool _verificationSent = false;
   final TextEditingController _emailController = TextEditingController();
   String? _emailError;
   String? _googleError;
 
   @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  void _initDeepLinks() {
+    _linkSubscription = _appLinks.uriLinkStream.listen((uri) {
+      if (uri.scheme == 'peerchat' && uri.host == 'verify') {
+        final email = uri.queryParameters['email'];
+        if (email != null && _verificationSent) {
+          _completeVerification(email);
+        }
+      }
+    });
+  }
+
+  Future<void> _completeVerification(String email) async {
+    setState(() => _submitting = true);
+    await widget.onComplete(FirstSignInMethod.email, email: email);
+  }
+
+  @override
   void dispose() {
     _emailController.dispose();
+    _linkSubscription?.cancel();
     super.dispose();
   }
 
@@ -58,9 +87,16 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
       );
     } catch (e) {
       if (!mounted) return;
+      debugPrint('FirstSignInScreen: Google Sign-In error: $e');
+      final raw = e.toString();
+      final message = raw.startsWith('Exception: ')
+          ? raw.substring('Exception: '.length)
+          : raw.startsWith('StateError: ')
+              ? raw.substring('StateError: '.length)
+              : 'Google sign in failed: $raw';
       setState(() {
         _submitting = false;
-        _googleError = 'Google sign in failed: $e';
+        _googleError = message;
       });
     }
   }
@@ -68,16 +104,33 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
   Future<void> _submitEmail() async {
     if (_submitting) return;
     final email = _emailController.text.trim();
-    final error = _validateEmail(email);
-    if (error != null) {
-      setState(() {
-        _emailError = error;
-      });
+    
+    final emailErr = _validateEmail(email);
+    if (emailErr != null) {
+      setState(() => _emailError = emailErr);
       return;
     }
-    setState(() => _submitting = true);
-    _emailError = null;
-    await widget.onComplete(FirstSignInMethod.email, email: email);
+
+    setState(() {
+      _submitting = true;
+      _emailError = null;
+    });
+
+    try {
+      await _authService.sendVerificationEmail(email);
+      
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _verificationSent = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _submitting = false;
+        _emailError = 'Error: $e';
+      });
+    }
   }
 
   String? _validateEmail(String email) {
@@ -208,41 +261,89 @@ class _FirstSignInScreenState extends State<FirstSignInScreen> {
                       ],
                     ),
                     const SizedBox(height: 20),
-                    TextField(
-                      controller: _emailController,
-                      enabled: !_submitting,
-                      keyboardType: TextInputType.emailAddress,
-                      onChanged: (_) {
-                        if (_emailError == null) return;
-                        setState(() {
-                          _emailError = null;
-                        });
-                      },
-                      decoration: InputDecoration(
-                        labelText: 'Email Address',
-                        hintText: 'name@example.com',
-                        errorText: _emailError,
-                        prefixIcon: const Icon(Icons.alternate_email_rounded),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 16,
-                          vertical: 16,
+                    if (!_verificationSent) ...[
+                      TextField(
+                        controller: _emailController,
+                        enabled: !_submitting,
+                        keyboardType: TextInputType.emailAddress,
+                        textInputAction: TextInputAction.done,
+                        onSubmitted: (_) => _submitEmail(),
+                        onChanged: (_) {
+                          if (_emailError == null) return;
+                          setState(() {
+                            _emailError = null;
+                          });
+                        },
+                        decoration: InputDecoration(
+                          labelText: 'Email Address',
+                          hintText: 'name@example.com',
+                          errorText: _emailError,
+                          prefixIcon: const Icon(Icons.alternate_email_rounded),
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 16,
+                          ),
                         ),
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    OutlinedButton(
-                      onPressed: _submitting ? null : _submitEmail,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 14),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                      const SizedBox(height: 18),
+                      OutlinedButton(
+                        onPressed: _submitting ? null : _submitEmail,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(
+                          'Send Verification Link',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w600),
                         ),
                       ),
-                      child: Text(
-                        'Continue with Email',
-                        style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+                    ] else ...[
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: AppTheme.accent.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: AppTheme.accent.withValues(alpha: 0.2),
+                          ),
+                        ),
+                        child: Column(
+                          children: [
+                            const Icon(
+                              Icons.mark_email_read_rounded,
+                              size: 48,
+                              color: AppTheme.accent,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'Verification Link Sent!',
+                              style: GoogleFonts.inter(
+                                fontSize: 18,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.textPrimary,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'We sent a link to ${_emailController.text}.\nClick it to verify your identity and continue.',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                color: AppTheme.textSecondary,
+                                height: 1.4,
+                              ),
+                            ),
+                            const SizedBox(height: 20),
+                            TextButton(
+                              onPressed: () => setState(() => _verificationSent = false),
+                              child: const Text('Change Email'),
+                            ),
+                          ],
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 12),
                     TextButton(
                       onPressed: _submitting ? null : _submitGuest,

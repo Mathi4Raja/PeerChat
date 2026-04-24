@@ -9,7 +9,6 @@ import 'package:provider/provider.dart';
 
 import '../app_state.dart';
 import '../theme.dart';
-import '../services/app_icon_service.dart';
 
 class WebShareAssetPicker extends StatefulWidget {
   final bool allowMultiple;
@@ -43,6 +42,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
 
   List<Map<String, dynamic>> _apps = [];
   List<MediaAsset> _recentMedia = [];
+  Map<String, int> _fileSizes = {};
   List<FileSystemEntity> _storageFiles = [];
   List<PlatformFile> _downloadFiles = [];
   List<PlatformFile> _documentFiles = [];
@@ -129,10 +129,22 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
         return a.path.toLowerCase().compareTo(b.path.toLowerCase());
       });
 
+      final sizeMap = <String, int>{};
+      for (final entity in list) {
+        if (entity is File) {
+          try {
+            sizeMap[entity.path] = await entity.length();
+          } catch (_) {
+            sizeMap[entity.path] = 0;
+          }
+        }
+      }
+
       if (!mounted) return;
       setState(() {
         _storageFiles = list;
         _currentPath = path;
+        _fileSizes = sizeMap;
       });
     } catch (e) {
       debugPrint('Error scanning storage: $e');
@@ -159,7 +171,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
     for (final root in roots) {
       if (!await root.exists()) continue;
       await for (final file in _walkFiles(root, maxResults: 150)) {
-        final entry = _toPlatformFile(file);
+        final entry = await _toPlatformFile(file);
         if (entry == null) continue;
         final ext = p.extension(entry.name).toLowerCase();
         final lowerPath = entry.path?.toLowerCase() ?? '';
@@ -191,9 +203,9 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
     } catch (_) {}
   }
 
-  PlatformFile? _toPlatformFile(File file) {
+  Future<PlatformFile?> _toPlatformFile(File file) async {
     try {
-      final stat = file.statSync();
+      final stat = await file.stat();
       return PlatformFile(
         path: file.path,
         name: p.basename(file.path),
@@ -400,7 +412,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
   Widget _buildSmartSection({required String title, required List<PlatformFile> files, required IconData icon}) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
-      decoration: BoxDecoration(color: AppTheme.bgSurface.withOpacity(0.4), borderRadius: BorderRadius.circular(18)),
+      decoration: BoxDecoration(color: AppTheme.bgSurface.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(18)),
       child: Column(
         children: [
           ListTile(
@@ -459,7 +471,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
                     ? Container(color: Colors.black26, child: const Icon(Icons.movie_rounded, color: Colors.white, size: 30))
                     : Image.file(File(asset.path), fit: BoxFit.cover, cacheWidth: 200, errorBuilder: (_, __, ___) => Container(color: AppTheme.bgCard)),
               ),
-              if (selected) Container(decoration: BoxDecoration(color: AppTheme.primary.withOpacity(0.4), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.check_circle, color: Colors.white)),
+              if (selected) Container(decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.4), borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.check_circle, color: Colors.white)),
             ],
           ),
         );
@@ -486,7 +498,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
               if (entity is Directory) {
                 return _buildSelectableTile(selected: false, icon: Icons.folder_rounded, title: name, subtitle: entity.path, onTap: () => _scanStorage(entity.path), trailing: const Icon(Icons.chevron_right));
               }
-              final size = _safeFileLength(entity as File);
+              final size = _fileSizes[entity.path] ?? 0;
               return _buildSelectableTile(selected: _isItemSelected(entity.path), icon: _iconForFile(name), title: name, subtitle: _formatSize(size), onTap: () => _toggleSelection(PlatformFile(path: entity.path, name: name, size: size)));
             },
           ),
@@ -518,7 +530,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
   Widget _buildSelectableTile({required bool selected, required IconData icon, required String title, required String subtitle, required VoidCallback onTap, Widget? trailing}) {
     return ListTile(
       onTap: onTap,
-      leading: Container(width: 44, height: 44, decoration: BoxDecoration(color: selected ? AppTheme.primary.withOpacity(0.1) : AppTheme.bgSurface, borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: selected ? AppTheme.primary : AppTheme.accent)),
+      leading: Container(width: 44, height: 44, decoration: BoxDecoration(color: selected ? AppTheme.primary.withValues(alpha: 0.1) : AppTheme.bgSurface, borderRadius: BorderRadius.circular(12)), child: Icon(icon, color: selected ? AppTheme.primary : AppTheme.accent)),
       title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontWeight: FontWeight.bold)),
       subtitle: Text(subtitle, maxLines: 1, overflow: TextOverflow.ellipsis),
       trailing: trailing ?? Checkbox(value: selected, onChanged: (_) => onTap(), activeColor: AppTheme.primary),
@@ -539,7 +551,7 @@ class _WebShareAssetPickerState extends State<WebShareAssetPicker>
     ])));
   }
 
-  int _safeFileLength(File file) { try { return file.lengthSync(); } catch (_) { return 0; } }
+
 }
 
 /// Expert-grade App Tile with lazy icon loading and staggered entry animation.

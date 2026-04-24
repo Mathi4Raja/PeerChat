@@ -152,7 +152,7 @@ class DiscoveryService {
         }
       });
     } catch (e) {
-      // Ignore mDNS errors
+      debugPrint('DiscoveryService: mDNS lookup error: $e');
     }
   }
 
@@ -223,7 +223,9 @@ class DiscoveryService {
     _scanSubscription = null;
     try {
       _bluetooth.stopScan();
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DiscoveryService: stopScan failed during suspend: $e');
+    }
     _bluetoothScanning = false;
     debugPrint('DiscoveryService: Bluetooth discovery suspended');
   }
@@ -423,5 +425,11 @@ class DiscoveryService {
 
     await _foundController.close();
     _foundController = StreamController.broadcast();
+  }
+
+  Future<void> dispose() async {
+    await stop();
+    // Do not re-open the controller on dispose
+    await _foundController.close();
   }
 }

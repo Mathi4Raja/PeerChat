@@ -275,7 +275,7 @@ class _PeerTile extends StatelessWidget {
         onTap: isVerified
             ? () {
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => ChatScreen(preselectedPeerId: peer.id)),
+                  ChatScreen.route(preselectedPeerId: peer.id),
                 );
               }
             : null,

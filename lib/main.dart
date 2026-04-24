@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:peerchat_secure/firebase_options.dart';
 import 'package:provider/provider.dart';
 import 'src/app_state.dart';
 import 'src/screens/first_sign_in_screen.dart';
@@ -11,6 +13,15 @@ import 'src/theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    debugPrint('Firebase initialization failed: $e');
+  }
+
   GoogleFonts.config.allowRuntimeFetching = false;
 
   // Immersive dark status/nav bars

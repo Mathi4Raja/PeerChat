@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../config/identity_ui_config.dart';
+import '../models/chat_message.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'chat_screen.dart';
@@ -17,6 +20,9 @@ class ChatsListScreen extends StatefulWidget {
 class _ChatsListScreenState extends State<ChatsListScreen> {
   Future<List<Map<String, Object?>>>? _rowsFuture;
   int _lastUnreadSignature = -1;
+  StreamSubscription<String>? _statusChangeSubscription;
+  bool _statusListenerInitialized = false;
+  Timer? _statusRefreshDebounce;
 
   int _computeUnreadSignature(Map<String, int> unreadCounts) {
     final entries = unreadCounts.entries.toList()
@@ -35,6 +41,22 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       _lastUnreadSignature = signature;
       _rowsFuture = appState.db.getRecentChatRows();
     }
+    if (!_statusListenerInitialized) {
+      _statusListenerInitialized = true;
+      final router = Provider.of<AppState>(context, listen: false).meshRouter;
+      _statusChangeSubscription =
+          router.onMessageStatusChanged.listen((_) {
+        if (!mounted) return;
+        _statusRefreshDebounce?.cancel();
+        _statusRefreshDebounce = Timer(
+          const Duration(milliseconds: 120),
+          () {
+            if (!mounted) return;
+            unawaited(_reloadRows());
+          },
+        );
+      });
+    }
   }
 
   Future<void> _reloadRows() async {
@@ -43,6 +65,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       _rowsFuture = appState.db.getRecentChatRows();
     });
     await _rowsFuture;
+  }
+
+  @override
+  void dispose() {
+    _statusRefreshDebounce?.cancel();
+    _statusChangeSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -252,9 +281,7 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                 borderRadius: BorderRadius.circular(16),
                 onTap: () {
                   Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => ChatScreen(preselectedPeerId: peerId),
-                    ),
+                    ChatScreen.route(preselectedPeerId: peerId),
                   );
                 },
                 onLongPress: () async {
@@ -398,13 +425,13 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
                               children: [
                                 if (isSentByMe) ...[
                                   Icon(
-                                    Icons.done_all_rounded,
-                                    size: 16,
-                                    color: AppTheme.textSecondary
-                                        .withValues(alpha: 0.5),
+                                    MessageStatus.values[(row['last_status'] as int?) ?? 0].icon,
+                                    size: 14,
+                                    color: MessageStatus.values[(row['last_status'] as int?) ?? 0].color.withValues(alpha: 0.7),
                                   ),
                                   const SizedBox(width: 6),
                                 ],
+
                                 Expanded(
                                   child: Text(
                                     lastContent,

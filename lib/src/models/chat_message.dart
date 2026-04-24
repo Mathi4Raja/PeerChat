@@ -1,4 +1,7 @@
+import 'package:flutter/material.dart';
+
 class ChatMessage {
+
   final String id;
   final String peerId; // Who we're chatting with
   final String content;
@@ -65,8 +68,34 @@ enum MessageStatus {
   sending,
   routing,
   sent,
-  delivered,
-  seen,
   failed,
   queued,
 }
+
+extension MessageStatusUI on MessageStatus {
+  IconData get icon {
+    switch (this) {
+      case MessageStatus.sending:
+        return Icons.access_time_rounded;
+      case MessageStatus.queued:
+        return Icons.schedule_send_rounded;
+      case MessageStatus.routing:
+      case MessageStatus.sent:
+        return Icons.alt_route_rounded;
+      case MessageStatus.failed:
+        return Icons.error_outline_rounded;
+    }
+  }
+
+  Color get color {
+    switch (this) {
+      case MessageStatus.failed:
+        return const Color(0xFFEF5350);
+      default:
+        return Colors.white.withValues(alpha: 0.55);
+    }
+  }
+}
+
+
+

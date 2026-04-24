@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
+import 'package:provider/provider.dart';
+import 'package:peerchat_secure/main.dart';
+import '../../app_state.dart';
 import '../../theme.dart';
 import 'about_screen.dart';
 import 'account_settings_screen.dart';
@@ -45,16 +48,23 @@ class MenuScreen extends StatelessWidget {
                     color: Colors.white.withValues(alpha: 0.2),
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Image.asset(
-                    'assets/image.png',
-                    height: 40,
-                    errorBuilder: (_, __, ___) => const Icon(
-                      Icons.shield,
-                      color: Colors.white,
-                      size: 40,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    clipBehavior: Clip.antiAlias,
+                    child: Image.asset(
+                      'assets/image.png',
+                      height: 40,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.shield,
+                        color: Colors.white,
+                        size: 40,
+                      ),
                     ),
                   ),
+
                 ),
+
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -122,6 +132,45 @@ class MenuScreen extends StatelessWidget {
             title: 'About',
             subtitle: 'Changelog, terms, policies, app version',
             onTap: () => _open(context, const AboutScreen()),
+          ),
+          const SizedBox(height: 20),
+          _MenuTile(
+            icon: Icons.logout_rounded,
+            iconColor: AppTheme.danger,
+            title: 'Logout',
+            subtitle: 'Sign out and reset identity',
+            onTap: () async {
+              final confirm = await showDialog<bool>(
+                context: context,
+                builder: (context) => AlertDialog(
+                  title: const Text('Logout'),
+                  content: const Text('Are you sure you want to logout? This will reset your identity selection.'),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, false),
+                      child: const Text('Cancel'),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.pop(context, true),
+                      child: const Text('Logout', style: TextStyle(color: AppTheme.danger)),
+                    ),
+                  ],
+                ),
+              );
+
+              if (confirm == true) {
+                if (context.mounted) {
+                  final appState = Provider.of<AppState>(context, listen: false);
+                  await appState.signOut();
+                  if (context.mounted) {
+                    Navigator.of(context).pushAndRemoveUntil(
+                      MaterialPageRoute(builder: (_) => const BootstrapApp()),
+                      (route) => false,
+                    );
+                  }
+                }
+              }
+            },
           ),
         ],
       ),

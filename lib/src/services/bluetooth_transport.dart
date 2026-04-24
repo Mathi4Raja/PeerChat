@@ -225,7 +225,7 @@ class BluetoothTransport implements TransportService {
   }
 
   @override
-  Future<bool> sendMessage(String peerId, Uint8List data) async {
+  Future<bool> sendMessage(String peerId, Uint8List data, {bool isControl = false}) async {
     debugPrint('BluetoothTransport.sendMessage to $peerId');
 
     // Fail fast for non-Bluetooth transport IDs so MultiTransport can
@@ -301,6 +301,15 @@ class BluetoothTransport implements TransportService {
     // Bluetooth transport writes directly to the socket output stream and
     // does not maintain an internal outbound queue to flush.
   }
+
+  @override
+  Future<bool> sendFile(String peerId, String filePath, String fileId) async {
+    debugPrint('BluetoothTransport.sendFile not implemented');
+    return false;
+  }
+
+  @override
+  Stream<FileTransferProgressEvent> get onFileProgress => const Stream.empty();
 
   @override
   Future<void> dispose() async {

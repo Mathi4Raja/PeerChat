@@ -501,7 +501,7 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
 
           if (_routingStats != null) ...[
             Text(
-              'Delivery Stats',
+              'Routing Stats',
               style: GoogleFonts.inter(
                 fontSize: 15,
                 fontWeight: FontWeight.w700,
@@ -519,30 +519,12 @@ class _RoutingDebugScreenState extends State<RoutingDebugScreen> {
                 children: [
                   _statChip(
                       'Sent', _routingStats!.messagesSent, AppTheme.accent),
-                  _statChip('Delivered', _routingStats!.messagesDelivered,
-                      AppTheme.online),
                   _statChip(
                       'Failed', _routingStats!.messagesFailed, AppTheme.danger),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        '${(_routingStats!.deliverySuccessRate * 100).toStringAsFixed(0)}%',
-                        style: GoogleFonts.inter(
-                          fontSize: 20,
-                          fontWeight: FontWeight.w800,
-                          color: AppTheme.warning,
-                        ),
-                      ),
-                      Text(
-                        'Success',
-                        style: GoogleFonts.inter(
-                          fontSize: 11,
-                          color: AppTheme.textSecondary,
-                        ),
-                      ),
-                    ],
-                  ),
+                  _statChip('Queued', _routingStats!.totalQueuedMessages,
+                      AppTheme.warning),
+                  _statChip('Active', _routingStats!.activePeerCount,
+                      AppTheme.online),
                 ],
               ),
             ),

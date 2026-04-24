@@ -116,17 +116,15 @@ class WiFiTimerConfig {
   static const Duration alreadyConnectedHandshakeDelay =
       Duration(milliseconds: 1200);
 
-  /// Base delay for quick retry after transient requestConnection failures.
-  static const Duration connectionFailureRetryInitialDelay =
-      Duration(milliseconds: 1200);
-
-  /// Linear step added to each quick retry attempt delay.
-  static const Duration connectionFailureRetryBackoffStep =
-      Duration(milliseconds: 1500);
-
   /// Maximum quick retries per endpoint before waiting for fresh discovery
   /// signals.
   static const int connectionFailureMaxQuickRetries = 2;
+  static const int maxQuickRetries = connectionFailureMaxQuickRetries;
+
+  /// Base delay for quick retry after transient requestConnection failures.
+  static const Duration connectionFailureRetryInitialDelay =
+      Duration(milliseconds: 1200);
+  static const Duration quickRetryDelay = connectionFailureRetryInitialDelay;
 }
 
 /// Adaptive discovery scan timing.

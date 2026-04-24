@@ -19,7 +19,6 @@ import 'emergency_broadcast_screen.dart';
 import 'home_screen.dart';
 import 'peers_screen.dart';
 import 'web_share_screen.dart';
-import '../services/web_share_service.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -32,6 +31,7 @@ class _MainShellState extends State<MainShell> {
   int _currentIndex = 0;
   int _lastDiscoveryFailureVersion = 0;
   bool _isLocationDialogOpen = false;
+  bool _notificationHandlingInitialized = false;
   int _emergencyUnreadCount = 0;
   StreamSubscription<Map<String, Object?>>? _broadcastBadgeSubscription;
   StreamSubscription? _chatMessageSoundSubscription;
@@ -44,6 +44,8 @@ class _MainShellState extends State<MainShell> {
       NotificationSoundService();
   final LocalNotificationService _localNotificationService =
       LocalNotificationService();
+  String? _lastNotificationTapKey;
+  DateTime? _lastNotificationTapHandledAt;
 
   final List<Widget> _screens = const [
     HomeScreen(),
@@ -57,15 +59,9 @@ class _MainShellState extends State<MainShell> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    unawaited(_localNotificationService.init());
-    _notificationTapSubscription ??=
-        _localNotificationService.onTapAction.listen(_handleNotificationTap);
-    final pendingTap = _localNotificationService.takePendingTapAction();
-    if (pendingTap != null) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _handleNotificationTap(pendingTap);
-      });
+    if (!_notificationHandlingInitialized) {
+      _notificationHandlingInitialized = true;
+      unawaited(_initializeNotificationHandling());
     }
 
     _chatMessageSoundSubscription ??=
@@ -179,6 +175,21 @@ class _MainShellState extends State<MainShell> {
         _showSuccessToast(context, 'Sent: ${session.metadata.name}', isWebShare: false);
       }
     });
+  }
+
+  Future<void> _initializeNotificationHandling() async {
+    await _localNotificationService.init();
+    if (!mounted) return;
+
+    _notificationTapSubscription ??=
+        _localNotificationService.onTapAction.listen(_handleNotificationTap);
+    final pendingTap = _localNotificationService.takePendingTapAction();
+    if (pendingTap != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _handleNotificationTap(pendingTap);
+      });
+    }
   }
 
   @override
@@ -349,6 +360,17 @@ class _MainShellState extends State<MainShell> {
 
   void _handleNotificationTap(NotificationTapAction action) {
     if (!mounted) return;
+    final tapKey = '${action.target.name}:${action.peerId ?? ''}';
+    final now = DateTime.now();
+    if (_lastNotificationTapKey == tapKey &&
+        _lastNotificationTapHandledAt != null &&
+        now.difference(_lastNotificationTapHandledAt!) <
+            const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _lastNotificationTapKey = tapKey;
+    _lastNotificationTapHandledAt = now;
+
     if (action.target == NotificationTapTarget.emergency) {
       Navigator.of(context).popUntil((route) => route.isFirst);
       setState(() {
@@ -367,9 +389,7 @@ class _MainShellState extends State<MainShell> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => ChatScreen(preselectedPeerId: peerId),
-        ),
+        ChatScreen.route(preselectedPeerId: peerId),
       );
     });
   }

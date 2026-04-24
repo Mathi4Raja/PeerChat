@@ -1,12 +1,13 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 
 import '../models/peer.dart';
 import '../models/chat_message.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
+import '../utils/app_logger.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -22,11 +23,23 @@ class DBService {
     _db = await openDatabase(
       path,
       version: 19,
+      onConfigure: (db) async {
+        try {
+          await db.execute('PRAGMA foreign_keys = ON');
+        } catch (e) {
+          debugPrint('DBService: Failed to enable foreign keys: $e');
+        }
+      },
       onCreate: (db, version) async {
         await _createTables(db);
       },
       onOpen: (db) async {
+        final currentVersion = await db.getVersion();
+        if (currentVersion != 19) {
+          AppLogger.w('DB Version Mismatch: Expected 19, found $currentVersion. Triggering recovery schema fix.');
+        }
         await _ensureCriticalSchema(db);
+        await _verifySchema(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -239,11 +252,15 @@ class DBService {
     // We check if they exist or just try to add them if they were supposed to be in v7
     try {
       await db.execute('ALTER TABLE peers ADD COLUMN isWiFi INTEGER DEFAULT 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo7 failed (isWiFi): $e');
+    }
     try {
       await db.execute(
           'ALTER TABLE peers ADD COLUMN isBluetooth INTEGER DEFAULT 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo7 failed (isBluetooth): $e');
+    }
   }
 
   Future<void> _migrateTo8(Database db) async {
@@ -286,31 +303,41 @@ class DBService {
     try {
       await db.execute(
           'ALTER TABLE deduplication_cache ADD COLUMN original_timestamp INTEGER DEFAULT 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo12 failed (dedup col): $e');
+    }
     try {
       await db.execute(
           'UPDATE deduplication_cache SET original_timestamp = seen_timestamp WHERE original_timestamp = 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo12 failed (dedup update): $e');
+    }
   }
 
   Future<void> _migrateTo13(Database db) async {
     try {
       await db.execute(
           'ALTER TABLE message_queue ADD COLUMN expiry_time INTEGER DEFAULT 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo13 failed: $e');
+    }
   }
 
   Future<void> _migrateTo14(Database db) async {
     try {
       await db.execute('ALTER TABLE chat_messages ADD COLUMN hopCount INTEGER');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo14 failed: $e');
+    }
   }
 
   Future<void> _migrateTo15(Database db) async {
     try {
       await db.execute(
           'ALTER TABLE message_queue ADD COLUMN origin_type INTEGER NOT NULL DEFAULT 0');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo15 failed: $e');
+    }
   }
 
   Future<void> _migrateTo16(Database db) async {
@@ -321,15 +348,21 @@ class DBService {
     try {
       await db.execute(
           'ALTER TABLE chat_messages ADD COLUMN replyToMessageId TEXT');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo17 failed (replyToMessageId): $e');
+    }
     try {
       await db
           .execute('ALTER TABLE chat_messages ADD COLUMN replyToContent TEXT');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo17 failed (replyToContent): $e');
+    }
     try {
       await db
           .execute('ALTER TABLE chat_messages ADD COLUMN replyToPeerId TEXT');
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('DBService: _migrateTo17 failed (replyToPeerId): $e');
+    }
   }
 
   Future<void> _migrateTo18(Database db) async {
@@ -398,7 +431,10 @@ class DBService {
 
     // Remove obsolete delivery-ACK table from older installations.
     await db.execute('DROP TABLE IF EXISTS pending_acks');
-    // Version 19+: Ensure file_transfers table exists
+    await _ensureFileTransfersTable(db);
+  }
+
+  Future<void> _ensureFileTransfersTable(Database db) async {
     await db.execute('''
       CREATE TABLE IF NOT EXISTS file_transfers (
         id TEXT PRIMARY KEY,
@@ -415,7 +451,34 @@ class DBService {
         timestamp INTEGER NOT NULL
       )
     ''');
+  }
 
+  Future<void> _verifySchema(Database db) async {
+    const criticalTables = [
+      'peers',
+      'chat_messages',
+      'message_queue',
+      'routes',
+      'file_transfers',
+      'deduplication_cache'
+    ];
+    
+    for (var table in criticalTables) {
+      final res = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [table]
+      );
+      if (res.isEmpty) {
+        AppLogger.e('CRITICAL: Table "$table" is missing! Attempting emergency recovery.');
+        if (table == 'file_transfers') {
+          await _ensureFileTransfersTable(db);
+        } else {
+          // For core tables, we might need a full recreate
+          await _createTables(db);
+        }
+      }
+    }
+    AppLogger.i('Database schema verification complete.');
   }
 
   Future<bool> _hasColumn(Database db, String table, String column) async {
@@ -745,62 +808,31 @@ class DBService {
   /// - is_bluetooth
   Future<List<Map<String, Object?>>> getRecentChatRows() async {
     final d = await db;
-    final latestByPeer = await d.rawQuery('''
-      SELECT
-        peerId AS peer_id,
-        MAX(timestamp) AS last_timestamp
-      FROM chat_messages
-      GROUP BY peerId
-      ORDER BY last_timestamp DESC
+    // Optimized O(1) query using subquery and joins
+    final rows = await d.rawQuery('''
+      SELECT 
+        m.peerId AS peer_id,
+        m.content AS last_content,
+        m.timestamp AS last_timestamp,
+        m.isSentByMe AS is_sent_by_me,
+        m.status AS last_status,
+        p.displayName AS display_name,
+        p.address AS address,
+        p.lastSeen AS last_seen,
+        p.hasApp AS has_app,
+        p.isWiFi AS is_wifi,
+        p.isBluetooth AS is_bluetooth,
+        (SELECT COUNT(*) FROM chat_messages WHERE peerId = m.peerId AND isRead = 0) AS unread_count
+      FROM chat_messages m
+      INNER JOIN (
+        SELECT peerId, MAX(timestamp) AS max_ts
+        FROM chat_messages
+        GROUP BY peerId
+      ) latest ON m.peerId = latest.peerId AND m.timestamp = latest.max_ts
+      LEFT JOIN peers p ON m.peerId = p.id
+      GROUP BY m.peerId
+      ORDER BY m.timestamp DESC
     ''');
-
-    final rows = <Map<String, Object?>>[];
-    for (final row in latestByPeer) {
-      final peerId = row['peer_id'] as String?;
-      if (peerId == null || peerId.isEmpty) continue;
-
-      final latestMessageRows = await d.query(
-        'chat_messages',
-        columns: ['content', 'timestamp', 'isSentByMe', 'status'],
-        where: 'peerId = ?',
-        whereArgs: [peerId],
-        orderBy: 'timestamp DESC, id DESC',
-        limit: 1,
-      );
-      if (latestMessageRows.isEmpty) continue;
-      final message = latestMessageRows.first;
-
-      final peerRows = await d.query(
-        'peers',
-        columns: [
-          'displayName',
-          'address',
-          'lastSeen',
-          'hasApp',
-          'isWiFi',
-          'isBluetooth'
-        ],
-        where: 'id = ?',
-        whereArgs: [peerId],
-        limit: 1,
-      );
-      final peer =
-          peerRows.isNotEmpty ? peerRows.first : const <String, Object?>{};
-
-      rows.add({
-        'peer_id': peerId,
-        'last_content': message['content'],
-        'last_timestamp': message['timestamp'],
-        'is_sent_by_me': message['isSentByMe'],
-        'last_status': message['status'],
-        'display_name': peer['displayName'],
-        'address': peer['address'],
-        'last_seen': peer['lastSeen'],
-        'has_app': peer['hasApp'],
-        'is_wifi': peer['isWiFi'],
-        'is_bluetooth': peer['isBluetooth'],
-      });
-    }
 
     return rows;
   }

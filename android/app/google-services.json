@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "257026329569",
+    "project_id": "peerchat-95c0b",
+    "storage_bucket": "peerchat-95c0b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:257026329569:android:0183ac8abbd5f01d3fe0a0",
+        "android_client_info": {
+          "package_name": "app.peerchat.mathi"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "257026329569-cert4psnuhu622mf9l8qvk740vn2gg6r.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.peerchat.mathi",
+            "certificate_hash": "65047383b52669c8bafb1084f617d3b412b7e103"
+          }
+        },
+        {
+          "client_id": "257026329569-pmr7jsdl60mova15smmlfeh5ds2ttera.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "app.peerchat.mathi",
+            "certificate_hash": "3e665445dff32ffb7712ea30721474d975f34faa"
+          }
+        },
+        {
+          "client_id": "257026329569-cishq79r99aia7mja8cud5j093dusqd4.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWqPtGAsx6kF6WR0UIFz45OMxSOLw182w"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "257026329569-cishq79r99aia7mja8cud5j093dusqd4.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "257026329569-kt53lpmmnsh6ematf64tv12mo3pu7k2k.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "app.peerchat.mathi"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

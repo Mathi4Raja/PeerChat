@@ -1,8 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sodium/sodium.dart';
-import 'package:sodium_libs/sodium_libs.dart' hide SodiumInit;
-import 'package:sodium_libs/sodium_libs.dart' as sodium_libs show SodiumInit;
 import 'package:permission_handler/permission_handler.dart';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -29,12 +27,15 @@ import 'services/wifi_transport.dart';
 import 'services/web_share_service.dart';
 import 'services/file_transfer_service.dart';
 import 'services/app_icon_service.dart';
+import 'services/first_sign_in_service.dart';
+import 'services/auth_service.dart';
 import 'utils/name_generator.dart';
 
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final Sodium _sodium;
   final DBService _db = DBService();
   final DiscoveryService _discovery = DiscoveryService();
+  final FirstSignInService _firstSignInService = FirstSignInService();
   late final MeshRouterService meshRouter;
   late final EmergencyBroadcastService emergencyBroadcastService;
   late final WebShareService webShareService;
@@ -46,6 +47,9 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<WiFiDiscoveryFailure>? _wifiDiscoveryFailureSubscription;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   final DeviceSystemService deviceService = DeviceSystemService();
+
+  String? _registeredEmail;
+  String? get registeredEmail => _registeredEmail;
 
   static const String _runtimeProfileStorageKey = 'runtime_profile';
   static const String _lastNormalRuntimeProfileStorageKey =
@@ -166,10 +170,11 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   Future<void> init() async {
     try {
       WidgetsBinding.instance.addObserver(this);
-      debugPrint('AppState.init: Initializing Sodium...');
-      _sodium = await sodium_libs.SodiumInit.init();
+      debugPrint('AppState.init: Initializing Sodium (Native Assets)...');
+      _sodium = await SodiumInit.init();
 
       debugPrint('AppState.init: Opening Database...');
+      _registeredEmail = await _firstSignInService.getStoredEmail();
       peers = await _db.allPeers();
       _runtimeProfile = await _loadRuntimeProfile();
       _lastNormalRuntimeProfile = await _loadLastNormalRuntimeProfile();
@@ -640,9 +645,27 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     _peerRefreshTimer?.cancel();
     _batteryPollTimer?.cancel();
     _wifiDiscoveryFailureSubscription?.cancel();
-    if (_hasEmergencyBroadcastService) {
-      emergencyBroadcastService.dispose();
-    }
+    
+    // Dispose core services safely using asynchronous teardown
+    unawaited(Future(() async {
+      try {
+        await meshRouter.shutdown();
+      } catch (e) {
+        debugPrint("Error shutting down meshRouter: $e");
+      }
+      try {
+        await _discovery.stop();
+      } catch (e) {
+        debugPrint("Error shutting down discovery: $e");
+      }
+      webShareService.dispose();
+      fileTransferService.dispose();
+      
+      if (_hasEmergencyBroadcastService) {
+        emergencyBroadcastService.dispose();
+      }
+    }));
+    
     super.dispose();
   }
 
@@ -698,6 +721,15 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await refreshUnreadCounts();
     notifyListeners();
     return result;
+  }
+
+  Future<void> signOut() async {
+    await AuthService().signOut();
+    await _firstSignInService.reset();
+    _registeredEmail = null;
+    notifyListeners();
+    // In a real app, you might want to trigger a full app restart or 
+    // navigate to the sign-in screen via a global key.
   }
 
   Future<void> refreshUnreadCounts() async {

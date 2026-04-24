@@ -4,14 +4,13 @@ import '../config/limits_config.dart';
 
 enum MessageType {
   data,
-  acknowledgment,
   routeRequest,
   routeResponse,
-  readReceipt,
   connectionUpgradeRequest,
   connectionUpgradeResponse,
   fileTransfer,
 }
+
 
 enum MessagePriority {
   high,

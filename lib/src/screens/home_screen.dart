@@ -145,6 +145,9 @@ class _IdentitySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final appState = Provider.of<AppState>(context);
+    final email = appState.registeredEmail;
+
     return Container(
       decoration: AppTheme.accentBorderCard(),
       padding: const EdgeInsets.all(16),
@@ -192,13 +195,26 @@ class _IdentitySection extends StatelessWidget {
                         color: AppTheme.textPrimary,
                       ),
                     ),
+                    if (email != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        email,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.inter(
+                          fontSize: 12,
+                          color: AppTheme.accent.withValues(alpha: 0.8),
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 2),
                     Text(
                       'Your P2P Identity (Local-only)',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: GoogleFonts.inter(
-                        fontSize: 12,
+                        fontSize: 11,
                         color: AppTheme.textSecondary,
                         fontWeight: FontWeight.w500,
                       ),
@@ -206,7 +222,6 @@ class _IdentitySection extends StatelessWidget {
                   ],
                 ),
               ),
-              // Compact tag
             ],
           ),
 
@@ -285,7 +300,6 @@ class _MeshStatusSection extends StatelessWidget {
     return Consumer<AppState>(
       builder: (context, appState, child) {
         final connectedCount = appState.meshRouter.getConnectedPeerIds().length;
-        final discoveredCount = appState.discoveredPeers.length;
 
         return FutureBuilder(
           future: appState.meshRouter.stats,

@@ -120,6 +120,11 @@ class RouteManager {
 
     // Get attempt count for exponential backoff
     final attempts = _discoveryAttempts[destinationPeerId] ?? 0;
+    if (attempts >= 5) {
+      debugPrint('Max discovery attempts (5) reached for $destinationPeerId.');
+      _pendingDiscoveries.remove(destinationPeerId);
+      return false;
+    }
     _discoveryAttempts[destinationPeerId] = attempts + 1;
 
     // Create route request

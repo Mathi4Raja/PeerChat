@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
+import '../utils/app_logger.dart';
 import 'package:sodium/sodium.dart';
 import 'crypto_service.dart';
 import 'discovery_service.dart';
@@ -55,7 +56,7 @@ class MeshRouterService extends ChangeNotifier {
   StreamSubscription? _routeUpdateSubscription;
 
   int _messagesSent = 0;
-  final int _messagesDelivered = 0;
+
   int _messagesFailed = 0;
   final Map<String, int> _lastQueueDiscoveryAttempt = {};
   static const Duration _queueDiscoveryCooldown = Duration(seconds: 15);
@@ -105,12 +106,12 @@ class MeshRouterService extends ChangeNotifier {
         _connectionManager = connectionManager,
         _emergencyBroadcastService = emergencyBroadcastService {
     _connectionManager.onHandshakeComplete = (peerId) async {
-      debugPrint('Handshake complete for $peerId - processing full queue');
+      AppLogger.print('Handshake complete for $peerId - processing full queue');
       _scheduleQueueProcessing();
       final syncedCount =
           await _emergencyBroadcastService.syncRecentBroadcastsToPeer(peerId);
       if (syncedCount > 0) {
-        debugPrint(
+        AppLogger.print(
             'EmergencyBroadcast: synced $syncedCount recent broadcast(s) to $peerId');
       }
       notifyListeners();
@@ -118,7 +119,7 @@ class MeshRouterService extends ChangeNotifier {
 
     // Listen to connection manager changes (peer activity updates)
     _connectionManager.addListener(() {
-      debugPrint('ConnectionManager changed - notifying UI');
+      AppLogger.print('ConnectionManager changed - notifying UI');
       notifyListeners();
     });
 
@@ -135,17 +136,17 @@ class MeshRouterService extends ChangeNotifier {
 
   // Restart WiFi Direct advertising and discovery
   Future<void> restartWiFiDirect() async {
-    debugPrint('Restarting WiFi Direct...');
+    AppLogger.print('Restarting WiFi Direct...');
     await _wifiTransport?.restartWiFiDirect();
   }
 
   Future<void> suspendNearbyConnections() async {
-    debugPrint('Suspending WiFi Direct/Nearby transport...');
+    AppLogger.print('Suspending WiFi Direct/Nearby transport...');
     await _wifiTransport?.suspendNearbyConnections();
   }
 
   Future<void> resumeNearbyConnections() async {
-    debugPrint('Resuming WiFi Direct/Nearby transport...');
+    AppLogger.print('Resuming WiFi Direct/Nearby transport...');
     await _wifiTransport?.resumeNearbyConnections();
   }
 
@@ -169,7 +170,7 @@ class MeshRouterService extends ChangeNotifier {
       // Try to parse as handshake first
       final handshake = HandshakeMessage.fromBytes(transportMsg.data);
       if (handshake != null) {
-        debugPrint('Received handshake from ${transportMsg.fromPeerId}');
+        AppLogger.print('Received handshake from ${transportMsg.fromPeerId}');
         final wasComplete =
             _connectionManager.isHandshakeComplete(transportMsg.fromPeerId);
         await _connectionManager.handleHandshake(
@@ -210,7 +211,7 @@ class MeshRouterService extends ChangeNotifier {
       // Not a handshake, treat as mesh message
       await receiveMessage(transportMsg.data, transportMsg.fromAddress);
     } catch (e) {
-      debugPrint('Error handling transport message: $e');
+      AppLogger.print('Error handling transport message: $e');
     }
   }
 
@@ -328,7 +329,7 @@ class MeshRouterService extends ChangeNotifier {
       notifyListeners();
       return forwarded;
     } catch (e) {
-      debugPrint('ERROR sending message: $e');
+      AppLogger.print('ERROR sending message: $e');
       _recordSendAttempt(SendResult.failed);
       return SendResult.failed;
     }
@@ -359,7 +360,7 @@ class MeshRouterService extends ChangeNotifier {
       notifyListeners();
       return forwarded;
     } catch (e) {
-      debugPrint('ERROR sending data message: $e');
+      AppLogger.print('ERROR sending data message: $e');
       _recordSendAttempt(SendResult.failed);
       return SendResult.failed;
     }
@@ -427,6 +428,12 @@ class MeshRouterService extends ChangeNotifier {
     try {
       final message = MeshMessage.fromBytes(rawMessage);
 
+      // Validate TTL bounds to prevent infinite loops and flood attacks
+      if (message.ttl <= 0 || message.ttl > MessageLimits.ttlMax || message.hopCount > MessageLimits.ttlMax) {
+        AppLogger.print('Dropping message due to invalid TTL/hopCount: ttl=${message.ttl}, hops=${message.hopCount}');
+        return;
+      }
+
       if (message.recipientPeerId == broadcastEmergencyDestination) {
         await _emergencyBroadcastService.handleIncomingBroadcast(
             message, fromPeerAddress);
@@ -486,7 +493,7 @@ class MeshRouterService extends ChangeNotifier {
 
       notifyListeners();
     } catch (e) {
-      debugPrint('Error receiving message: $e');
+      AppLogger.print('Error receiving message: $e');
     }
   }
 
@@ -583,7 +590,7 @@ class MeshRouterService extends ChangeNotifier {
         await _signatureVerifier.unblockExpiredPeers();
         notifyListeners();
       } catch (e) {
-        debugPrint('Error in maintenance tasks: $e');
+        AppLogger.print('Error in maintenance tasks: $e');
       }
     });
   }
@@ -594,7 +601,7 @@ class MeshRouterService extends ChangeNotifier {
       try {
         await _processQueue();
       } catch (e) {
-        debugPrint('Error processing queue: $e');
+        AppLogger.print('Error processing queue: $e');
       }
     });
   }
@@ -776,7 +783,7 @@ class MeshRouterService extends ChangeNotifier {
       meshQueuedMessages: queueStats.meshOriginMessages,
       blockedPeers: sigStats['blocked_peers'] ?? 0,
       messagesSent: _messagesSent,
-      messagesDelivered: _messagesDelivered,
+
       messagesFailed: _messagesFailed,
       activePeerCount: getConnectedPeerIds().length,
     );
@@ -902,8 +909,7 @@ class MeshRouterService extends ChangeNotifier {
   RuntimeProfile? getPeerRuntimeProfile(String peerId) =>
       _connectionManager.getPeerRuntimeProfile(peerId);
 
-  @override
-  void dispose() {
+  Future<void> shutdown() async {
     _maintenanceTimer?.cancel();
     _queueProcessingTimer?.cancel();
     _queueDebounceTimer?.cancel();
@@ -911,11 +917,16 @@ class MeshRouterService extends ChangeNotifier {
     _transportMessageSubscription?.cancel();
     _routeUpdateSubscription?.cancel();
     _routeManager.dispose();
-    _incomingMessageController.close();
-    _statusUpdateController.close();
-    _wifiDiscoveryFailureController.close();
-    _rawMessageController.close();
-    _transportService.dispose();
+    await _incomingMessageController.close();
+    await _statusUpdateController.close();
+    await _wifiDiscoveryFailureController.close();
+    await _rawMessageController.close();
+    await _transportService.dispose();
+  }
+
+  @override
+  void dispose() {
+    unawaited(shutdown());
     super.dispose();
   }
 }
@@ -933,7 +944,7 @@ class RoutingStats {
   final int meshQueuedMessages;
   final int blockedPeers;
   final int messagesSent;
-  final int messagesDelivered;
+
   final int messagesFailed;
   final int activePeerCount;
 
@@ -943,7 +954,7 @@ class RoutingStats {
     required this.meshQueuedMessages,
     required this.blockedPeers,
     required this.messagesSent,
-    required this.messagesDelivered,
+
     required this.messagesFailed,
     required this.activePeerCount,
   });
@@ -951,13 +962,13 @@ class RoutingStats {
   int get queuedMessages => localQueuedMessages;
   int get totalQueuedMessages => localQueuedMessages + meshQueuedMessages;
 
-  double get deliverySuccessRate {
-    if (messagesSent <= 0) return 1.0;
-    final rate = messagesDelivered / messagesSent;
-    if (rate < 0) return 0.0;
-    if (rate > 1) return 1.0;
-    return rate;
-  }
+
+
+
+
+
+
+
 }
 
 class QueuedMessageDetail {
@@ -981,3 +992,4 @@ class QueuedMessageDetail {
     this.contentPreview,
   });
 }
+

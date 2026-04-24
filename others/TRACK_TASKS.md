@@ -314,201 +314,6 @@
 - [x] Add packet head/body bounds validation to prevent malformed crashes.
 - [x] Connect `AppState` discovery throttling to active transfer sessions.
 - [x] Implement smoothed MB/s throughput and real-time ETA calculation.
-- [x] lutter analyze verified successful implementation
-
-## Phase 18: Full Architecture Implementation (Feb 23, 2026)
-### Phase 1: Mode Separation - DONE
-- [x] Created communication_mode.dart, added mode check + sendDirect + debounce + sender-prefixed IDs
-- [x] Strengthened peer identity persistence, deleted simple_message_service.dart
-- [x] flutter analyze: No issues found
-
-### Phase 2: Mesh Queue Improvements - DONE
-- [x] Clock-independent expiryDuration on MeshMessage, exponential backoff, per-dest limit (50/peer)
-- [x] Route failure-rate pruning (>70%), DB v10 migration, getReadyMessages()
-- [x] flutter analyze: No issues found
-
-### Phase 3: Controlled Lazy Flooding - DONE
-- [x] Forwarding fingerprint dedup, lazy flood to 2-3 random peers, forwardedTo tracking
-- [x] flutter analyze: No issues found
-
-### Phase 4: File Transfer System - DONE
-- [x] Model, Service (sliding window, cumulative ACKs, SHA-256), DB v11
-- [x] Composition Root injection in AppState
-- [x] Protocol wiring (0xFE) in MeshRouterService
-
-## Phase 20: Fix Priority Enum Inconsistency (Mar 2, 2026)
-- [x] Reordered `MessagePriority` enum from `high(0), normal(1), low(2)` → `low(0), normal(1), high(2)`
-- [x] Aligned enum indices with SQL `ORDER BY priority DESC` and debug screen color/label mappings
-- [x] Verified `routing_debug_screen.dart` and `queued_messages_status_screen.dart` priority displays are correct
-
-## Phase 21: Release Versioning & CD (Mar 22, 2026)
-- [x] Update app display name to "PeerChat" across all platforms and UI
-- [x] Update app version to 1.0.0 for release
-- [x] Create `others/build_release.ps1` for automated build and naming (CD)
-- [x] Update README and documentation to reflect "PeerChat" branding
-- [x] Verify build configuration for release APK
-
-## Phase 22: Branding & Identity (Mar 22, 2026)
-- [x] Extract color palette and theme details from `theme.dart`
-- [x] Generate logo design prompts for AI generation
-## Phase 23: Global Theme Harmonization (Mar 22, 2026)
-- [x] Audit all UI screens for hardcoded old palette colors (Teal/Cyan)
-- [x] Update `theme.dart` with vibrant blue and purple branding colors
-- [x] Refine `chat_screen.dart` bubble gradients to match new logo
-- [x] Replace hardcoded badge colors in `peers_screen.dart` with theme constants
-- [x] Verify theme consistency across all primary application views
-- [x] `flutter analyze`: 0 issues found
-
-## Phase 24: UI/UX Refinement (Mar 22, 2026)
-- [x] Refined Home Screen: added "Your P2P Identity" tagline, softened QR glow, and made public key row tappable.
-- [x] Refined Chat Screen: implemented pill-style date separators and improved message input area.
-- [x] Refined Chats List Screen: added relative timestamps (e.g., "5m ago") and last message status icons (Sent/Received).
-- [x] Refined First Sign-In Screen: updated with welcoming copy, gradient Google button, and privacy info box.
-- [x] Refined Menu Screen: added branded header card and color-coded icons for better differentiation.
-- [x] Refined Bottom Navigation: added a subtle active indicator dot below the selected tab.
-- [x] `flutter analyze`: 0 issues found
-
-## Phase 25: Project Metadata & Marketing (Mar 26, 2026)
-- [x] Generate premium project description card (project_description.md) matching portfolio UI style
-- [x] Define core value propositions and tech stack tags for PeerChat
-
-## Phase 26: Unified Website Theme Integration (Apr 8, 2026)
-- [x] Extract colors from globals.css of website
-- [x] Update mobile 	heme.dart with new dark violet / ink palette
-
-- [x] Removed mDNS (peerchat.local) resolution and switched to direct IP for better cross-device reliability.
-
-- [x] Moved Web Share history to a dedicated, clearable screen with individual entry deletion.
-
-- [x] Implemented Manual Upload Approval system with a secure handshake protocol and real-time pop-up alerts.
-
-## Phase 27: Web Share UI Optimization (Apr 9, 2026)
-- [x] Compact Web Share main screen to fit within viewport.
-- [x] Move file management (Add/Remove) to History screen.
-- [x] Implement tabbed view in History (Files vs. Transfer Log).
-- [x] Differentiate active and finished transfers in history log.
-- [x] Refine instructions and update top-right icon to add-files symbol.
-- [x] Move action shortcuts to body and implement conditional "Add Files" button.
-
-## Phase 28: Global Web Share Service (Apr 9, 2026)
-- [x] Globalize `WebShareService` via `AppState` (Provider-managed).
-- [x] Implement global listeners in `MainShell` for background alerts.
-- [x] Enable background cross-screen approval dialogs and success toasts.
-- [x] Decouple server lifecycle from the Web Share screen (server remains active in background).
-
-## Phase 29: Direct Share & Crash Recovery (Apr 9, 2026)
-- [x] Re-implemented `FileTransferService` with chunk-based P2P sliding window protocol.
-- [x] Restored `file_transfers` table in `DBService` with bitmask-based crash recovery.
-- [x] Differentiated UI between "Web Transfer" (Browser) and "Direct Share" (Peer).
-- [x] Upgraded `IncomingApprovalDialog` with premium glassmorphic aesthetics and source badges.
-- [x] Implemented 30-day automatic history cleanup.
-- [x] Re-enabled Peer-to-Peer file sharing button in Chat Screen.
-## Phase 30: Web Share Modularization & UI Polish (Apr 9, 2026)
-- [x] Split file management and transfer log into separate screens (`WebShareHostedFilesScreen`, `WebShareLogScreen`).
-- [x] Rename "Shared Files" to "Hosted Files" for clearer host/receiver context.
-- [x] Implement Emerald Green success coloring for completed transfers in log.
-- [x] Refine "Start Sharing" button size and scale for better aesthetics.
-- [x] Sanitize navigation flow and remove obsolete tab-based screen.
-
-## Phase 31: Build Stability & Transport Standardization (Apr 9, 2026)
-- [x] Implement binary-safe `encryptBytes`/`decryptBytes` in `CryptoService`.
-- [x] Standardize `MessageManager` for raw byte mesh payloads.
-- [x] Expose `onRawMessageReceived` in `MeshRouterService` for discrete sub-service communication.
-- [x] Resolve catastrophic build errors in `ChatScreen` and `WebShareLogScreen`.
-- [x] Verify project stability (0 errors in `flutter analyze`).
-
-## Phase 32: Native MediaStore & Asset Picker (Apr 9, 2026)
-- [x] Implement Native MediaStore Bridge (Kotlin) for Images and Videos.
-- [x] Integrate "All Files Access" (MANAGE_EXTERNAL_STORAGE) handler for Android 11+.
-- [x] Replace slow directory scanning with 100x faster native queries.
-- [x] Add tabbed Asset Picker (Apps | Media | Files) with instant loading.
-
-## Phase 33: Home Screen Compaction & Scaling (Apr 9, 2026)
-- [x] Design "Single Screen" layout for Home Screen to prevent scrolling.
-- [x] Implement Auto-Scaling Engine using `LayoutBuilder` and `FittedBox`.
-- [x] Convert Identity Section to horizontal header (Avatar next to Name).
-- [x] Reduce QR Code and spacing to fit all content on small viewports.
-- [x] Verify responsive scaling across different device heights.
-
-## Phase 34: Website Content — WiFi Direct & Hotspot File Transfers (Apr 9, 2026)
-- [x] Update `HeroSection.tsx` subline to mention file transfers and all 3 transport types (BLE, WiFi Direct, WiFi Hotspot).
-- [x] Update `EmergenceSection.tsx` — add WiFi Hotspot to "Zero Infrastructure"; replace "Multi-Hop Routing" card with a dedicated "File Transfers" card.
-- [x] Update `SolutionSection.tsx` — "Resilient" card now mentions WiFi Hotspot + file transfers.
-- [x] Update `PropagationSection.tsx` — Step 01 "Discover" description includes WiFi Hotspot.
-- [x] Update `AccessSection.tsx` — "WiFi Direct & Hotspot file sharing" added as a free Independent plan feature.
-- [x] Verified Phase 34 Website Content updates — All sections match 1.0.0 branding and feature set.
-
-## Phase 35: Hardware Isolation & Home Scaling (Apr 9, 2026)
-- [x] Implement `setWebShareIsolation` automatic lifecycle in `AppState`.
-- [x] Implement hardware suspension hooks across `DiscoveryService`, `MeshRouterService`, and `WiFiTransport`.
-- [x] Replace "Turbo Mode" UI with automated isolation logic for better UX.
-- [x] Finalize `HomeScreen` auto-scaling with `FittedBox` + Horizontal Identity layout.
-- [x] Cleanup: Replace `print` with `debugPrint` in `WebShareService.dart`.
-- [x] Verified Phase 35 Hardware Isolation & Home Scaling.
-
-## Phase 36: Expert Asset Picking & Hardware Monitoring (Apr 9, 2026)
-- [x] Implement Native `getAppIcon` (128x128 PNG) in `MainActivity.kt`.
-- [x] Implement Native `BluetoothStateChannel` (EventChannel) in `MainActivity.kt`.
-- [x] Create `AppIconService` with a strict 50-item LRU memory budget.
-- [x] Integrate real-time Bluetooth status monitoring into `AppState`.
-- [x] Refine `WebShareAssetPicker` with custom skeleton loaders and staggered list entry.
-- [x] Implement lazy-loading native icons in `_AppTile` for zero scroll-jank.
-- [x] Design "Isolation Glow" pulsing indicator for Web Share dashboard.
-- [x] Add real-time hardware status mini-cards to `WebShareScreen`.
-- [x] `flutter analyze`: 0 issues found.
-
-## Phase 37: Web Share Dashboard Hardening (Apr 10, 2026)
-- [x] Implement real hardware detection for Wi-Fi Hotspot (Native reflection + interface check).
-- [x] Integrate periodic 4-second status refresh for hardware indicators.
-- [x] Make hardware status cards actionable (Bluetooth toggle, Hotspot settings shortcut).
-- [x] Standardize hardware status text to simplified "ON/OFF" labels.
-- [x] Implement "Reliable Fallback" for Bluetooth: Tapping now opens system settings if programmatic toggle is restricted.
-- [x] Implement Amber warning highlight for unoptimized hardware states (e.g., BT still ON during isolation).
-- [x] Optimized dashboard layout for higher information density (Phase 2 Compaction).
-- [x] Refined visual feedback with correctly overlapping ripples (`Ink` widget).
-- [x] Added debug logging for hardware status interactions.
-
-## Phase 38: P2P Transfer Dashboard & Unified Flow (Apr 10, 2026)
-- [x] Refactor `FileTransferService` to expose per-peer active sessions.
-- [x] Implement `DirectTransferScreen` with live progress bars and peer-specific history.
-- [x] Connect `ChatScreen` attachment pin to navigate to the new Transfer Dashboard.
-- [x] Implement "Add Files" action within the Dashboard to launch `WebShareAssetPicker`.
-- [x] Verify complete P2P transfer lifecycle visibility in the new UI.
-
-## Phase 39: Enhanced Transfer Metrics & Management (Apr 10, 2026)
-- [x] Implement real-time speed calculation (MB/s) in `FileTransferService`.
-- [x] Add `abortTransfer`, `resumeTransfer`, and `deleteTransfer` methods.
-- [x] Update `DirectTransferScreen` with speed labels and action icons (X, Trash, Resume).
-- [x] Implement DB cleanup for deleted transfer records.
-
-## Phase 40: High-Performance P2P Optimization (Apr 10, 2026)
-- [x] Increase chunk size to 256KB and implement persistent file handles.
-- [x] Implement Sliding Window (pipelining) for wait-free data transmission.
-- [x] Fix Sender-side state synchronization (Completed status mismatch).
-- [x] Verify speeds match or exceed Web Share performance.
-
-## Phase 41: Absolute Root Storage & Internal Viewer (Apr 10, 2026)
-- [x] Add `open_file_plus` and `external_path` dependencies.
-- [x] Implement `MANAGE_EXTERNAL_STORAGE` permission request flow.
-- [x] Redirect `FileTransferService` to store files in `/PeerChat/Downloads` (External Root).
-- [x] Add "View" (Eye Icon) to `DirectTransferScreen` history items.
-- [x] Verify persistence after app uninstallation.
-
-## Phase 42: Production-Grade P2P Hardening (Apr 10, 2026)
-- [x] Fix Mesh Router delivery leakage (only raw file packets on delivery).
-- [x] Implement True Sliding Window (unackedBase) & Symmetric Handshake.
-- [x] Re-align Priority (Control/ACK = High, Data = Low).
-- [x] Implement Metadata Validation & Path Sanitization.
-- [x] Fix Resume Persistence & Outgoing/Incoming recovery paths.
-- [x] Implement Transfer Queueing (sequential processing).
-- [x] Fix Subscription leaks in UI and Service.
-- [x] Link transfer activity to AppState (Discovery Throttling).
-## Phase 42: P2P Protocol Hardening & UX Fidelity (Apr 10, 2026)
-- [x] Implement Final ACK sync (Receiver confirms last chunk before verify).
-- [x] Switch to `FileMode.write` for safe out-of-order random-access writes.
-- [x] Add packet head/body bounds validation to prevent malformed crashes.
-- [x] Connect `AppState` discovery throttling to active transfer sessions.
-- [x] Implement smoothed MB/s throughput and real-time ETA calculation.
 - [x] Add explicit "X / Y MB" progress labels to the dashboard.
 - [x] Implement recursive filename suffixing (e.g. `file (1).ext`) for collisions.
 - [x] Persist `file_hash` in DB for sender/receiver session recovery.
@@ -541,4 +346,83 @@
 - [x] Align pricing model for non-profit supporter role
 - [x] Expand Patron feature list with community-focused points
 - [x] Link Download button directly to APK
+
+## Phase 48: Production-Ready Audit & Service Hardening (Apr 14, 2026)
+- [x] Audit codebase for memory leaks and subscription orphans.
+- [x] Implement robust `dispose()` pattern across all services (`MeshRouter`, `Discovery`, `WebShare`, `FileTransfer`).
+- [x] Globalize service cleanup in `AppState.dispose()` for graceful app shutdown.
+- [x] Refactor `WebShareService` to use app-specific scoped storage paths.
+- [x] Implement defensive `try-finally` blocks for file transfer cleanup and handle closing.
+- [x] Cleanup: Remove all stale `debug_logs/` and temp artifacts.
+- [x] Verify project stability (0 errors in `flutter analyze`).
+
+## Phase 49: Architectural Hardening & Production Cleanup (Apr 14, 2026)
+- [x] Comprehensive dependency migration (Sodium v4.0.0 with Native Assets, Notifications v21.0.0).
+- [x] Hardened error visibility by replacing silent catch blocks with diagnostic `debugPrint` across core services.
+- [x] Optimized Database Layer (O(1) recent chat retrieval via single SQL JOIN).
+- [x] Performance hardening in asset picking (eliminated synchronous file I/O).
+- [x] Resource protection: Fixed memory leaks in `WiFiTransport` using proper timer lifecycle management.
+- [x] Final build verification and 0-lint state achieved for v1.0.0.
+
+## Phase 50: Architectural Deep Hardening (Concurrency & Memory Safety) (Apr 14, 2026)
+- [x] Implement lightweight `AsyncMutex` in `FileTransferService` to prevent interleaved chunk writing corruption.
+- [x] Protect `RandomAccessFile` handle closures with comprehensive `try-finally` blocks.
+- [x] Replace unbound FIFO maps in `DeduplicationCache` with strict LRU and immediate insertion capping limit.
+- [x] Add synchronous boolean connection locks (`_pendingConnectionAttempts`) in `WiFiTransport` preventing connection storms.
+- [x] Introduce a hard limits constraint (max 5) on multi-hop `RouteManager` connection discovery loops.
+- [x] Add graceful deep-async shutdown for `MeshRouterService` and `AppState` via `unawaited()`.
+- [x] Enable SQLite constraint `PRAGMA foreign_keys = ON;` safely through `sqflite` configs.
+- [x] Enhance `CryptoService` to explicitly zero-out memory references for intermediate secret encryption arrays (`Uint8List[i] = 0`).
+- [x] Implement global TTL limits for raw Mesh messages parsing immediately upon receiving.
+- [x] Zero regressions — `flutter analyze` passes flawlessly.
+
+## Phase 51: Production Release Code Quality & Operational Hardening (Apr 14, 2026)
+- [x] Implement zero-cost static `AppLogger` utility (kDebugMode gated) for production performance.
+- [x] Fixed potential runtime crashes by auditing and replacing bang (`!`) operators in `WiFiTransport` and `WebShareService`.
+- [x] Implemented robust Multipart boundary validation in `WebShareService` to prevent upload protocol crashes.
+- [x] Hardened `DBService` with post-migration schema verification and version mismatch detection.
+- [x] Built core integrity test suite for `AsyncMutex` and `DeduplicationCache` (LRU) to mathematically guarantee security limits.
+- [x] Verified zero-issue state via `flutter analyze` and logic-validated testing.
+
+## Phase 51: Codebase Audit & Artifact Cleanup (Apr 14, 2026)
+- [x] Audit root for transient AI artifacts and similar unnecessary findings.
+- [x] Remove `analyze_output.txt` leftover from previous analysis tool calls.
+- [x] Remove legacy empty `tmp/` root directory.
+
+## Phase 52: Full Security and Malware Audit (Apr 14, 2026)
+- [ ] Secrets & Credentials Scan (API keys, hardcoded tokens)
+- [ ] Data Exfiltration Audit (Network call verification)
+- [ ] Malware & Backdoor Detection (Obfuscation and shell execution audit)
+- [ ] Dependency Vulnerability Review
+
+## Phase 53: Build Failure Resolution (Native Assets / Bash) (Apr 24, 2026)
+- [x] Investigate system for `bash.exe` and Git for Windows installation
+- [x] Configure PATH (Verified `make` and `bash` are available)
+- [x] Verify `sodium` package native asset build (Success - app launched)
+- [x] Successfully run the app in debug mode
+
+## Phase 54: UI Refinements & Polish (Apr 24, 2026)
+- [x] Apply rounded edges (ClipRRect) to the logo in the Menu Screen header
+
+## Phase 55: PeerChat Status Logic Refinement (Apr 24, 2026)
+
+- [x] Deprecated "delivered" and "seen" message statuses to improve decentralized reliability
+- [x] Implemented unified "Hop" symbol (Icons.alt_route_rounded) for mesh-injected messages
+- [x] Added "Queue" symbol (Icons.schedule_send_rounded) for pending local messages
+- [x] Streamlined MessageStatusUI extension for global UI consistency
+- [x] Cleaned up legacy delivery metrics and TTL configurations
+
+## Phase 56: Identity & Authentication Hardening (Apr 24, 2026)
+- [x] Refactored Google OAuth to use standard `google_sign_in` API
+- [x] Implemented Email/Password authentication UI and service foundation
+- [x] Integrated registered email display in Home Screen Identity Section
+- [x] Implemented global Sign-Out and App Reset flow in Menu Screen
+- [x] Verified "Continue as Guest" remains fully functional as a fallback
+
+## Phase 57: Identity Verification Protocol (Apr 24, 2026)
+- [x] Implemented Deep Link handling (`app_links`) for email verification
+- [x] Configured Android custom scheme `peerchat://verify` for identity redirects
+- [x] Refactored Email flow from password-based to verification-link-based
+- [x] Added "Verification Sent" UI state with deep link auto-completion
+- [x] Clarified Google OAuth configuration requirements (Client ID/google-services.json)
 

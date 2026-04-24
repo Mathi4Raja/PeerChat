@@ -11,6 +11,8 @@
 .svn/
 .swiftpm/
 migrate_working_dir/
+.env*
+*.env
 
 # IntelliJ related
 *.iml
@@ -33,6 +35,23 @@ migrate_working_dir/
 /build/
 /coverage/
 
+# iOS/macOS
+**/ios/Flutter/GeneratedConfig.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/App.framework
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Runner/GeneratedPluginRegistrant.h
+**/ios/Runner/GeneratedPluginRegistrant.m
+**/ios/Runner/Base.lproj/Main.storyboard
+**/ios/.root_pub_credentials
+**/ios/Podfile.lock
+**/ios/Pods/
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GoogleService-Info.plist
+*.xcworkspace
+*.xcodeproj
+
 # Symbolication related
 app.*.symbols
 
@@ -52,3 +71,25 @@ automation_logs/
 analyze_output.txt
 logs/
 .kiro/
+
+# Signing secrets
+**/android/key.properties
+*.jks
+*.keystore
+
+# Local development files
+.DS_Store
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+.pub/
+.dart_tool/
+build/
+
+# Databases
+*.db
+*.sqlite
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal

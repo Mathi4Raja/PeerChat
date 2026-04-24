@@ -10,7 +10,7 @@ class MessageLimits {
   static const int generatedIdUuidFragmentLength = 27;
 
   /// Maximum serialized message content size accepted/sent (bytes).
-  static const int maxContentBytes = 65536; // 64 KiB
+  static const int maxContentBytes = 49152; // 48 KiB
 
   /// Lower bound for standard message TTL hops.
   static const int ttlMin = 8;
@@ -21,11 +21,6 @@ class MessageLimits {
   /// TTL used for route-control/system routing messages.
   static const int routeControlTtl = 8;
 
-  /// TTL used for read-receipt propagation.
-  static const int readReceiptTtl = 12;
-
-  /// TTL used for ACK propagation.
-  static const int acknowledgmentTtl = 8;
 
   /// Future timestamp tolerance before treating message clock as invalid.
   static const int futureClockSkewToleranceMs = 300000; // 5 min

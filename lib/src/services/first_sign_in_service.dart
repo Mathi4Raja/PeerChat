@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 enum FirstSignInMethod {
@@ -86,6 +87,17 @@ class FirstSignInService {
     }
   }
 
+  Future<String?> getStoredEmail() async {
+    return await _storage.read(key: _emailKey);
+  }
+
+  Future<void> reset() async {
+    await _storage.delete(key: _completeKey);
+    await _storage.delete(key: _methodKey);
+    await _storage.delete(key: _emailKey);
+    await _storage.delete(key: _timestampKey);
+  }
+
   Future<bool> _isCompleted() async {
     final value = await _storage.read(key: _completeKey);
     return value == 'true';
@@ -99,7 +111,9 @@ class FirstSignInService {
       if (lookup.isNotEmpty && lookup.first.rawAddress.isNotEmpty) {
         return true;
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('FirstSignInService: DNS lookup failed: $e');
+    }
 
     try {
       final socket = await Socket.connect(
@@ -109,7 +123,8 @@ class FirstSignInService {
       );
       await socket.close();
       return true;
-    } catch (_) {
+    } catch (e) {
+      debugPrint('FirstSignInService: Socket connect failed: $e');
       return false;
     }
   }

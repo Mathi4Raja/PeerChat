@@ -21,6 +21,9 @@ class DeduplicationCache {
 
   DeduplicationCache(this._db);
 
+  /// Current number of fingerprints in memory.
+  int get size => _forwardingFingerprints.length;
+
   // Check if message ID has been seen
   Future<bool> hasSeen(String messageId) async {
     final database = await _db.db;
@@ -84,22 +87,6 @@ class DeduplicationCache {
       where: 'original_timestamp < ?',
       whereArgs: [cutoffTimestamp],
     );
-
-    // Trim in-memory caches
-    if (_forwardingFingerprints.length > _maxFingerprints) {
-      final toRemove = _forwardingFingerprints
-          .take(_maxFingerprints ~/ DeduplicationLimits.trimDivisor)
-          .toList();
-      _forwardingFingerprints.removeAll(toRemove);
-    }
-    if (_forwardedTo.length > _maxForwardedToEntries) {
-      final keysToRemove = _forwardedTo.keys
-          .take(_maxForwardedToEntries ~/ DeduplicationLimits.trimDivisor)
-          .toList();
-      for (final key in keysToRemove) {
-        _forwardedTo.remove(key);
-      }
-    }
   }
 
   // ── Forwarding Fingerprint (Multi-Node Collision Prevention) ──
@@ -107,24 +94,56 @@ class DeduplicationCache {
   /// Check if we've already processed this forwarding fingerprint.
   /// Fingerprint = "$messageId-$senderId-$hopCount"
   bool hasSeenFingerprint(String messageId, String senderId, int hopCount) {
-    return _forwardingFingerprints.contains('$messageId-$senderId-$hopCount');
+    final key = '$messageId-$senderId-$hopCount';
+    if (_forwardingFingerprints.contains(key)) {
+      // LRU: touch to move to end
+      _forwardingFingerprints.remove(key);
+      _forwardingFingerprints.add(key);
+      return true;
+    }
+    return false;
   }
 
   /// Mark a forwarding fingerprint as seen.
   void markFingerprint(String messageId, String senderId, int hopCount) {
-    _forwardingFingerprints.add('$messageId-$senderId-$hopCount');
+    final key = '$messageId-$senderId-$hopCount';
+    _forwardingFingerprints.remove(key);
+    _forwardingFingerprints.add(key);
+
+    // Strict boundary enforcement immediately (FIFO/LRU on oldest)
+    if (_forwardingFingerprints.length > _maxFingerprints) {
+      _forwardingFingerprints.remove(_forwardingFingerprints.first);
+    }
   }
 
   // ── ForwardedTo Tracking (Per-Message Per-Peer Dedup) ──
 
   /// Check if we've already forwarded this message to a specific peer.
   bool hasForwardedTo(String messageId, String peerId) {
-    return _forwardedTo[messageId]?.contains(peerId) ?? false;
+    if (_forwardedTo.containsKey(messageId)) {
+      // LRU: touch to move to end
+      final peers = _forwardedTo.remove(messageId);
+      _forwardedTo[messageId] = peers!;
+      return peers.contains(peerId);
+    }
+    return false;
   }
 
   /// Mark that we've forwarded this message to a specific peer.
   void markForwardedTo(String messageId, String peerId) {
-    _forwardedTo.putIfAbsent(messageId, () => {}).add(peerId);
+    if (!_forwardedTo.containsKey(messageId)) {
+      _forwardedTo[messageId] = {};
+    }
+    
+    // LRU: move this messageId to the end
+    final peers = _forwardedTo.remove(messageId)!;
+    peers.add(peerId);
+    _forwardedTo[messageId] = peers;
+
+    // Strict boundary enforcement immediately
+    if (_forwardedTo.length > _maxForwardedToEntries) {
+      _forwardedTo.remove(_forwardedTo.keys.first);
+    }
   }
 
   /// Get count of peers we've forwarded this message to.

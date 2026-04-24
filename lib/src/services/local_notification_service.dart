@@ -40,36 +40,51 @@ class LocalNotificationService {
       StreamController<NotificationTapAction>.broadcast();
 
   bool _initialized = false;
+  Future<void>? _initFuture;
   NotificationTapAction? _pendingTapAction;
+  String? _lastPayloadSignature;
+  DateTime? _lastPayloadHandledAt;
 
   Stream<NotificationTapAction> get onTapAction => _tapController.stream;
 
   Future<void> init() async {
     if (_initialized) return;
+    if (_initFuture != null) return _initFuture;
+    _initFuture = _initInternal();
+    await _initFuture;
+  }
 
-    const androidInit = fln.AndroidInitializationSettings('@mipmap/ic_launcher');
-    const initSettings = fln.InitializationSettings(
-      android: androidInit,
-    );
+  Future<void> _initInternal() async {
+    try {
+      if (_initialized) return;
 
-    await _plugin.initialize(
-      initSettings,
-      onDidReceiveNotificationResponse: (response) {
-        _handlePayload(response.payload);
-      },
-    );
+      const androidInit =
+          fln.AndroidInitializationSettings('@mipmap/ic_launcher');
+      const initSettings = fln.InitializationSettings(
+        android: androidInit,
+      );
 
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            fln.AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
+      await _plugin.initialize(
+        settings: initSettings,
+        onDidReceiveNotificationResponse: (response) {
+          _handlePayload(response.payload);
+        },
+      );
 
-    final launchDetails = await _plugin.getNotificationAppLaunchDetails();
-    if (launchDetails?.didNotificationLaunchApp == true) {
-      _handlePayload(launchDetails?.notificationResponse?.payload);
+      await _plugin
+          .resolvePlatformSpecificImplementation<
+              fln.AndroidFlutterLocalNotificationsPlugin>()
+          ?.requestNotificationsPermission();
+
+      final launchDetails = await _plugin.getNotificationAppLaunchDetails();
+      if (launchDetails?.didNotificationLaunchApp == true) {
+        _handlePayload(launchDetails?.notificationResponse?.payload);
+      }
+
+      _initialized = true;
+    } finally {
+      _initFuture = null;
     }
-
-    _initialized = true;
   }
 
   NotificationTapAction? takePendingTapAction() {
@@ -120,10 +135,10 @@ class LocalNotificationService {
     });
 
     await _plugin.show(
-      peerId.hashCode & 0x7fffffff,
-      senderLabel,
-      content,
-      details,
+      id: peerId.hashCode & 0x7fffffff,
+      title: senderLabel,
+      body: content,
+      notificationDetails: details,
       payload: payload,
     );
   }
@@ -155,10 +170,10 @@ class LocalNotificationService {
 
     const payload = '{"type":"emergency"}';
     await _plugin.show(
-      messageId.hashCode & 0x7fffffff,
-      'Broadcast mention',
-      fullBody,
-      details,
+      id: messageId.hashCode & 0x7fffffff,
+      title: 'Broadcast mention',
+      body: fullBody,
+      notificationDetails: details,
       payload: payload,
     );
   }
@@ -169,6 +184,15 @@ class LocalNotificationService {
 
   void _handlePayload(String? payload) {
     if (payload == null || payload.isEmpty) return;
+    final now = DateTime.now();
+    if (_lastPayloadSignature == payload &&
+        _lastPayloadHandledAt != null &&
+        now.difference(_lastPayloadHandledAt!) <
+            const Duration(milliseconds: 1500)) {
+      return;
+    }
+    _lastPayloadSignature = payload;
+    _lastPayloadHandledAt = now;
     try {
       final decoded = jsonDecode(payload);
       if (decoded is! Map<String, dynamic>) return;

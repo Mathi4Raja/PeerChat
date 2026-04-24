@@ -76,7 +76,7 @@ class _WebShareScreenState extends State<WebShareScreen> {
   void _toggleServer() async {
     final appState = Provider.of<AppState>(context, listen: false);
     if (_service.isRunning) {
-      await _service.stopServer();
+      await _service.stop();
       await appState.setWebShareIsolation(false);
     } else {
       final hasPermission = await appState.canControlBluetoothForWebShare();
@@ -86,7 +86,7 @@ class _WebShareScreenState extends State<WebShareScreen> {
 
       await appState.setWebShareIsolation(true);
       try {
-        await _service.startServer();
+        await _service.start();
       } catch (_) {
         await appState.setWebShareIsolation(false);
         if (!mounted) return;
@@ -377,8 +377,6 @@ class _WebShareScreenState extends State<WebShareScreen> {
       builder: (context, snapshot) {
         final btEnabled = snapshot.data?[0] ?? true;
         final hotspotEnabled = snapshot.data?[1];
-        final isolation = appState.isWebShareIsolationActive;
-
         return Row(
           children: [
             Expanded(
@@ -437,7 +435,7 @@ class _WebShareScreenState extends State<WebShareScreen> {
             color: AppTheme.bgCard,
             borderRadius: BorderRadius.circular(14),
             border: Border.all(
-              color: isActive ? color.withOpacity(0.5) : AppTheme.primary.withValues(alpha: 0.1),
+              color: isActive ? color.withValues(alpha: 0.5) : AppTheme.primary.withValues(alpha: 0.1),
               width: isActive ? 1.5 : 1,
             ),
           ),

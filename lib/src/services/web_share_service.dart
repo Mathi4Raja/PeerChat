@@ -8,6 +8,10 @@ import 'package:mime/mime.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:uuid/uuid.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:external_path/external_path.dart';
+
+import '../utils/app_logger.dart';
 
 class UploadRequest {
   final String id;
@@ -89,56 +93,63 @@ class WebShareService {
     _eventController.add(logEntry);
   }
 
-  void _cleanupIfTemp(String? path) {
+  Future<void> _cleanupIfTemp(String? path) async {
     if (path == null) return;
     // file_picker typically uses 'cache/file_picker' on Android/iOS
     if (path.contains('cache/file_picker') || path.contains('tmp/')) {
       try {
         final file = File(path);
-        if (file.existsSync()) {
-          file.deleteSync();
-          debugPrint("Cleaned up temp file: $path");
+        if (await file.exists()) {
+          await file.delete();
+          AppLogger.d("Cleaned up temp file: $path");
         }
       } catch (e) {
-        debugPrint("Error cleaning up temp file: $e");
+        AppLogger.e("Error cleaning up temp file: $path", e);
       }
     }
   }
 
 
-  Future<void> startServer() async {
+  Future<void> start() async {
     if (_isRunning) return;
 
     try {
-      _localIp = await _getLocalIp();
       _server = await HttpServer.bind(InternetAddress.anyIPv4, 8080);
       _isRunning = true;
+      _localIp = await _getIp();
+      _addEvent("Service started at $currentUrl");
+      AppLogger.i("WebShareService started at $currentUrl");
 
-      _server!.listen(_handleRequest);
+      _server!.listen((request) {
+        _handleRequest(request);
+      }, onError: (e) {
+        AppLogger.e("Server error", e);
+      });
     } catch (e) {
-      debugPrint("Error starting server: $e");
-      _isRunning = false;
-      rethrow;
+      AppLogger.e("Could not start server", e);
+      _addEvent("Error starting service: $e");
     }
   }
 
-  Future<void> stopServer() async {
+  Future<void> stop() async {
     if (!_isRunning) return;
     
     // Cleanup any lingering temp files
     for (var file in _sharedFiles) {
-      _cleanupIfTemp(file.path);
+      await _cleanupIfTemp(file.path);
     }
     _sharedFiles.clear();
 
-    await _server?.close();
+    await _server?.close(force: true);
     _server = null;
     _isRunning = false;
-    _addEvent("Sharing server stopped");
+    _localIp = null;
+    _addEvent("Service stopped");
+    AppLogger.i("WebShareService stopped");
   }
 
 
-  Future<String?> _getLocalIp() async {
+  Future<String?> _getIp() async {
     try {
       for (var interface in await NetworkInterface.list()) {
         for (var addr in interface.addresses) {
@@ -148,7 +159,7 @@ class WebShareService {
         }
       }
     } catch (e) {
-      debugPrint("Error getting local IP: $e");
+      AppLogger.e("Error getting local IP", e);
     }
     return null;
   }
@@ -167,9 +178,17 @@ class WebShareService {
         final id = request.uri.queryParameters['id'];
         if (id != null) {
           final idx = int.tryParse(id);
-          if (idx != null && idx >= 0 && idx < _sharedFiles.length) {
+           if (idx != null && idx >= 0 && idx < _sharedFiles.length) {
               final fileInfo = _sharedFiles[idx];
-              final file = File(fileInfo.path!);
+              final filePath = fileInfo.path;
+              if (filePath == null) {
+                AppLogger.w("File path is null for shared file at index $idx");
+                request.response.statusCode = HttpStatus.notFound;
+                await request.response.close();
+                return;
+              }
+              final file = File(filePath);
+
               
               if (await file.exists()) {
                 request.response.headers.contentType = ContentType.binary;
@@ -182,15 +201,13 @@ class WebShareService {
                 await request.response.addStream(file.openRead());
                 await request.response.close();
                 
-                if (fileInfo.path != null) {
-                  _completedPaths.add(fileInfo.path!);
-                }
+                _completedPaths.add(filePath);
                 
                 _activeTransfers.remove(fileInfo.name);
                 _addEvent("Sent: ${fileInfo.name}");
                 return;
               }
-          }
+            }
         }
         request.response.statusCode = HttpStatus.notFound;
         request.response.write("File not found");
@@ -249,7 +266,16 @@ class WebShareService {
 
         final contentType = request.headers.contentType;
         if (contentType != null && contentType.primaryType == 'multipart') {
-          await _handleFileUpload(request, contentType.parameters['boundary']!);
+          final boundary = contentType.parameters['boundary'];
+          if (boundary == null) {
+            AppLogger.e("Multipart request missing boundary parameter");
+            request.response
+              ..statusCode = HttpStatus.badRequest
+              ..write("Missing multipart boundary")
+              ..close();
+            return;
+          }
+          await _handleFileUpload(request, boundary);
           request.response
             ..statusCode = HttpStatus.ok
             ..write("Upload complete")
@@ -269,7 +295,9 @@ class WebShareService {
       try {
         request.response.statusCode = HttpStatus.internalServerError;
         await request.response.close();
-      } catch (_) {}
+      } catch (e) {
+        debugPrint("WebShareService: response cleanup error: $e");
+      }
     }
   }
 
@@ -285,29 +313,64 @@ class WebShareService {
         if (match != null) {
           final filename = match.group(1)!;
           
-          Directory? dir;
-          if (Platform.isAndroid) {
-            dir = Directory('/storage/emulated/0/Download');
-            if (!await dir.exists()) {
-              dir = await getApplicationDocumentsDirectory();
+          final dirPath = await _determineUploadDir();
+          final savedFilePath = p.join(dirPath, filename);
+          final file = File(savedFilePath);
+          IOSink? sink;
+          
+          try {
+            sink = file.openWrite();
+            
+            _activeTransfers.add(filename);
+            _addEvent("Receiving: $filename");
+            
+            await part.pipe(sink);
+            
+            _activeTransfers.remove(filename);
+            _addEvent("Received: $filename");
+            debugPrint("Saved uploaded file to $savedFilePath");
+          } catch (e) {
+            _activeTransfers.remove(filename);
+            _addEvent("Upload error for $filename: $e");
+            debugPrint("Error saving uploaded file: $e");
+            // Cleanup partial file
+            if (await file.exists()) {
+              await file.delete();
+              debugPrint("Cleaned up partial upload: $savedFilePath");
             }
-          } else {
-            dir = await getApplicationDocumentsDirectory();
+          } finally {
+            await sink?.close();
           }
-          
-          final savedFilePath = p.join(dir.path, filename);
-          final sink = File(savedFilePath).openWrite();
-          
-          _activeTransfers.add(filename);
-          _addEvent("Receiving: $filename");
-          
-          await part.pipe(sink);
-          
-          _activeTransfers.remove(filename);
-          _addEvent("Received: $filename");
-          debugPrint("Saved uploaded file to $savedFilePath");
         }
       }
+    }
+  }
+
+  Future<String> _determineUploadDir() async {
+    if (Platform.isAndroid) {
+      final status = await Permission.manageExternalStorage.status;
+      if (!status.isGranted) {
+        final requested = await Permission.manageExternalStorage.request();
+        if (!requested.isGranted) {
+          final docs = await getApplicationDocumentsDirectory();
+          final dir = Directory(p.join(docs.path, 'PeerChat', 'WebShare'));
+          if (!await dir.exists()) await dir.create(recursive: true);
+          return dir.path;
+        }
+      }
+
+      final dirs = await ExternalPath.getExternalStorageDirectories();
+      final root = (dirs != null && dirs.isNotEmpty) ? dirs.first : '/storage/emulated/0';
+      final dir = Directory(p.join(root, 'PeerChat', 'WebShare'));
+      if (!await dir.exists()) {
+        await dir.create(recursive: true);
+      }
+      return dir.path;
+    } else {
+      final docs = await getApplicationDocumentsDirectory();
+      final dir = Directory(p.join(docs.path, 'PeerChat', 'WebShare'));
+      if (!await dir.exists()) await dir.create(recursive: true);
+      return dir.path;
     }
   }
 
@@ -731,5 +794,10 @@ class WebShareService {
 </body>
 </html>
 ''';
+  }
+
+  void dispose() {
+    _eventController.close();
+    _uploadRequestController.close();
   }
 }

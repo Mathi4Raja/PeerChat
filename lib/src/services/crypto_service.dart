@@ -30,21 +30,36 @@ class CryptoService {
       if (parts.length == 2) {
         final private = base64Decode(parts[0]);
         final public = base64Decode(parts[1]);
-        _encryptionKeyPair = KeyPair(
-          publicKey: Uint8List.fromList(public),
-          secretKey: SecureKey.fromList(_sodium, private),
-        );
+        try {
+          _encryptionKeyPair = KeyPair(
+            publicKey: Uint8List.fromList(public),
+            secretKey: SecureKey.fromList(_sodium, private),
+          );
+        } finally {
+          for (int i = 0; i < private.length; i++) {
+            private[i] = 0;
+          }
+        }
         return;
       }
     }
 
     // Generate new encryption keypair
     final keypair = _sodium.crypto.box.keyPair();
-    await _secureStorage.write(
-      key: 'identity_keypair',
-      value: '${base64Encode(keypair.secretKey.extractBytes())}|${base64Encode(keypair.publicKey)}',
-    );
-    _encryptionKeyPair = keypair;
+    final pkBytes = keypair.publicKey;
+    final skBytes = keypair.secretKey.extractBytes();
+    try {
+      await _secureStorage.write(
+        key: 'identity_keypair',
+        value: '${base64Encode(skBytes)}|${base64Encode(pkBytes)}',
+      );
+      _encryptionKeyPair = keypair;
+    } finally {
+      // Attempt to zero out the raw Dart memory buffer explicitly
+      for (int i = 0; i < skBytes.length; i++) {
+        skBytes[i] = 0;
+      }
+    }
   }
 
   // Ensure signing keypair exists (Ed25519 for crypto_sign)
@@ -55,21 +70,35 @@ class CryptoService {
       if (parts.length == 2) {
         final private = base64Decode(parts[0]);
         final public = base64Decode(parts[1]);
-        _signingKeyPair = KeyPair(
-          publicKey: Uint8List.fromList(public),
-          secretKey: SecureKey.fromList(_sodium, private),
-        );
+        try {
+          _signingKeyPair = KeyPair(
+            publicKey: Uint8List.fromList(public),
+            secretKey: SecureKey.fromList(_sodium, private),
+          );
+        } finally {
+          for (int i = 0; i < private.length; i++) {
+            private[i] = 0;
+          }
+        }
         return;
       }
     }
 
     // Generate new signing keypair
     final keypair = _sodium.crypto.sign.keyPair();
-    await _secureStorage.write(
-      key: 'signing_keypair',
-      value: '${base64Encode(keypair.secretKey.extractBytes())}|${base64Encode(keypair.publicKey)}',
-    );
-    _signingKeyPair = keypair;
+    final pkBytes = keypair.publicKey;
+    final skBytes = keypair.secretKey.extractBytes();
+    try {
+      await _secureStorage.write(
+        key: 'signing_keypair',
+        value: '${base64Encode(skBytes)}|${base64Encode(pkBytes)}',
+      );
+      _signingKeyPair = keypair;
+    } finally {
+      for (int i = 0; i < skBytes.length; i++) {
+        skBytes[i] = 0;
+      }
+    }
   }
 
   // Encrypt message content using recipient's public key
