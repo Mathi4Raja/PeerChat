@@ -220,7 +220,7 @@ export default function HeroSection() {
           className="flex justify-center"
         >
           <a
-            href="https://peerchat.mathi.live/"
+            href="https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk"
             target="_blank"
             rel="noopener noreferrer"
             className="group relative px-6 py-3 sm:px-8 sm:py-4 rounded-full bg-[var(--color-ember)] text-white font-medium text-sm sm:text-base overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] inline-block"
