@@ -37,7 +37,7 @@ const sections = [
 export default function TermsPage() {
   return (
     <div className="min-h-screen bg-[var(--color-ink)] text-[var(--color-mist)] flex flex-col">
-      <main className="max-w-5xl mx-auto px-6 pt-16 pb-24 flex-1 w-full">
+      <main className="max-w-5xl mx-auto px-6 pt-16 pb-10 flex-1 w-full">
         <div className="grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-12 lg:gap-20 items-start">
           
           {/* Left: Scrollable Points */}

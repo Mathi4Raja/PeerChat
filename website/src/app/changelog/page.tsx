@@ -89,8 +89,8 @@ export default function ChangelogPage() {
         <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-[var(--color-ember)]/5 blur-[120px] rounded-full" />
       </div>
 
-      <main className="max-w-5xl mx-auto px-6 pt-16 flex-1 w-full">
-        <header className="mb-16">
+      <main className="max-w-4xl mx-auto px-6 pt-16 flex-1 w-full">
+        <header className="mb-16 text-center">
           <motion.p 
             initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
             className="text-[10px] font-[family-name:var(--font-mono)] font-bold text-[var(--color-ember)] uppercase tracking-[0.25em] mb-4"
