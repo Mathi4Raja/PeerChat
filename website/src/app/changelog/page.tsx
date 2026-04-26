@@ -39,21 +39,46 @@ function ReleaseRow({ release, isFirst, isLast }: { release: any; isFirst: boole
       {/* Main Content */}
       <div className="pb-12 lg:pb-24 pl-7 lg:pl-0">
         <div className="bg-[var(--color-charcoal)]/20 border border-[var(--color-slate)]/5 rounded-2xl p-5 sm:p-8 backdrop-blur-sm group-hover:border-[var(--color-ember)]/15 transition-all duration-500">
-          <ul className="space-y-3 sm:space-y-4">
-            {release.changes.map((change: string, idx: number) => (
-              <motion.li 
-                key={idx}
-                initial={{ opacity: 0, x: 10 }}
-                whileInView={{ opacity: 1, x: 0 }}
-                viewport={{ once: true }}
-                transition={{ delay: idx * 0.05 }}
-                className="flex items-start gap-3 sm:gap-4 text-xs sm:text-base leading-relaxed text-[var(--color-mist)]"
-              >
-                <div className="mt-2 w-1 h-1 rounded-full bg-[var(--color-ember)]/40 shrink-0" />
-                <span className="opacity-80 group-hover:opacity-100 transition-opacity">{change}</span>
-              </motion.li>
-            ))}
-          </ul>
+          <div className="space-y-8">
+            {/* Group changes by category */}
+            {['App', 'Web'].map((cat) => {
+              const catChanges = release.changes.filter((c: any) => c.category === cat);
+              if (catChanges.length === 0) return null;
+
+              return (
+                <div key={cat} className="space-y-4">
+                  <div className="flex items-center gap-3">
+                    <div className={`px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-[0.2em] flex items-center gap-2 ${
+                      cat === 'Web' 
+                        ? 'bg-[var(--color-gold)]/10 text-[var(--color-gold)] border border-[var(--color-gold)]/20' 
+                        : 'bg-[var(--color-ember)]/10 text-[var(--color-ember)] border border-[var(--color-ember)]/20'
+                    }`}>
+                      <span>{cat === 'Web' ? '🌐 Platform / Web' : '📱 Mobile App'}</span>
+                    </div>
+                    <div className="flex-1 h-[1px] bg-gradient-to-r from-[var(--color-slate)]/10 to-transparent" />
+                  </div>
+                  
+                  <ul className="space-y-3 sm:space-y-4 pl-1">
+                    {catChanges.map((change: any, idx: number) => (
+                      <motion.li 
+                        key={idx}
+                        initial={{ opacity: 0, x: 10 }}
+                        whileInView={{ opacity: 1, x: 0 }}
+                        viewport={{ once: true }}
+                        transition={{ delay: idx * 0.05 }}
+                        className="flex items-start gap-3 sm:gap-4 text-xs sm:text-[15px] leading-relaxed text-[var(--color-mist)]"
+                      >
+                        <div className={`mt-2 w-1 h-1 rounded-full shrink-0 ${
+                          cat === 'Web' ? 'bg-[var(--color-gold)]/40' : 'bg-[var(--color-ember)]/40'
+                        }`} />
+                        <span className="opacity-80 group-hover:opacity-100 transition-opacity">{change.text}</span>
+                      </motion.li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>

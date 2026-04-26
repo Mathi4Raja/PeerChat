@@ -1,0 +1,32 @@
+changelog:
+  exclude:
+    labels:
+      - skip-changelog
+    authors:
+      - octocat
+  categories:
+    - title: '📱 Mobile App'
+      labels:
+        - app
+        - mobile
+        - android
+        - mesh
+      # If no labels match, it will look at the title/body for these keywords
+    - title: '🌐 Website & Platform'
+      labels:
+        - website
+        - web
+        - ui
+        - docs
+    - title: '🚀 New Features'
+      labels:
+        - enhancement
+        - feature
+    - title: '🐛 Bug Fixes'
+      labels:
+        - bug
+        - fix
+    - title: '🔧 Maintenance'
+      labels:
+        - chore
+        - dependencies

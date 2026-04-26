@@ -7,7 +7,7 @@ import { NextResponse } from "next/server";
  * changelog for the website.
  */
 
-const GITHUB_REPO = "Mathi4Raja/P2P-app";
+const GITHUB_REPO = "Mathi4Raja/PeerChat";
 const GITHUB_RELEASES_API = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 
 export async function GET() {
@@ -23,7 +23,7 @@ export async function GET() {
 
         const response = await fetch(GITHUB_RELEASES_API, { 
             headers,
-            next: { revalidate: 120 } // Refresh every 2 minutes
+            next: { revalidate: 120 } 
         });
 
         if (!response.ok) {
@@ -39,19 +39,41 @@ export async function GET() {
             name: string;
         }
 
-        // Map GitHub release data to our website's expected format
         const formattedReleases = (releases as GitHubRelease[]).map((rel) => {
-            let changes: string[] = rel.body 
-                ? rel.body.split('\n')
-                    .map((l: string) => l.trim())
-                    .filter((l: string) => l.length > 0 && !l.startsWith('**Full Changelog**'))
-                : ["Initial production release."];
+            const rawLines = rel.body ? rel.body.split('\n').map(l => l.trim()) : [];
+            const items: { category: string; text: string }[] = [];
+            let currentCategory = "App"; // Default
 
-            // If we have bullet points, prioritize them
-            const bullets = changes.filter((l: string) => l.startsWith('-') || l.startsWith('*') || l.startsWith('•'));
-            if (bullets.length > 0) {
-                changes = bullets.map((b: string) => b.replace(/^[-*•]\s*/, ''));
-            }
+            rawLines.forEach(line => {
+                if (line.length === 0 || line.startsWith('**Full Changelog**')) return;
+
+                // Detect category switches from headings
+                const lowerLine = line.toLowerCase();
+                if (line.startsWith('#')) {
+                    if (lowerLine.includes('web')) currentCategory = "Web";
+                    else if (lowerLine.includes('app') || lowerLine.includes('mobile')) currentCategory = "App";
+                    return;
+                }
+
+                // Parse bullet points
+                if (line.startsWith('-') || line.startsWith('*') || line.startsWith('•')) {
+                    const text = line.replace(/^[-*•]\s*/, '');
+                    
+                    // Smart category detection
+                    let category = currentCategory;
+                    const lowerText = text.toLowerCase();
+                    
+                    // Web Keywords
+                    const webKeywords = ['website', 'ui polish', 'css', 'layout', 'responsive', 'seo', 'meta', 'footer', 'header', 'nav', 'hero', 'animation', 'section', 'browser'];
+                    // App Keywords
+                    const appKeywords = ['apk', 'app', 'mesh', 'ble', 'bluetooth', 'wifi', 'hotspot', 'transfer', 'encryption', 'p2p', 'mobile', 'android', 'notification'];
+
+                    if (webKeywords.some(k => lowerText.includes(k))) category = "Web";
+                    else if (appKeywords.some(k => lowerText.includes(k))) category = "App";
+
+                    items.push({ category, text });
+                }
+            });
 
             return {
                 version: rel.tag_name,
@@ -61,7 +83,7 @@ export async function GET() {
                     day: 'numeric'
                 }),
                 tag: rel.name || "Release",
-                changes: changes.length > 0 ? changes : ["General improvements and bug fixes."]
+                changes: items.length > 0 ? items : [{ category: "General", text: "General improvements and bug fixes." }]
             };
         });
 
