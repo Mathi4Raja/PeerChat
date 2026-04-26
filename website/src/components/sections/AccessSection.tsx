@@ -197,8 +197,6 @@ export default function AccessSection() {
                 <motion.a
                   href={plan.price === 'Free' ? "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk" : "/donateus"}
                   download={plan.price === 'Free' ? true : undefined}
-                  target={plan.price === 'Free' ? '_blank' : undefined}
-                  rel={plan.price === 'Free' ? 'noopener noreferrer' : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
                   }}
