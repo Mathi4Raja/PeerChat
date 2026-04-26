@@ -71,6 +71,8 @@ export default function HeroSection() {
           {MESH_LINES.map(([a, b], i) => {
             const from = MESH_PARTICLES[a];
             const to = MESH_PARTICLES[b];
+            if (!from || !to) return null;
+            
             return (
               <motion.line
                 key={`line-${i}`}
@@ -125,9 +127,15 @@ export default function HeroSection() {
           {/* Traveling signal pulses along some lines */}
           {stage >= 3 &&
             [0, 3, 6, 9, 13].map((lineIdx) => {
-              const [a, b] = MESH_LINES[lineIdx];
+              const line = MESH_LINES[lineIdx];
+              if (!line) return null;
+              
+              const [a, b] = line;
               const from = MESH_PARTICLES[a];
               const to = MESH_PARTICLES[b];
+              
+              if (!from || !to) return null;
+              
               return (
                 <motion.circle
                   key={`pulse-${lineIdx}`}
@@ -219,16 +227,20 @@ export default function HeroSection() {
           transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           className="flex justify-center"
         >
-          <a
-            href="/api/download/PeerChat.apk"
-            download
-            target="_self"
+          <button
+            onClick={() => {
+              const iframe = document.createElement('iframe');
+              iframe.style.display = 'none';
+              iframe.src = '/api/download/PeerChat.apk';
+              document.body.appendChild(iframe);
+              setTimeout(() => document.body.removeChild(iframe), 3000);
+            }}
             className="group relative px-6 py-3 sm:px-8 sm:py-4 rounded-full bg-[var(--color-ember)] text-white font-medium text-sm sm:text-base overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] inline-block"
             aria-label="Download PeerChat mobile app"
           >
             <span className="relative z-10 font-[family-name:var(--font-display)]">Get the Mobile app</span>
             <div className="absolute inset-0 bg-gradient-to-r from-[var(--color-ember)] to-[var(--color-copper)] opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-          </a>
+          </button>
         </motion.div>
       </div>
 

@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
  * and ensures the download link always points to the newest version.
  */
 
-const GITHUB_REPO = "Mathi4Raja/P2P-app";
+const GITHUB_REPO = "Mathi4Raja/PeerChat";
 const GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 export const dynamic = 'force-dynamic';
@@ -31,8 +31,11 @@ export async function GET() {
             next: { revalidate: 3600 } // Cache the response for 1 hour
         });
 
-        let downloadUrl = "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk";
-        let filename = "PeerChat.apk";
+        // --- FALLBACK CONFIG ---
+        // If the GitHub API fails, these values will be used as a safety net.
+        // Update these occasionally to the latest stable version.
+        let downloadUrl = "https://github.com/Mathi4Raja/PeerChat/releases/download/v1.0.1/PeerChat-v1.0.1.apk";
+        let filename = "PeerChat-v1.0.1.apk";
 
         if (response.ok) {
             const release = await response.json();

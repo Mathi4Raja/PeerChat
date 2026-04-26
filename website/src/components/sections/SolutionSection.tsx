@@ -119,15 +119,25 @@ export default function SolutionSection() {
             )}
 
             {/* Traveling dot particles */}
-            {activeNodes.length === 8 && (
+            {activeNodes.length === 8 && nodePositions.length >= 8 && (
               <>
                 <motion.circle
                   r="3"
                   fill="#8B5CF6"
                   filter="url(#glow-solution)"
                   animate={{
-                    cx: [nodePositions[0].x * responsiveR, nodePositions[1].x * responsiveR, nodePositions[2].x * responsiveR, nodePositions[3].x * responsiveR],
-                    cy: [nodePositions[0].y * responsiveR, nodePositions[1].y * responsiveR, nodePositions[2].y * responsiveR, nodePositions[3].y * responsiveR],
+                    cx: [
+                      (nodePositions[0]?.x || 0) * responsiveR, 
+                      (nodePositions[1]?.x || 0) * responsiveR, 
+                      (nodePositions[2]?.x || 0) * responsiveR, 
+                      (nodePositions[3]?.x || 0) * responsiveR
+                    ],
+                    cy: [
+                      (nodePositions[0]?.y || 0) * responsiveR, 
+                      (nodePositions[1]?.y || 0) * responsiveR, 
+                      (nodePositions[2]?.y || 0) * responsiveR, 
+                      (nodePositions[3]?.y || 0) * responsiveR
+                    ],
                     opacity: [0, 1, 1, 0],
                   }}
                   transition={{ duration: 3.5, repeat: Infinity, ease: 'linear' }}
@@ -137,8 +147,18 @@ export default function SolutionSection() {
                   fill="#6366F1"
                   filter="url(#glow-solution)"
                   animate={{
-                    cx: [nodePositions[4].x * responsiveR, nodePositions[5].x * responsiveR, nodePositions[6].x * responsiveR, nodePositions[7].x * responsiveR],
-                    cy: [nodePositions[4].y * responsiveR, nodePositions[5].y * responsiveR, nodePositions[6].y * responsiveR, nodePositions[7].y * responsiveR],
+                    cx: [
+                      (nodePositions[4]?.x || 0) * responsiveR, 
+                      (nodePositions[5]?.x || 0) * responsiveR, 
+                      (nodePositions[6]?.x || 0) * responsiveR, 
+                      (nodePositions[7]?.x || 0) * responsiveR
+                    ],
+                    cy: [
+                      (nodePositions[4]?.y || 0) * responsiveR, 
+                      (nodePositions[5]?.y || 0) * responsiveR, 
+                      (nodePositions[6]?.y || 0) * responsiveR, 
+                      (nodePositions[7]?.y || 0) * responsiveR
+                    ],
                     opacity: [0, 1, 1, 0],
                   }}
                   transition={{ duration: 3.5, repeat: Infinity, ease: 'linear', delay: 1.75 }}
@@ -148,8 +168,18 @@ export default function SolutionSection() {
                   fill="#A78BFA"
                   filter="url(#glow-solution)"
                   animate={{
-                    cx: [nodePositions[2].x * responsiveR, nodePositions[3].x * responsiveR, nodePositions[4].x * responsiveR, nodePositions[5].x * responsiveR],
-                    cy: [nodePositions[2].y * responsiveR, nodePositions[3].y * responsiveR, nodePositions[4].y * responsiveR, nodePositions[5].y * responsiveR],
+                    cx: [
+                      (nodePositions[2]?.x || 0) * responsiveR, 
+                      (nodePositions[3]?.x || 0) * responsiveR, 
+                      (nodePositions[4]?.x || 0) * responsiveR, 
+                      (nodePositions[5]?.x || 0) * responsiveR
+                    ],
+                    cy: [
+                      (nodePositions[2]?.y || 0) * responsiveR, 
+                      (nodePositions[3]?.y || 0) * responsiveR, 
+                      (nodePositions[4]?.y || 0) * responsiveR, 
+                      (nodePositions[5]?.y || 0) * responsiveR
+                    ],
                     opacity: [0, 1, 1, 0],
                   }}
                   transition={{ duration: 4, repeat: Infinity, ease: 'linear', delay: 0.8 }}

@@ -23,7 +23,7 @@ export async function GET() {
 
         const response = await fetch(GITHUB_RELEASES_API, { 
             headers,
-            next: { revalidate: 3600 } // Cache for 1 hour
+            next: { revalidate: 120 } // Refresh every 2 minutes
         });
 
         if (!response.ok) {
@@ -32,19 +32,38 @@ export async function GET() {
 
         const releases = await response.json();
         
+        interface GitHubRelease {
+            body: string;
+            tag_name: string;
+            published_at: string;
+            name: string;
+        }
+
         // Map GitHub release data to our website's expected format
-        const formattedReleases = releases.map((rel: any) => ({
-            version: rel.tag_name,
-            date: new Date(rel.published_at).toLocaleDateString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric'
-            }),
-            tag: rel.name || "Release",
-            // GitHub release body is markdown, we can pass it directly 
-            // or split into lines if needed. 
-            changes: rel.body ? rel.body.split('\n').filter((l: string) => l.trim().startsWith('-') || l.trim().startsWith('*')) : []
-        }));
+        const formattedReleases = (releases as GitHubRelease[]).map((rel) => {
+            let changes: string[] = rel.body 
+                ? rel.body.split('\n')
+                    .map((l: string) => l.trim())
+                    .filter((l: string) => l.length > 0 && !l.startsWith('**Full Changelog**'))
+                : ["Initial production release."];
+
+            // If we have bullet points, prioritize them
+            const bullets = changes.filter((l: string) => l.startsWith('-') || l.startsWith('*') || l.startsWith('•'));
+            if (bullets.length > 0) {
+                changes = bullets.map((b: string) => b.replace(/^[-*•]\s*/, ''));
+            }
+
+            return {
+                version: rel.tag_name,
+                date: new Date(rel.published_at).toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'long',
+                    day: 'numeric'
+                }),
+                tag: rel.name || "Release",
+                changes: changes.length > 0 ? changes : ["General improvements and bug fixes."]
+            };
+        });
 
         return NextResponse.json(formattedReleases);
 

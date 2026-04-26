@@ -50,7 +50,7 @@ export default function FooterSection() {
                 { label: 'GitHub', href: 'https://github.com/Mathi4Raja/P2P-app' },
                 { label: 'Documentation', href: 'https://github.com/Mathi4Raja/P2P-app#readme' },
                 { label: 'Protocol Spec', href: 'https://github.com/Mathi4Raja/P2P-app/blob/main/README.md' },
-                { label: 'Security Audit', href: '#' }
+                { label: 'Security Policy', href: 'https://github.com/Mathi4Raja/P2P-app/security/policy' }
               ].map(link => (
                 <li key={link.label}>
                   <a
@@ -112,25 +112,10 @@ export default function FooterSection() {
           transition={{ duration: 0.8, delay: 0.3 }}
           className="pt-8 border-t border-[var(--color-slate)]/20 flex flex-col sm:flex-row items-center justify-between gap-3"
         >
-          <p className="font-[family-name:var(--font-mono)] text-sm text-[var(--color-ash)]">
-            © {new Date().getFullYear()} PeerChat.
+          <p className="font-[family-name:var(--font-mono)] text-[10px] text-[var(--color-ash)] uppercase tracking-widest opacity-60">
+            © {new Date().getFullYear()} PeerChat. Local Mesh Network.
           </p>
-          <div className="flex gap-5">
-            {[
-              { label: 'Terms', href: '/tos' },
-              { label: 'Privacy', href: '/policies' },
-              { label: 'Changelog', href: '/changelog' },
-            ].map(l => (
-              <a
-                key={l.label}
-                href={l.href}
-                className="font-[family-name:var(--font-mono)] text-xs text-[var(--color-ash)] hover:text-[var(--color-ember)] transition-colors"
-              >
-                {l.label}
-              </a>
-            ))}
-          </div>
-          <p className="font-[family-name:var(--font-mono)] text-xs text-[var(--color-slate)]">
+          <p className="font-[family-name:var(--font-mono)] text-[11px] sm:text-xs text-[var(--color-ember)] font-bold uppercase tracking-[0.4em]" style={{ textShadow: '0 0 10px rgba(139, 92, 246, 0.4)' }}>
             The network is the people.
           </p>
         </motion.div>

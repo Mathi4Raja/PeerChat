@@ -194,25 +194,44 @@ export default function AccessSection() {
                 </AnimatePresence>
 
                 {/* CTA */}
-                <motion.a
-                  href={plan.price === 'Free' ? "/api/download/PeerChat.apk" : "/donateus"}
-                  download={plan.price === 'Free' ? true : undefined}
-                  target="_self"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                  }}
-                  className="mt-8 w-full block text-center py-3 rounded-full text-sm font-medium transition-all duration-300"
-                  style={{
-                    background: isSelected ? plan.accent : 'transparent',
-                    color: isSelected ? '#0a0a0a' : plan.accent,
-                    border: `1px solid ${plan.accent}`,
-                    opacity: isSelected ? 1 : 0.7,
-                  }}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                >
-                  {plan.price === 'Free' ? 'Download Now' : 'Donate Us'}
-                </motion.a>
+                {plan.price === 'Free' ? (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const iframe = document.createElement('iframe');
+                      iframe.style.display = 'none';
+                      iframe.src = '/api/download/PeerChat.apk';
+                      document.body.appendChild(iframe);
+                      setTimeout(() => document.body.removeChild(iframe), 3000);
+                    }}
+                    className="mt-8 w-full block text-center py-3 rounded-full text-sm font-medium transition-all duration-300"
+                    style={{
+                      background: isSelected ? plan.accent : 'transparent',
+                      color: isSelected ? '#0a0a0a' : plan.accent,
+                      border: `1px solid ${plan.accent}`,
+                      opacity: isSelected ? 1 : 0.7,
+                    }}
+                  >
+                    Download Now
+                  </button>
+                ) : (
+                  <motion.a
+                    href="/donateus"
+                    target="_self"
+                    onClick={(e) => e.stopPropagation()}
+                    className="mt-8 w-full block text-center py-3 rounded-full text-sm font-medium transition-all duration-300"
+                    style={{
+                      background: isSelected ? plan.accent : 'transparent',
+                      color: isSelected ? '#0a0a0a' : plan.accent,
+                      border: `1px solid ${plan.accent}`,
+                      opacity: isSelected ? 1 : 0.7,
+                    }}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                  >
+                    Donate Us
+                  </motion.a>
+                )}
               </motion.div>
             );
           })}
