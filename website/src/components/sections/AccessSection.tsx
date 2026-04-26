@@ -195,7 +195,7 @@ export default function AccessSection() {
 
                 {/* CTA */}
                 <motion.a
-                  href={plan.price === 'Free' ? "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk" : "/donateus"}
+                  href={plan.price === 'Free' ? "/api/download" : "/donateus"}
                   download={plan.price === 'Free' ? true : undefined}
                   onClick={(e) => {
                     e.stopPropagation();
