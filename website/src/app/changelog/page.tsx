@@ -3,43 +3,9 @@
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 
-const releases = [
-  {
-    version: 'v1.0.0',
-    date: 'April 20, 2026',
-    tag: 'Final Release',
-    changes: [
-      'Initial production launch of PeerChat.',
-      'Full P2P mesh messaging via BLE and WiFi.',
-      'End-to-end encryption for all messages and file transfers.',
-      'Cross-platform support (Android, Windows, Linux, macOS).',
-      'Material 3 design system with custom branding.',
-    ]
-  },
-  {
-    version: 'v0.9.5',
-    date: 'April 15, 2026',
-    tag: 'Beta',
-    changes: [
-      'Optimized mesh routing performance.',
-      'Added high-speed file transfer protocol.',
-      'Implemented Google OAuth for unique usernames.',
-      'Improved battery life during discovery.',
-    ]
-  },
-  {
-    version: 'v0.9.0',
-    date: 'April 5, 2026',
-    tag: 'Early Access',
-    changes: [
-      'Core P2P engine stabilization.',
-      'Basic chat and file share functionality.',
-      'Initial UI/UX prototyping.',
-    ]
-  }
-];
+import { useEffect, useState } from 'react';
 
-function ReleaseRow({ release, isFirst }: { release: typeof releases[0]; isFirst: boolean }) {
+function ReleaseRow({ release, isFirst }: { release: any; isFirst: boolean }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[160px_1fr] gap-4 lg:gap-12 relative group">
       {/* Sidebar: Sticky Version */}
@@ -62,7 +28,7 @@ function ReleaseRow({ release, isFirst }: { release: typeof releases[0]; isFirst
       {/* Main Content: Flat list */}
       <div className="pb-16 lg:pb-24">
         <ul className="space-y-4">
-          {release.changes.map((change, idx) => (
+          {release.changes.map((change: string, idx: number) => (
             <motion.li 
               key={idx}
               initial={{ opacity: 0, x: 10 }}
@@ -82,6 +48,31 @@ function ReleaseRow({ release, isFirst }: { release: typeof releases[0]; isFirst
 }
 
 export default function ChangelogPage() {
+  const [releases, setReleases] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/changelog')
+      .then(res => res.json())
+      .then(data => {
+        if (Array.isArray(data)) {
+          setReleases(data);
+        }
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Error fetching changelog:', err);
+        setLoading(false);
+      });
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[var(--color-ink)] flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-[var(--color-ember)] border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
   return (
     <div className="min-h-screen bg-[var(--color-ink)] text-[var(--color-mist)] flex flex-col">
       {/* Background Decor */}
