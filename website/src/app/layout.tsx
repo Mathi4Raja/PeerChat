@@ -1,3 +1,13 @@
+/**
+ * PeerChat - Decentralized P2P mesh messaging and file sharing.
+ * Copyright (C) 2026  Mathiraja
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ */
+
 import type { Metadata } from "next";
 import { Space_Grotesk, Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";

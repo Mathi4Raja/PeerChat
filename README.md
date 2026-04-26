@@ -1,124 +1,68 @@
-# PeerChat
+# PeerChat 📡
+### Decentralized. Infrastructure-Free. Privacy-First.
 
-**Version:** 1.0.0 (Production Ready)  
-**Status:** 🟢 Mission Complete — Fully Decentralized & Feature Rich  
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Flutter](https://img.shields.io/badge/Flutter-%2302569B.svg?logo=Flutter&logoColor=white)](https://flutter.dev)
+[![Website](https://img.shields.io/badge/Website-peerchat.mathi.live-violet)](https://peerchat.mathi.live)
 
-PeerChat is a fully functional, zero-infrastructure peer-to-peer secure messaging and file-sharing application designed for offline communication scenarios. Built intelligently to connect devices without cell towers, it establishes self-healing mesh networks, multi-hop routing, and high-speed direct file transfers using local hardware radios.
-
----
-
-## 🌟 What's New in v1.0.0
-
-The project has advanced from a core-messaging app to a comprehensive decentralized platform:
-
-- **🚀 P2P Sliding-Window File Transfers:** High-speed, chunk-based direct file transfers with crash-recovery capabilities mapped natively to device external storage.
-- **🌐 Web Share Hosted Service:** An isolated HTTP service embedded directly in the app to share files seamlessly over WiFi Hotspots directly to native browsers, featuring Manual Upload Approval protocols.
-- **📡 Multi-Transport Engine:** Smart routing leveraging **Bluetooth Classic**, **WiFi Direct**, and **WiFi Hotspots**.
-- **🎨 Visual Overhaul & Harmonized Theme:** A beautiful, responsive interface featuring Dark Violet / Ink branding, refined chat bubbles, relative timestamps, and scaling UI. 
-- **📁 Native Media Picker:** 100x faster media queries, app icon extraction, and file management linked natively to the OS.
-- **🛠️ Automated CI/CD:** Release workflows fully managed via `mobile-ci.yml`.
+**PeerChat** is a production-grade, zero-infrastructure messaging platform. It connects devices using only their local hardware—Bluetooth, WiFi Direct, and Hotspots—to create self-healing mesh networks that survive without cell towers or internet.
 
 ---
 
-## ⚡ Quick Start (In 5 Minutes)
+## 🚀 Key Features
 
-### 1. Install Securely
-Install the latest `PeerChat.apk` on two or more Android devices.
+- **🌐 Multi-Transport Mesh Networking**: Intelligent routing that automatically selects the best path using Bluetooth, WiFi Direct, or Hotspot relays.
+- **📁 Sliding-Window File Transfers**: High-speed, chunk-based P2P file sharing with native crash recovery and bitmask-guaranteed integrity.
+- **🔒 Libsodium E2EE**: Absolute message confidentiality using Ed25519 signatures for identity and X25519 for encryption.
+- **📡 Multi-Hop Routing**: Messages find their way through intermediate peers to reach out-of-range devices.
+- **🌍 Web Share Proxy**: Share files instantly to any device with a browser via an embedded, secure HTTP service.
+- **🎨 Premium UX**: A beautiful, harmonized "Ink & Violet" design system with smooth animations and responsive layouts.
+
+---
+
+## 📦 Distribution & Automation
+
+PeerChat follows a professional **Continuous Delivery** pipeline:
+
+- **Automated Releases**: We use GitHub Actions to build and publish signed APKs automatically upon tag pushes.
+- **Dynamic Downloads**: Our [website](https://peerchat.mathi.live) always serves the latest version directly from GitHub via a custom proxy API.
+- **Real-time Changelog**: The app's history is fetched dynamically from GitHub, ensuring you always see the latest improvements.
+
+---
+
+## 🛠️ Quick Start
+
+### For Users
+1. Download the latest APK from **[peerchat.mathi.live](https://peerchat.mathi.live)**.
+2. Grant Bluetooth, Location, and File permissions.
+3. Bring two devices close together—they will auto-discover and establish a secure handshake.
+
+### For Developers
 ```bash
-adb install build/app/outputs/flutter-apk/PeerChat.apk
-```
-
-### 2. Grant Device Permissions
-Upon launch, PeerChat requires local radio access. Grant permissions when prompted:
-- ✅ **Bluetooth** (For persistent background device discovery)
-- ✅ **Location** (A hard Android requirement for WiFi Direct/Nearby connections)
-- ✅ **Camera** (To scan secure Identity QR codes)
-- ✅ **Files / Media** (To enable P2P local file caching and sharing)
-
-### 3. Connect & Transact
-- Keep both devices in proximity. Peers will appear under **Discovered** initially.
-- Allow 10-30 seconds for the **Automatic Cryptographic Key Exchange** handshake.
-- Once handshakes complete, devices turn Green and shift to **Connected**.
-- **Send Messages:** Tap a peer, type, and verify receipt via the checkmarks.
-- **Send Files:** Trigger transfers right from the Chat Screen or head to the Dashboard.
-
-*Having issues? Check the **[DEBUGGING_GUIDE.md](others/DEBUGGING_GUIDE.md)**.*
-
----
-
-## ⚙️ Core Architecture & Tech Stack
-
-PeerChat employs a robust, multi-layered architecture focused completely on privacy and zero-trust. 
-
-### Security & Privacy Layer (Libsodium/NaCl)
-- **Ed25519 Signatures:** Validates peer identity; prevents tampering.
-- **X25519 Encryption:** Absolute message confidentiality from device to device.
-- **Local Persistence Only:** The database is strictly on-device (SQLite). 
-- **Offline By Design:** Requires exactly 0% internet connectivity. 
-
-### Decentralized Mesh Routing
-- **Multi-Hop Relaying:** Out-of-range devices connect automatically via intermediate peers holding the app.
-- **Lazy Flooding & Queue Limits:** Intelligent queue pruning (max 5000) prevents cache bloat and eliminates replay attacks.
-- **Delivery Confirmations & Read Receipts:** A robust 3-stage validation (`Sent` → `Received` → `Seen`).
-
-### P2P Protocol Engine
-- **Hardware Isolation Hooks:** Turbo Mode isolates Web Share from local meshes temporarily to maximize throughput and radio capacity.
-- **True Sliding Window / Pipelining:** Enables wait-free data transmission with crash restoration bitmasks guaranteeing complete transfers across interruptions.
-
----
-
-## 📚 Technical Documentation
-
-Deeper structural details are maintained in the `others/` directory:
-
-- [System Architecture](others/sys_architecture.md): The original design paradigm.
-- [Requirements & Specifications](others/req.md): Foundational features outlined.
-- [Mesh Networking Details](others/MESH_ROUTING_IMPLEMENTATION.md): How Multi-Hop routing handles paths.
-- [Debugging & Logs Guide](others/DEBUGGING_GUIDE.md): What logs look like during direct connections and troubleshooting steps.
-- [Tracked Status & Tasks](others/TRACK_TASKS.md): Detailed historic iterations across 40+ phases.
-
----
-
-## 📱 Use Cases & Deployment
-
-### 🌪️ Disaster Relief & Off-Grid (Primary)
-- Operates smoothly without internet or cell tower availability.
-- Mesh topologies dramatically extend communications bounds down the street.
-- Minimal footprint installs on decade-old, low-resource hardware.
-
-### ⛺ Peer Scenarios
-- Tactical operations / Privacy-focused networks.
-- Dense convention halls with clogged network pipes (Hotspot direct share).
-- Camping, protesting, and localized remote teamwork.
-
----
-
-## 🏗️ Development & Build Configs
-
-PeerChat natively binds Java 21 LTS limits with advanced Flutter integration.
-
-**Requirements:**
-- Android: 6.0+ minimum; fully optimized for Android 11+ scoped storage.
-- Storage: ~50MB 
-
-**Create Release APK (Optimized, Split ABIs):**
-```bash
-./others/build_release.ps1
-```
-*Alternatively natively by:*
-```bash
-flutter build apk --release --split-per-abi
-```
-
-**Debug Build:**
-```bash
-flutter build apk --debug
+git clone https://github.com/Mathi4Raja/P2P-app.git
+cd P2P-app
+flutter pub get
+flutter run
 ```
 
 ---
 
-## ❤️ Open Source & Community Support
+## 🛡️ Security & Privacy
+- **Zero Metadata Tracking**: No central servers = no metadata collection.
+- **Identity Verification**: Secure QR code scanning to verify peer fingerprints.
+- **Local-Only Persistence**: All data is encrypted and stored strictly on your device's local SQLite database.
 
-PeerChat revolves around the ideology of permanent, decentralized rights to share files and speak without centralized authority observation. 
+---
 
-Consider supporting the project by joining the Patron initiative or leaving a star on GitHub.
+## 🤝 Contributing
+We welcome contributions! Please see our **[CONTRIBUTING.md](CONTRIBUTING.md)** for our setup guide and **AI-assistance policy**.
+
+---
+
+## 📄 License
+PeerChat is licensed under the **GNU General Public License v3.0**. 
+
+*Protecting the decentralized future—commercial use requires a separate license.*
+
+---
+Built with ❤️ for the decentralized web. [Star us on GitHub](https://github.com/Mathi4Raja/P2P-app) if you believe in privacy.

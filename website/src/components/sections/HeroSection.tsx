@@ -220,8 +220,9 @@ export default function HeroSection() {
           className="flex justify-center"
         >
           <a
-            href="/api/download"
+            href="/api/download/PeerChat.apk"
             download
+            target="_self"
             className="group relative px-6 py-3 sm:px-8 sm:py-4 rounded-full bg-[var(--color-ember)] text-white font-medium text-sm sm:text-base overflow-hidden transition-all duration-300 hover:shadow-[0_0_40px_rgba(139,92,246,0.3)] inline-block"
             aria-label="Download PeerChat mobile app"
           >

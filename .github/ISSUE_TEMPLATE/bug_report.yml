@@ -1,0 +1,47 @@
+name: 🐛 Bug Report
+about: Create a report to help us improve PeerChat
+title: '[BUG] '
+labels: bug
+assignees: ''
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug! Please provide as much detail as possible to help us fix it.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: How do we see this bug?
+      placeholder: |
+        1. Open PeerChat on two devices
+        2. Turn off WiFi on one
+        3. Try to send a file...
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Device model, OS version, PeerChat version.
+      placeholder: e.g. Samsung S21, Android 13, PeerChat v1.0.0
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or Screenshots
+      description: Paste any relevant logs or drag-and-drop screenshots here.

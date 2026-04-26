@@ -11,6 +11,8 @@ import { NextResponse } from "next/server";
 const GITHUB_REPO = "Mathi4Raja/P2P-app";
 const GITHUB_LATEST_RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
+export const dynamic = 'force-dynamic';
+
 export async function GET() {
     try {
         const headers: Record<string, string> = {
@@ -29,27 +31,33 @@ export async function GET() {
             next: { revalidate: 3600 } // Cache the response for 1 hour
         });
 
-        if (!response.ok) {
-            console.error("GitHub API error:", response.statusText);
-            // Fallback to a hardcoded version if the API is down
-            return NextResponse.redirect("https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk");
+        let downloadUrl = "https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk";
+        let filename = "PeerChat.apk";
+
+        if (response.ok) {
+            const release = await response.json();
+            
+            // 2. Find the APK asset
+            const apkAsset = release.assets?.find((asset: any) => 
+                asset.name.toLowerCase().endsWith(".apk")
+            );
+
+            if (apkAsset) {
+                downloadUrl = apkAsset.browser_download_url;
+                filename = apkAsset.name;
+            }
         }
 
-        const release = await response.json();
+        // 3. Redirect to the download URL with optimization headers
+        // We use a 302 redirect and manually add headers to hint the download
+        const redirectResponse = NextResponse.redirect(downloadUrl, 302);
         
-        // 2. Find the APK asset
-        // We look for any asset that ends with .apk
-        const apkAsset = release.assets?.find((asset: any) => 
-            asset.name.toLowerCase().endsWith(".apk")
-        );
+        // Add headers to the redirect response to help mobile browsers
+        redirectResponse.headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+        redirectResponse.headers.set('Content-Type', 'application/vnd.android.package-archive');
+        redirectResponse.headers.set('Cache-Control', 'no-store, max-age=0');
 
-        if (!apkAsset) {
-            return new NextResponse("APK asset not found in the latest release", { status: 404 });
-        }
-
-        // 3. Redirect to the download URL
-        // We use browser_download_url for a direct browser-initiated download
-        return NextResponse.redirect(apkAsset.browser_download_url);
+        return redirectResponse;
 
     } catch (error) {
         console.error("Download redirect error:", error);
