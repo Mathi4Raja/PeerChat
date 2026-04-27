@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../utils/app_logger.dart';
+import '../utils/distributed_tracer.dart';
+import '../utils/token_bucket.dart';
 import 'package:sodium/sodium.dart';
 import 'crypto_service.dart';
 import 'discovery_service.dart';
@@ -60,6 +62,9 @@ class MeshRouterService extends ChangeNotifier {
   int _messagesFailed = 0;
   final Map<String, int> _lastQueueDiscoveryAttempt = {};
   static const Duration _queueDiscoveryCooldown = Duration(seconds: 15);
+
+  // Rate limiters per peer
+  final Map<String, TokenBucket> _peerRateLimiters = {};
 
   // Stream for incoming messages — ChatScreen listens to this
   final StreamController<ChatMessage> _incomingMessageController =
@@ -302,6 +307,9 @@ class MeshRouterService extends ChangeNotifier {
       );
 
       final msgId = messageId ?? _generateMessageId();
+      final spanId = DistributedTracer.generateSpanId();
+      DistributedTracer.startSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'recipient': recipientPeerId, 'mode': mode.name});
+
       if (mode == CommunicationMode.emergencyBroadcast) {
         final sent = await _emergencyBroadcastService.broadcastMessage(
           messageId: msgId,
@@ -309,12 +317,16 @@ class MeshRouterService extends ChangeNotifier {
         );
         final result = sent ? SendResult.routed : SendResult.failed;
         _recordSendAttempt(result);
+        DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': result.name});
         return result;
       }
 
       final recipientPublicKey =
           await _signatureVerifier.getPeerPublicKey(recipientPeerId);
-      if (recipientPublicKey == null) return SendResult.failed;
+      if (recipientPublicKey == null) {
+        DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': 'failed_no_key'});
+        return SendResult.failed;
+      }
 
       final message = await _messageManager.createMessage(
         recipientPeerId: recipientPeerId,
@@ -326,6 +338,7 @@ class MeshRouterService extends ChangeNotifier {
 
       final forwarded = await _forwardMessageViaTransport(message);
       _recordSendAttempt(forwarded);
+      DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': forwarded.name});
       notifyListeners();
       return forwarded;
     } catch (e) {
@@ -378,6 +391,7 @@ class MeshRouterService extends ChangeNotifier {
         await _routeManager.getNextHop(message.recipientPeerId);
 
     if (nextHopCryptoId == null) {
+      DistributedTracer.logEvent('Forward: No route found', traceId: message.messageId);
       final opportunisticForwards = await _opportunisticForward(message, null);
       final queuedMessage = QueuedMessage(
         message: message,
@@ -392,6 +406,7 @@ class MeshRouterService extends ChangeNotifier {
 
     final transportId = _connectionManager.getTransportId(nextHopCryptoId);
     if (transportId == null) {
+      DistributedTracer.logEvent('Forward: Next hop offline', traceId: message.messageId, attributes: {'nextHop': nextHopCryptoId});
       final queuedMessage = QueuedMessage(
         message: message,
         nextHopPeerId: nextHopCryptoId,
@@ -402,14 +417,17 @@ class MeshRouterService extends ChangeNotifier {
       return SendResult.queued;
     }
 
+    DistributedTracer.logEvent('Forward: Sending via transport', traceId: message.messageId, attributes: {'transportId': transportId});
     final sent =
         await _transportService.sendMessage(transportId, message.toBytes());
 
     if (sent) {
+      DistributedTracer.logEvent('Forward: Sent successfully', traceId: message.messageId);
       await _routeManager.markRouteSuccess(
           message.recipientPeerId, nextHopCryptoId);
       return SendResult.routed;
     } else {
+      DistributedTracer.logEvent('Forward: Send failed', traceId: message.messageId);
       final queuedMessage = QueuedMessage(
         message: message,
         nextHopPeerId: nextHopCryptoId,
@@ -427,29 +445,48 @@ class MeshRouterService extends ChangeNotifier {
       Uint8List rawMessage, String fromPeerAddress) async {
     try {
       final message = MeshMessage.fromBytes(rawMessage);
+      final spanId = DistributedTracer.generateSpanId();
+      DistributedTracer.startSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'from': fromPeerAddress, 'type': message.type.name});
 
       // Validate TTL bounds to prevent infinite loops and flood attacks
       if (message.ttl <= 0 || message.ttl > MessageLimits.ttlMax || message.hopCount > MessageLimits.ttlMax) {
         AppLogger.print('Dropping message due to invalid TTL/hopCount: ttl=${message.ttl}, hops=${message.hopCount}');
+        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_invalid_ttl'});
         return;
+      }
+
+      final immediateSenderId = _connectionManager.getCryptoPeerId(fromPeerAddress);
+
+      // TokenBucket Rate Limiting
+      if (immediateSenderId != null) {
+        final bucket = _peerRateLimiters.putIfAbsent(
+            immediateSenderId,
+            () => TokenBucket(
+                capacity: RateLimitConfig.tokenBucketCapacity,
+                refillRatePerSecond: RateLimitConfig.tokenBucketRefillRate));
+        if (!bucket.tryConsume()) {
+          AppLogger.print('Rate limit exceeded for $immediateSenderId, dropping message');
+          DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_rate_limit'});
+          return;
+        }
       }
 
       if (message.recipientPeerId == broadcastEmergencyDestination) {
         await _emergencyBroadcastService.handleIncomingBroadcast(
             message, fromPeerAddress);
         notifyListeners();
+        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'emergency_handled'});
         return;
       }
 
       if (_deduplicationCache.hasSeenFingerprint(
           message.messageId, message.senderPeerId, message.hopCount)) {
+        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_duplicate'});
         return;
       }
       _deduplicationCache.markFingerprint(
           message.messageId, message.senderPeerId, message.hopCount);
 
-      final immediateSenderId =
-          _connectionManager.getCryptoPeerId(fromPeerAddress);
       if (immediateSenderId != null) {
         final learnedRoute = mesh_route.Route(
           destinationPeerId: message.senderPeerId,
@@ -467,12 +504,14 @@ class MeshRouterService extends ChangeNotifier {
           message.encryptedContent != null) {
         final request = RouteRequest.fromBytes(message.encryptedContent!);
         await _routeManager.handleRouteRequest(request, fromPeerAddress);
+        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'route_request_handled'});
         return;
       }
       if (message.type == MessageType.routeResponse &&
           message.encryptedContent != null) {
         final response = RouteResponse.fromBytes(message.encryptedContent!);
         await _routeManager.handleRouteResponse(response);
+        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'route_response_handled'});
         return;
       }
 
@@ -480,6 +519,7 @@ class MeshRouterService extends ChangeNotifier {
           await _messageManager.processMessage(message, fromPeerAddress);
 
       if (result == ProcessResult.delivered) {
+        DistributedTracer.logEvent('Message Delivered', traceId: message.messageId, spanId: spanId);
         // Notify raw message listeners (like FileTransferService) only if intended for us
         _rawMessageController.add(message);
 
@@ -491,9 +531,11 @@ class MeshRouterService extends ChangeNotifier {
         await _lazyFlood(message.copyForForwarding(), fromPeerAddress);
       }
 
+      DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': result.name});
       notifyListeners();
     } catch (e) {
       AppLogger.print('Error receiving message: $e');
+      // No traceId if parsing failed, but handled gracefully
     }
   }
 
@@ -662,6 +704,7 @@ class MeshRouterService extends ChangeNotifier {
             queuedMessage.message.messageId,
             MessageStatus.routing,
             clearHopCount: true,
+            correlationId: queuedMessage.message.messageId, // Use messageId as distributed Trace ID
           );
           _statusUpdateController.add(queuedMessage.message.messageId);
         }
@@ -723,6 +766,7 @@ class MeshRouterService extends ChangeNotifier {
         queuedMessage.message.messageId,
         MessageStatus.routing,
         clearHopCount: true,
+        correlationId: queuedMessage.message.messageId,
       );
       _statusUpdateController.add(queuedMessage.message.messageId);
     }
@@ -746,6 +790,7 @@ class MeshRouterService extends ChangeNotifier {
       messageId,
       MessageStatus.failed,
       clearHopCount: true,
+      correlationId: messageId,
     );
     _statusUpdateController.add(messageId);
   }

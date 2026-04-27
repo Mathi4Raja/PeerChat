@@ -10,6 +10,15 @@ class ProtocolConfig {
   static const int keepAliveByte = 0xFF;
 }
 
+/// Token bucket rate limits for flow control.
+class RateLimitConfig {
+  /// Maximum number of messages a peer can burst before being dropped.
+  static const double tokenBucketCapacity = 50.0;
+
+  /// Number of messages a peer can send per second continuously.
+  static const double tokenBucketRefillRate = 10.0;
+}
+
 /// Queue behavior constants not tied to retry backoff math.
 class QueuePolicyConfig {
   /// Age threshold after which queued messages get a temporary priority boost.

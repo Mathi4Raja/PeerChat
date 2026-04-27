@@ -7,7 +7,47 @@ import '../models/handshake_message.dart';
 import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
+import '../config/limits_config.dart';
 import '../config/identity_ui_config.dart';
+import '../models/peer_connection_state.dart';
+import '../utils/state_guard.dart';
+import 'dart:collection';
+
+class _TaskQueue {
+  final Queue<_Task> _tasks = Queue();
+  bool _isProcessing = false;
+
+  Future<void> enqueue(Future<void> Function() action) {
+    final completer = Completer<void>();
+    _tasks.add(_Task(action, completer));
+    _process();
+    return completer.future;
+  }
+
+  Future<void> _process() async {
+    if (_isProcessing) return;
+    _isProcessing = true;
+    try {
+      while (_tasks.isNotEmpty) {
+        final task = _tasks.removeFirst();
+        try {
+          await task.action();
+          task.completer.complete();
+        } catch (e, st) {
+          task.completer.completeError(e, st);
+        }
+      }
+    } finally {
+      _isProcessing = false;
+    }
+  }
+}
+
+class _Task {
+  final Future<void> Function() action;
+  final Completer<void> completer;
+  _Task(this.action, this.completer);
+}
 
 /// Manages peer connections and ID mappings
 /// Maps transport IDs (MAC addresses, endpoint IDs) to cryptographic peer IDs
@@ -18,9 +58,12 @@ class ConnectionManager extends ChangeNotifier {
   // Map transport ID -> crypto peer ID
   final Map<String, String> _transportToCrypto = {};
 
+  final _TaskQueue _stateQueue = _TaskQueue();
+
   // Map crypto peer ID -> currently preferred transport ID
   final Map<String, String> _cryptoToTransport = {};
   final Map<String, Set<String>> _peerTransports = {};
+  final Map<String, PeerConnectionState> _transportStates = {};
 
   // Track which peers have completed handshake
   final Set<String> _handshakeComplete = {};
@@ -97,10 +140,19 @@ class ConnectionManager extends ChangeNotifier {
 
   /// Handle new connection - send handshake
   Future<void> onConnectionEstablished(String transportId) async {
-    await sendHandshake(
-      transportId: transportId,
-      reason: 'connection_established',
-    );
+    return _stateQueue.enqueue(() async {
+      final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
+      StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.connecting);
+      _transportStates[transportId] = PeerConnectionState.connecting;
+      
+      StateGuard.transitionConnection(transportId, PeerConnectionState.connecting, PeerConnectionState.handshake_pending);
+      _transportStates[transportId] = PeerConnectionState.handshake_pending;
+
+      await sendHandshake(
+        transportId: transportId,
+        reason: 'connection_established',
+      );
+    });
   }
 
   Future<void> _sendHandshake(String transportId) async {
@@ -131,6 +183,7 @@ class ConnectionManager extends ChangeNotifier {
   /// Handle received handshake message
   Future<void> handleHandshake(
       String transportId, HandshakeMessage handshake) async {
+    return _stateQueue.enqueue(() async {
     debugPrint(
         'Received handshake from $transportId: ${handshake.displayName}');
     final wasComplete = _handshakeComplete.contains(transportId);
@@ -148,6 +201,14 @@ class ConnectionManager extends ChangeNotifier {
       peerId: handshake.peerId,
       newTransportId: transportId,
     );
+    
+    final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
+    // Allow transitioning to connected from handshake_pending or connecting (if we received it before we sent ours)
+    if (currentState != PeerConnectionState.connected) {
+      StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.connected);
+      _transportStates[transportId] = PeerConnectionState.connected;
+    }
+
     _peerRuntimeProfiles[handshake.peerId] =
         runtimeProfileFromStorage(handshake.runtimeProfile);
 
@@ -177,6 +238,7 @@ class ConnectionManager extends ChangeNotifier {
       onHandshakeComplete?.call(handshake.peerId);
     }
     notifyListeners();
+    });
   }
 
   /// Merge transport sessions by stable crypto peerId.
@@ -210,7 +272,18 @@ class ConnectionManager extends ChangeNotifier {
   /// different transport (WiFi → BT switch), we atomically update the mapping
   /// in handleHandshake() instead of creating a duplicate peer entry.
   void onConnectionLost(String transportId) {
-    debugPrint('Connection lost with $transportId');
+    _stateQueue.enqueue(() async {
+      debugPrint('Connection lost with $transportId');
+      
+      final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
+      if (currentState != PeerConnectionState.disconnected) {
+        if (currentState == PeerConnectionState.connected) {
+           StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.disconnecting);
+           _transportStates[transportId] = PeerConnectionState.disconnecting;
+        }
+        StateGuard.transitionConnection(transportId, _transportStates[transportId]!, PeerConnectionState.disconnected);
+        _transportStates[transportId] = PeerConnectionState.disconnected;
+      }
 
     final cryptoId = _transportToCrypto[transportId];
     if (cryptoId != null) {
@@ -228,10 +301,12 @@ class ConnectionManager extends ChangeNotifier {
     _initialHandshakeSent.remove(transportId);
 
     notifyListeners();
+    });
   }
 
   /// Update peer's lastSeen timestamp (call when receiving data/keepalives)
   Future<void> updatePeerActivity(String transportId) async {
+    return _stateQueue.enqueue(() async {
     final cryptoId = _transportToCrypto[transportId];
     if (cryptoId == null) {
       debugPrint(
@@ -266,6 +341,7 @@ class ConnectionManager extends ChangeNotifier {
       debugPrint(
           '⚠️ updatePeerActivity: Peer not found for crypto ID $shortCryptoId');
     }
+    });
   }
 
   /// Get all connected crypto peer IDs

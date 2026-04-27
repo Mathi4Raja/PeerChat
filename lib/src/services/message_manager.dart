@@ -8,7 +8,46 @@ import 'signature_verifier.dart';
 import '../config/limits_config.dart';
 import '../models/mesh_message.dart';
 import '../models/queued_message.dart';
+import '../utils/distributed_tracer.dart';
 import 'package:uuid/uuid.dart';
+import 'dart:collection';
+import 'dart:async';
+
+class _TaskQueue {
+  final Queue<_Task> _tasks = Queue();
+  bool _isProcessing = false;
+
+  Future<T> enqueue<T>(Future<T> Function() action) {
+    final completer = Completer<T>();
+    _tasks.add(_Task<T>(action, completer));
+    _process();
+    return completer.future;
+  }
+
+  Future<void> _process() async {
+    if (_isProcessing) return;
+    _isProcessing = true;
+    try {
+      while (_tasks.isNotEmpty) {
+        final task = _tasks.removeFirst();
+        try {
+          final result = await task.action();
+          task.completer.complete(result);
+        } catch (e, st) {
+          task.completer.completeError(e, st);
+        }
+      }
+    } finally {
+      _isProcessing = false;
+    }
+  }
+}
+
+class _Task<T> {
+  final Future<T> Function() action;
+  final Completer<T> completer;
+  _Task(this.action, this.completer);
+}
 
 enum ProcessResult {
   delivered,
@@ -28,6 +67,7 @@ class MessageManager {
 
   final _uuid = const Uuid();
   final _random = Random.secure();
+  final _TaskQueue _processingQueue = _TaskQueue();
 
   static const int maxMessageSize = MessageLimits.maxContentBytes;
 
@@ -153,15 +193,19 @@ class MessageManager {
     return '${shortSenderId}_$compactUuid';
   }
 
-  // Process incoming message
+  // Process incoming message sequentially to prevent race conditions
   Future<ProcessResult> processMessage(
       MeshMessage message, String fromPeerAddress) async {
-    // Verify signature
+    final spanId = DistributedTracer.generateSpanId();
+    DistributedTracer.startSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId);
+    return _processingQueue.enqueue(() async {
+      // Verify signature
     final isValidSignature =
         await _signatureVerifier.verifyMessageSignature(message);
     if (!isValidSignature) {
       debugPrint('Invalid signature from ${message.senderPeerId}');
       await _signatureVerifier.recordInvalidSignature(message.senderPeerId);
+      DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'invalid_signature'});
       return ProcessResult.invalid;
     }
 
@@ -169,27 +213,33 @@ class MessageManager {
     final now = DateTime.now().millisecondsSinceEpoch;
     final age = now - message.timestamp;
     if (age < -MessageLimits.futureClockSkewToleranceMs || message.isExpired) {
+      DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'expired'});
       return ProcessResult.expired;
     }
 
     // Check deduplication
     if (await _deduplicationCache.hasSeen(message.messageId)) {
+      DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'duplicate'});
       return ProcessResult.duplicate;
     }
     await _deduplicationCache.markSeen(message.messageId, message.timestamp);
 
     // Check TTL
     if (message.ttl <= 0) {
+      DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'expired_ttl'});
       return ProcessResult.expired;
     }
 
     // Check if we are the destination
     if (message.recipientPeerId == _cryptoService.localPeerId) {
+      DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'delivered'});
       return ProcessResult.delivered;
     }
 
     // Relay
+    DistributedTracer.endSpan('MessageManager.processMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'queued_for_relay'});
     return ProcessResult.queued;
+    });
   }
 
   // Decrypt text content
@@ -237,7 +287,8 @@ class MessageManager {
   }
 
   Future<bool> forwardMessage(MeshMessage message) async {
-    final nextHop = await _routeManager.getNextHop(message.recipientPeerId);
+    return _processingQueue.enqueue(() async {
+      final nextHop = await _routeManager.getNextHop(message.recipientPeerId);
     if (nextHop == null) {
       final queuedMessage = QueuedMessage(
         message: message,
@@ -262,6 +313,7 @@ class MessageManager {
       return false;
     }
     return true;
+    });
   }
 
   QueueOrigin _queueOriginFor(MeshMessage message) {

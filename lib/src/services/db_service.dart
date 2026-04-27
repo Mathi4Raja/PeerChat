@@ -8,6 +8,7 @@ import '../models/chat_message.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../utils/app_logger.dart';
+import '../utils/state_guard.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -22,7 +23,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 19,
+      version: 20,
       onConfigure: (db) async {
         try {
           await db.execute('PRAGMA foreign_keys = ON');
@@ -35,8 +36,8 @@ class DBService {
       },
       onOpen: (db) async {
         final currentVersion = await db.getVersion();
-        if (currentVersion != 19) {
-          AppLogger.w('DB Version Mismatch: Expected 19, found $currentVersion. Triggering recovery schema fix.');
+        if (currentVersion != 20) {
+          AppLogger.w('DB Version Mismatch: Expected 20, found $currentVersion. Triggering recovery schema fix.');
         }
         await _ensureCriticalSchema(db);
         await _verifySchema(db);
@@ -95,6 +96,9 @@ class DBService {
         }
         if (oldVersion < 19) {
           await _migrateTo19(db);
+        }
+        if (oldVersion < 20) {
+          await _migrateTo20(db);
         }
       },
     );
@@ -235,6 +239,19 @@ class DBService {
         timestamp INTEGER NOT NULL
       )
     ''');
+    
+    await db.execute('''
+      CREATE TABLE event_log (
+        event_id TEXT PRIMARY KEY,
+        timestamp INTEGER NOT NULL,
+        entity_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        correlation_id TEXT
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_event_log_entity ON event_log(entity_id)');
+    await db.execute('CREATE INDEX idx_event_log_ts ON event_log(timestamp)');
   }
 
   Future<void> _migrateTo6(Database db) async {
@@ -386,6 +403,21 @@ class DBService {
         timestamp INTEGER NOT NULL
       )
     ''');
+  }
+
+  Future<void> _migrateTo20(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS event_log (
+        event_id TEXT PRIMARY KEY,
+        timestamp INTEGER NOT NULL,
+        entity_id TEXT NOT NULL,
+        event_type TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        correlation_id TEXT
+      )
+    ''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_event_log_entity ON event_log(entity_id)');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_event_log_ts ON event_log(timestamp)');
   }
 
   Future<void> _ensureCriticalSchema(Database db) async {
@@ -683,8 +715,17 @@ class DBService {
     MessageStatus status, {
     int? hopCount,
     bool clearHopCount = false,
+    String? correlationId,
   }) async {
     final d = await db;
+    // Check current state for strict transition
+    final currentRows = await d.query('chat_messages', columns: ['status'], where: 'id = ?', whereArgs: [messageId]);
+    if (currentRows.isNotEmpty) {
+      final currentStatusIndex = currentRows.first['status'] as int;
+      final currentStatus = MessageStatus.values[currentStatusIndex];
+      StateGuard.transitionMessage(messageId, currentStatus, status, correlationId: correlationId);
+    }
+    
     final values = <String, Object?>{
       'status': status.index,
     };

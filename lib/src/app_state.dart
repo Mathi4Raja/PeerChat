@@ -29,6 +29,7 @@ import 'services/file_transfer_service.dart';
 import 'services/app_icon_service.dart';
 import 'services/first_sign_in_service.dart';
 import 'services/auth_service.dart';
+import 'services/event_sourcing_logger.dart';
 import 'utils/name_generator.dart';
 
 class AppState extends ChangeNotifier with WidgetsBindingObserver {
@@ -202,6 +203,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
       _sodium = await SodiumInit.init();
 
       debugPrint('AppState.init: Opening Database...');
+      EventSourcingLogger().initialize(_db);
       _registeredEmail = await _firstSignInService.getStoredEmail();
       peers = await _db.allPeers();
       _runtimeProfile = await _loadRuntimeProfile();
