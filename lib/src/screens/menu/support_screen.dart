@@ -46,9 +46,6 @@ class _SupportScreenState extends State<SupportScreen> {
       return;
     }
 
-    final email = appState.registeredEmail;
-    if (email == null) return; // guests blocked at UI level
-
     setState(() { _isSending = true; _sendResult = null; });
 
     final uri = Uri(
@@ -57,7 +54,6 @@ class _SupportScreenState extends State<SupportScreen> {
       queryParameters: {
         'subject': _feedbackSubject,
         'body': body,
-        'from': email,
       },
     );
 
@@ -82,7 +78,6 @@ class _SupportScreenState extends State<SupportScreen> {
   @override
   Widget build(BuildContext context) {
     final appState = context.watch<AppState>();
-    final isGuest = appState.registeredEmail == null;
 
     return Scaffold(
       appBar: AppBar(
@@ -156,66 +151,49 @@ class _SupportScreenState extends State<SupportScreen> {
                 style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary)),
               const SizedBox(height: 10),
 
-              if (isGuest) ...[
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgDeep, borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: AppTheme.textSecondary.withValues(alpha: 0.08)),
-                  ),
-                  child: Row(children: [
-                    const Icon(Icons.lock_outline_rounded, size: 14, color: AppTheme.textSecondary),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(
-                      'Sign in with Google or email to send feedback.',
-                      style: GoogleFonts.inter(fontSize: 11, color: AppTheme.textSecondary, height: 1.4))),
-                  ]),
+              TextField(
+                controller: _feedbackController,
+                minLines: 4,
+                maxLines: 7,
+                style: GoogleFonts.inter(fontSize: 13, color: AppTheme.textPrimary),
+                decoration: const InputDecoration(
+                  hintText: 'Describe a bug, request a feature, or share thoughts…',
+                  alignLabelWithHint: true,
                 ),
-              ] else ...[
-                TextField(
-                  controller: _feedbackController,
-                  minLines: 4,
-                  maxLines: 7,
-                  style: GoogleFonts.inter(fontSize: 13, color: AppTheme.textPrimary),
-                  decoration: const InputDecoration(
-                    hintText: 'Describe a bug, request a feature, or share thoughts…',
-                    alignLabelWithHint: true,
-                  ),
-                  onChanged: (_) { if (_sendResult != null) setState(() => _sendResult = null); },
+                onChanged: (_) { if (_sendResult != null) setState(() => _sendResult = null); },
+              ),
+              const SizedBox(height: 10),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _isSending ? null : () => _sendFeedback(appState),
+                  icon: _isSending
+                      ? const SizedBox(width: 14, height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.send_rounded, size: 14),
+                  label: Text(_isSending ? 'Opening…' : 'Send via Mail App'),
                 ),
-                const SizedBox(height: 10),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton.icon(
-                    onPressed: _isSending ? null : () => _sendFeedback(appState),
-                    icon: _isSending
-                        ? const SizedBox(width: 14, height: 14,
-                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Icon(Icons.send_rounded, size: 14),
-                    label: Text(_isSending ? 'Opening…' : 'Send via Mail App'),
+              ),
+              if (_sendResult != null) ...[
+                const SizedBox(height: 8),
+                Row(children: [
+                  Icon(
+                    _sendSuccess ? Icons.check_circle_rounded : Icons.error_outline_rounded,
+                    size: 13,
+                    color: _sendSuccess ? AppTheme.online : Colors.orangeAccent,
                   ),
-                ),
-                if (_sendResult != null) ...[
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    Icon(
-                      _sendSuccess ? Icons.check_circle_rounded : Icons.error_outline_rounded,
-                      size: 13,
+                  const SizedBox(width: 5),
+                  Expanded(child: Text(_sendResult!,
+                    style: GoogleFonts.inter(
+                      fontSize: 11,
                       color: _sendSuccess ? AppTheme.online : Colors.orangeAccent,
-                    ),
-                    const SizedBox(width: 5),
-                    Expanded(child: Text(_sendResult!,
-                      style: GoogleFonts.inter(
-                        fontSize: 11,
-                        color: _sendSuccess ? AppTheme.online : Colors.orangeAccent,
-                        fontWeight: FontWeight.w600))),
-                  ]),
-                ],
-                const SizedBox(height: 6),
-                Text('Opens your mail app pre-filled with subject and body.',
-                  style: GoogleFonts.inter(
-                    fontSize: 10, color: AppTheme.textSecondary.withValues(alpha: 0.55))),
+                      fontWeight: FontWeight.w600))),
+                ]),
               ],
+              const SizedBox(height: 6),
+              Text('Opens your mail app pre-filled with subject and body.',
+                style: GoogleFonts.inter(
+                  fontSize: 10, color: AppTheme.textSecondary.withValues(alpha: 0.55))),
             ]),
           ),
         ],

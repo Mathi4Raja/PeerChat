@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../utils/app_logger.dart';
@@ -13,6 +14,7 @@ import '../models/mesh_message.dart';
 import '../models/chat_payload.dart';
 import '../models/communication_mode.dart';
 import '../models/queued_message.dart';
+import '../models/queued_message_detail.dart';
 import '../models/peer.dart';
 import '../models/handshake_message.dart';
 import '../models/route.dart' as mesh_route;
@@ -32,7 +34,33 @@ import 'transport_service.dart';
 import 'wifi_transport.dart';
 import 'bluetooth_transport.dart';
 import 'emergency_broadcast_service.dart';
-import 'package:uuid/uuid.dart';
+
+enum SendResult {
+  routed,
+  queued,
+  noRoute,
+  failed,
+}
+
+class RoutingStats {
+  final int messagesSent;
+  final int messagesFailed;
+  final int totalQueuedMessages;
+  final int activePeerCount;
+  final int totalRoutes;
+  final int localQueuedMessages;
+  final int meshQueuedMessages;
+
+  RoutingStats({
+    required this.messagesSent,
+    required this.messagesFailed,
+    required this.totalQueuedMessages,
+    required this.activePeerCount,
+    required this.totalRoutes,
+    required this.localQueuedMessages,
+    required this.meshQueuedMessages,
+  });
+}
 
 class MeshRouterService extends ChangeNotifier {
   final DBService _db;
@@ -41,10 +69,10 @@ class MeshRouterService extends ChangeNotifier {
   final CryptoService _cryptoService;
   final DeduplicationCache _deduplicationCache;
   final SignatureVerifier _signatureVerifier;
-  final MessageQueue _messageQueue;
-  final RouteManager _routeManager;
-  final MessageManager _messageManager;
-  final MultiTransportService _transportService;
+  final MessageQueue messageQueue;
+  final RouteManager routeManager;
+  final MessageManager messageManager;
+  final MultiTransportService transportService;
   final ConnectionManager _connectionManager;
   final EmergencyBroadcastService _emergencyBroadcastService;
 
@@ -58,7 +86,6 @@ class MeshRouterService extends ChangeNotifier {
   StreamSubscription? _routeUpdateSubscription;
 
   int _messagesSent = 0;
-
   int _messagesFailed = 0;
   final Map<String, int> _lastQueueDiscoveryAttempt = {};
   static const Duration _queueDiscoveryCooldown = Duration(seconds: 15);
@@ -93,10 +120,10 @@ class MeshRouterService extends ChangeNotifier {
     required CryptoService cryptoService,
     required DeduplicationCache deduplicationCache,
     required SignatureVerifier signatureVerifier,
-    required MessageQueue messageQueue,
-    required RouteManager routeManager,
-    required MessageManager messageManager,
-    required MultiTransportService transportService,
+    required this.messageQueue,
+    required this.routeManager,
+    required this.messageManager,
+    required this.transportService,
     required ConnectionManager connectionManager,
     required EmergencyBroadcastService emergencyBroadcastService,
   })  : _db = db,
@@ -104,10 +131,6 @@ class MeshRouterService extends ChangeNotifier {
         _cryptoService = cryptoService,
         _deduplicationCache = deduplicationCache,
         _signatureVerifier = signatureVerifier,
-        _messageQueue = messageQueue,
-        _routeManager = routeManager,
-        _messageManager = messageManager,
-        _transportService = transportService,
         _connectionManager = connectionManager,
         _emergencyBroadcastService = emergencyBroadcastService {
     _connectionManager.onHandshakeComplete = (peerId) async {
@@ -128,15 +151,46 @@ class MeshRouterService extends ChangeNotifier {
       notifyListeners();
     });
 
-    _routeUpdateSubscription = _routeManager.onRouteUpdated.listen((_) {
+    _routeUpdateSubscription = routeManager.onRouteUpdated.listen((_) {
       _scheduleQueueProcessing();
     });
   }
+
+  String get localPeerId => _cryptoService.localPeerId;
+
+  RuntimeProfile? getPeerRuntimeProfile(String peerId) =>
+      _connectionManager.getPeerRuntimeProfile(peerId);
 
   // Update local name for WiFi Direct advertising
   void updateLocalName(String name) {
     _wifiTransport?.setLocalIdentity(_cryptoService.localPeerId, name);
     _connectionManager.setDisplayName(name);
+    _broadcastIdentityUpdate(name);
+  }
+
+  Future<void> _broadcastIdentityUpdate(String name) async {
+    final payload = {'peerId': _cryptoService.localPeerId, 'name': name};
+    final bytes = utf8.encode(jsonEncode(payload));
+
+    final message = MeshMessage(
+      messageId: 'id_${DateTime.now().millisecondsSinceEpoch}_${Random().nextInt(1000)}',
+      type: MessageType.identityUpdate,
+      senderPeerId: _cryptoService.localPeerId,
+      recipientPeerId: 'broadcast', // Broadcast to mesh
+      ttl: MessageLimits.ttlMax,
+      hopCount: 0,
+      priority: MessagePriority.normal,
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      encryptedContent: Uint8List.fromList(bytes),
+      signature: Uint8List(0),
+    );
+
+    // Sign the update to prevent spoofing
+    final signature = _cryptoService.signMessage(message.toBytesForSigning());
+    final signedMessage = message.copyWithSignature(signature);
+
+    AppLogger.print('Broadcasting identity update: $name');
+    await _lazyFlood(signedMessage, 'local');
   }
 
   // Restart WiFi Direct advertising and discovery
@@ -203,7 +257,7 @@ class MeshRouterService extends ChangeNotifier {
           successCount: 0,
           failureCount: 0,
         );
-        await _routeManager.addRoute(route);
+        await routeManager.addRoute(route);
 
         if (transportMsg.fromPeerId != cryptoPeerId) {
           await _db.deletePeer(transportMsg.fromPeerId);
@@ -246,7 +300,7 @@ class MeshRouterService extends ChangeNotifier {
       _wifiDiscoveryFailureController.add(failure);
     };
     wifiTransport.setLocalIdentity(_cryptoService.localPeerId, initialName);
-    _transportService.addTransport(wifiTransport);
+    transportService.addTransport(wifiTransport);
     _wifiTransport = wifiTransport;
 
     // Create Bluetooth transport (fallback after WiFi)
@@ -257,18 +311,18 @@ class MeshRouterService extends ChangeNotifier {
     bluetoothTransport.onConnectionLost = (transportId) {
       _connectionManager.onConnectionLost(transportId);
     };
-    _transportService.addTransport(bluetoothTransport);
+    transportService.addTransport(bluetoothTransport);
 
-    await _transportService.init();
+    await transportService.init();
 
     // Set up connection manager callback for sending handshakes
     _connectionManager.onSendHandshake = (transportId, data) async {
-      await _transportService.sendMessage(transportId, data);
+      await transportService.sendMessage(transportId, data);
     };
 
     // Listen to transport messages
     _transportMessageSubscription =
-        _transportService.onMessageReceived.listen((transportMsg) {
+        transportService.onMessageReceived.listen((transportMsg) {
       _handleTransportMessage(transportMsg);
     });
 
@@ -281,17 +335,131 @@ class MeshRouterService extends ChangeNotifier {
     _startQueueProcessing();
   }
 
-  /// Generate a globally unique, sender-prefixed message ID.
-  String _generateMessageId() {
-    final localId = _cryptoService.localPeerId;
-    final prefix = localId.length >= MessageLimits.generatedIdSenderPrefixLength
-        ? localId.substring(0, MessageLimits.generatedIdSenderPrefixLength)
-        : localId;
-    final compactUuid = const Uuid()
-        .v4()
-        .replaceAll('-', '')
-        .substring(0, MessageLimits.generatedIdUuidFragmentLength);
-    return '${prefix}_$compactUuid';
+  // Get connected peer IDs via transport service
+  List<String> getConnectedPeerIds() {
+    final transportIds = transportService.getConnectedPeerIds();
+    return transportIds
+        .map((id) => _connectionManager.getCryptoPeerId(id))
+        .whereType<String>()
+        .toList();
+  }
+
+  // Check if a peer has finished handshake and is ready for secure communication
+  bool isPeerSecurelyConnected(String peerId) {
+    return _connectionManager.isPeerSecurelyConnected(peerId);
+  }
+
+  // Check if we have the public keys for this peer to allow encryption
+  Future<bool> hasPeerKeys(String peerId) async {
+    final key = await _signatureVerifier.getPeerPublicKey(peerId);
+    return key != null;
+  }
+
+  // Mesh Network Stats for UI
+  Future<RoutingStats> get stats async {
+    final routeStats = await routeManager.getStats();
+    final allQueued = await messageQueue.getAllQueued();
+
+    // Filter for only "User" messages (Data/File) for the UI counters
+    final userMessages = allQueued.where((q) =>
+        q.message.type == MessageType.data ||
+        q.message.type == MessageType.fileTransfer);
+
+    final localCount =
+        userMessages.where((q) => q.origin == QueueOrigin.local).length;
+    final meshCount =
+        userMessages.where((q) => q.origin == QueueOrigin.mesh).length;
+
+    return RoutingStats(
+      messagesSent: _messagesSent,
+      messagesFailed: _messagesFailed,
+      totalQueuedMessages: localCount + meshCount,
+      activePeerCount: getConnectedPeerIds().length,
+      totalRoutes: routeStats['total_routes'] ?? 0,
+      localQueuedMessages: localCount,
+      meshQueuedMessages: meshCount,
+    );
+  }
+
+  Future<List<mesh_route.Route>> getAllRoutesForStatus() async {
+    return await routeManager.getAllRoutes();
+  }
+
+  Future<List<QueuedMessageDetail>> getQueuedMessageDetails() async {
+    final messages = await messageQueue.getAllQueued();
+    final details = <QueuedMessageDetail>[];
+
+    for (final qm in messages) {
+      // Hide system/protocol messages from the UI list
+      if (qm.message.type != MessageType.data &&
+          qm.message.type != MessageType.fileTransfer) {
+        continue;
+      }
+      String? preview;
+      if (qm.message.type == MessageType.data) {
+        preview = await messageManager.decryptContent(qm.message);
+      }
+
+      details.add(QueuedMessageDetail(
+        messageId: qm.message.messageId,
+        recipientPeerId: qm.message.recipientPeerId,
+        nextHopPeerId: qm.nextHopPeerId,
+        priority: qm.message.priority,
+        queuedTimestamp: qm.queuedTimestamp,
+        attemptCount: qm.attemptCount,
+        origin: qm.origin,
+        contentPreview: preview,
+      ));
+    }
+    return details;
+  }
+
+  Future<void> removeQueuedMessage(String messageId) async {
+    await messageQueue.dequeue(messageId);
+    notifyListeners();
+  }
+
+  Future<int> removeQueuedMessagesForPeer(String peerId,
+      {QueueOrigin? origin}) async {
+    final messages = await messageQueue.getAllQueued();
+    var count = 0;
+    for (final qm in messages) {
+      if (qm.message.recipientPeerId == peerId &&
+          (origin == null || qm.origin == origin)) {
+        await messageQueue.dequeue(qm.message.messageId);
+        count++;
+      }
+    }
+    if (count > 0) notifyListeners();
+    return count;
+  }
+
+  Future<int> promoteQueuedMessageToMesh(String messageId) async {
+    final messages = await messageQueue.getAllQueued();
+    for (final qm in messages) {
+      if (qm.message.messageId == messageId && qm.origin == QueueOrigin.local) {
+        await messageQueue.dequeue(messageId);
+        await messageQueue.enqueue(qm.copyWith(origin: QueueOrigin.mesh));
+        notifyListeners();
+        return 1;
+      }
+    }
+    return 0;
+  }
+
+  Future<int> promoteQueuedMessagesForPeerToMesh(String peerId) async {
+    final messages = await messageQueue.getAllQueued();
+    var count = 0;
+    for (final qm in messages) {
+      if (qm.message.recipientPeerId == peerId &&
+          qm.origin == QueueOrigin.local) {
+        await messageQueue.dequeue(qm.message.messageId);
+        await messageQueue.enqueue(qm.copyWith(origin: QueueOrigin.mesh));
+        count++;
+      }
+    }
+    if (count > 0) notifyListeners();
+    return count;
   }
 
   // Send a message to a destination peer
@@ -306,9 +474,12 @@ class MeshRouterService extends ChangeNotifier {
         destinationId: recipientPeerId,
       );
 
-      final msgId = messageId ?? _generateMessageId();
+      final msgId = messageId ?? messageManager.generateMessageId();
       final spanId = DistributedTracer.generateSpanId();
-      DistributedTracer.startSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'recipient': recipientPeerId, 'mode': mode.name});
+      DistributedTracer.startSpan('sendMessage',
+          traceId: msgId,
+          spanId: spanId,
+          attributes: {'recipient': recipientPeerId, 'mode': mode.name});
 
       if (mode == CommunicationMode.emergencyBroadcast) {
         final sent = await _emergencyBroadcastService.broadcastMessage(
@@ -317,18 +488,22 @@ class MeshRouterService extends ChangeNotifier {
         );
         final result = sent ? SendResult.routed : SendResult.failed;
         _recordSendAttempt(result);
-        DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': result.name});
+        DistributedTracer.endSpan('sendMessage',
+            traceId: msgId, spanId: spanId, attributes: {'result': result.name});
         return result;
       }
 
       final recipientPublicKey =
           await _signatureVerifier.getPeerPublicKey(recipientPeerId);
       if (recipientPublicKey == null) {
-        DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': 'failed_no_key'});
+        DistributedTracer.endSpan('sendMessage',
+            traceId: msgId,
+            spanId: spanId,
+            attributes: {'result': 'failed_no_key'});
         return SendResult.failed;
       }
 
-      final message = await _messageManager.createMessage(
+      final message = await messageManager.createMessage(
         recipientPeerId: recipientPeerId,
         recipientPublicKey: recipientPublicKey,
         content: content,
@@ -337,8 +512,37 @@ class MeshRouterService extends ChangeNotifier {
       );
 
       final forwarded = await _forwardMessageViaTransport(message);
+      
+      // Update database status based on result
+      MessageStatus finalStatus;
+      switch (forwarded) {
+        case SendResult.routed:
+          finalStatus = MessageStatus.sent;
+          break;
+        case SendResult.queued:
+          finalStatus = MessageStatus.queued;
+          break;
+        case SendResult.noRoute:
+          finalStatus = MessageStatus.noRoute;
+          break;
+        case SendResult.failed:
+          finalStatus = MessageStatus.failed;
+          break;
+      }
+      
+      await _db.updateMessageStatus(
+        message.messageId,
+        finalStatus,
+        clearHopCount: true,
+        correlationId: message.messageId,
+      );
+      
+      _statusUpdateController.add(message.messageId);
       _recordSendAttempt(forwarded);
-      DistributedTracer.endSpan('sendMessage', traceId: msgId, spanId: spanId, attributes: {'result': forwarded.name});
+      DistributedTracer.endSpan('sendMessage',
+          traceId: msgId,
+          spanId: spanId,
+          attributes: {'result': forwarded.name});
       notifyListeners();
       return forwarded;
     } catch (e) {
@@ -360,7 +564,7 @@ class MeshRouterService extends ChangeNotifier {
           await _signatureVerifier.getPeerPublicKey(recipientPeerId);
       if (recipientPublicKey == null) return SendResult.failed;
 
-      final message = await _messageManager.createDataMessage(
+      final message = await messageManager.createDataMessage(
         recipientPeerId: recipientPeerId,
         recipientPublicKey: recipientPublicKey,
         data: data,
@@ -369,6 +573,31 @@ class MeshRouterService extends ChangeNotifier {
       );
 
       final forwarded = await _forwardMessageViaTransport(message);
+      
+      MessageStatus finalStatus;
+      switch (forwarded) {
+        case SendResult.routed:
+          finalStatus = MessageStatus.sent;
+          break;
+        case SendResult.queued:
+          finalStatus = MessageStatus.queued;
+          break;
+        case SendResult.noRoute:
+          finalStatus = MessageStatus.noRoute;
+          break;
+        case SendResult.failed:
+          finalStatus = MessageStatus.failed;
+          break;
+      }
+      
+      await _db.updateMessageStatus(
+        message.messageId,
+        finalStatus,
+        clearHopCount: true,
+        correlationId: message.messageId,
+      );
+      
+      _statusUpdateController.add(message.messageId);
       _recordSendAttempt(forwarded);
       notifyListeners();
       return forwarded;
@@ -386,56 +615,54 @@ class MeshRouterService extends ChangeNotifier {
     }
   }
 
-  Future<SendResult> _forwardMessageViaTransport(MeshMessage message) async {
-    final nextHopCryptoId =
-        await _routeManager.getNextHop(message.recipientPeerId);
-
-    if (nextHopCryptoId == null) {
-      DistributedTracer.logEvent('Forward: No route found', traceId: message.messageId);
-      final opportunisticForwards = await _opportunisticForward(message, null);
-      final queuedMessage = QueuedMessage(
+  QueuedMessage _makeLocalQueueEntry(MeshMessage message, String nextHop) =>
+      QueuedMessage(
         message: message,
-        nextHopPeerId: message.recipientPeerId,
+        nextHopPeerId: nextHop,
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
         origin: QueueOrigin.local,
       );
-      await _messageQueue.enqueue(queuedMessage);
-      _routeManager.discoverRoute(message.recipientPeerId);
+
+  Future<SendResult> _forwardMessageViaTransport(MeshMessage message) async {
+    final nextHopCryptoId =
+        await routeManager.getNextHop(message.recipientPeerId);
+
+    if (nextHopCryptoId == null) {
+      DistributedTracer.logEvent('Forward: No route found',
+          traceId: message.messageId);
+      final opportunisticForwards = await _opportunisticForward(message, null);
+      await messageQueue.enqueue(
+          _makeLocalQueueEntry(message, message.recipientPeerId));
+      routeManager.discoverRoute(message.recipientPeerId);
       return opportunisticForwards > 0 ? SendResult.routed : SendResult.noRoute;
     }
 
     final transportId = _connectionManager.getTransportId(nextHopCryptoId);
     if (transportId == null) {
-      DistributedTracer.logEvent('Forward: Next hop offline', traceId: message.messageId, attributes: {'nextHop': nextHopCryptoId});
-      final queuedMessage = QueuedMessage(
-        message: message,
-        nextHopPeerId: nextHopCryptoId,
-        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
-        origin: QueueOrigin.local,
-      );
-      await _messageQueue.enqueue(queuedMessage);
+      DistributedTracer.logEvent('Forward: Next hop offline',
+          traceId: message.messageId, attributes: {'nextHop': nextHopCryptoId});
+      await messageQueue
+          .enqueue(_makeLocalQueueEntry(message, nextHopCryptoId));
       return SendResult.queued;
     }
 
-    DistributedTracer.logEvent('Forward: Sending via transport', traceId: message.messageId, attributes: {'transportId': transportId});
+    DistributedTracer.logEvent('Forward: Sending via transport',
+        traceId: message.messageId, attributes: {'transportId': transportId});
     final sent =
-        await _transportService.sendMessage(transportId, message.toBytes());
+        await transportService.sendMessage(transportId, message.toBytes());
 
     if (sent) {
-      DistributedTracer.logEvent('Forward: Sent successfully', traceId: message.messageId);
-      await _routeManager.markRouteSuccess(
+      DistributedTracer.logEvent('Forward: Sent successfully',
+          traceId: message.messageId);
+      await routeManager.markRouteSuccess(
           message.recipientPeerId, nextHopCryptoId);
       return SendResult.routed;
     } else {
-      DistributedTracer.logEvent('Forward: Send failed', traceId: message.messageId);
-      final queuedMessage = QueuedMessage(
-        message: message,
-        nextHopPeerId: nextHopCryptoId,
-        queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
-        origin: QueueOrigin.local,
-      );
-      await _messageQueue.enqueue(queuedMessage);
-      await _routeManager.markRouteFailed(
+      DistributedTracer.logEvent('Forward: Send failed',
+          traceId: message.messageId);
+      await messageQueue
+          .enqueue(_makeLocalQueueEntry(message, nextHopCryptoId));
+      await routeManager.markRouteFailed(
           message.recipientPeerId, nextHopCryptoId);
       return SendResult.queued;
     }
@@ -446,16 +673,26 @@ class MeshRouterService extends ChangeNotifier {
     try {
       final message = MeshMessage.fromBytes(rawMessage);
       final spanId = DistributedTracer.generateSpanId();
-      DistributedTracer.startSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'from': fromPeerAddress, 'type': message.type.name});
+      DistributedTracer.startSpan('receiveMessage',
+          traceId: message.messageId,
+          spanId: spanId,
+          attributes: {'from': fromPeerAddress, 'type': message.type.name});
 
       // Validate TTL bounds to prevent infinite loops and flood attacks
-      if (message.ttl <= 0 || message.ttl > MessageLimits.ttlMax || message.hopCount > MessageLimits.ttlMax) {
-        AppLogger.print('Dropping message due to invalid TTL/hopCount: ttl=${message.ttl}, hops=${message.hopCount}');
-        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_invalid_ttl'});
+      if (message.ttl <= 0 ||
+          message.ttl > MessageLimits.ttlMax ||
+          message.hopCount > MessageLimits.ttlMax) {
+        AppLogger.print(
+            'Dropping message due to invalid TTL/hopCount: ttl=${message.ttl}, hops=${message.hopCount}');
+        DistributedTracer.endSpan('receiveMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'dropped_invalid_ttl'});
         return;
       }
 
-      final immediateSenderId = _connectionManager.getCryptoPeerId(fromPeerAddress);
+      final immediateSenderId =
+          _connectionManager.getCryptoPeerId(fromPeerAddress);
 
       // TokenBucket Rate Limiting
       if (immediateSenderId != null) {
@@ -465,8 +702,12 @@ class MeshRouterService extends ChangeNotifier {
                 capacity: RateLimitConfig.tokenBucketCapacity,
                 refillRatePerSecond: RateLimitConfig.tokenBucketRefillRate));
         if (!bucket.tryConsume()) {
-          AppLogger.print('Rate limit exceeded for $immediateSenderId, dropping message');
-          DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_rate_limit'});
+          AppLogger.print(
+              'Rate limit exceeded for $immediateSenderId, dropping message');
+          DistributedTracer.endSpan('receiveMessage',
+              traceId: message.messageId,
+              spanId: spanId,
+              attributes: {'result': 'dropped_rate_limit'});
           return;
         }
       }
@@ -475,13 +716,19 @@ class MeshRouterService extends ChangeNotifier {
         await _emergencyBroadcastService.handleIncomingBroadcast(
             message, fromPeerAddress);
         notifyListeners();
-        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'emergency_handled'});
+        DistributedTracer.endSpan('receiveMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'emergency_handled'});
         return;
       }
 
       if (_deduplicationCache.hasSeenFingerprint(
           message.messageId, message.senderPeerId, message.hopCount)) {
-        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'dropped_duplicate'});
+        DistributedTracer.endSpan('receiveMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'dropped_duplicate'});
         return;
       }
       _deduplicationCache.markFingerprint(
@@ -497,33 +744,63 @@ class MeshRouterService extends ChangeNotifier {
           successCount: 1,
           failureCount: 0,
         );
-        await _routeManager.addRoute(learnedRoute);
+        await routeManager.addRoute(learnedRoute);
       }
 
       if (message.type == MessageType.routeRequest &&
           message.encryptedContent != null) {
         final request = RouteRequest.fromBytes(message.encryptedContent!);
-        await _routeManager.handleRouteRequest(request, fromPeerAddress);
-        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'route_request_handled'});
+        await routeManager.handleRouteRequest(request, fromPeerAddress);
+        DistributedTracer.endSpan('receiveMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'route_request_handled'});
         return;
       }
       if (message.type == MessageType.routeResponse &&
           message.encryptedContent != null) {
         final response = RouteResponse.fromBytes(message.encryptedContent!);
-        await _routeManager.handleRouteResponse(response);
-        DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': 'route_response_handled'});
+        await routeManager.handleRouteResponse(response);
+        DistributedTracer.endSpan('receiveMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'route_response_handled'});
         return;
+      }
+      if (message.type == MessageType.identityUpdate &&
+          message.encryptedContent != null) {
+        if (!await _signatureVerifier.verifyMessageSignature(message)) {
+          AppLogger.print(
+              'Invalid signature for identityUpdate from ${message.senderPeerId}');
+          return;
+        }
+
+        try {
+          final data = jsonDecode(utf8.decode(message.encryptedContent!));
+          final name = data['name'];
+          final senderId = message.senderPeerId;
+          await _handleIdentityUpdate(senderId, name);
+          await _lazyFlood(message.copyForForwarding(), fromPeerAddress);
+          DistributedTracer.endSpan('receiveMessage',
+              traceId: message.messageId,
+              spanId: spanId,
+              attributes: {'result': 'identity_update_handled'});
+          return;
+        } catch (e) {
+          AppLogger.print('Error parsing identity update: $e');
+        }
       }
 
       final result =
-          await _messageManager.processMessage(message, fromPeerAddress);
+          await messageManager.processMessage(message, fromPeerAddress);
 
       if (result == ProcessResult.delivered) {
-        DistributedTracer.logEvent('Message Delivered', traceId: message.messageId, spanId: spanId);
-        // Notify raw message listeners (like FileTransferService) only if intended for us
+        DistributedTracer.logEvent('Message Delivered',
+            traceId: message.messageId, spanId: spanId);
+        // Notify raw message listeners (like FileTransferService)
         _rawMessageController.add(message);
 
-        final content = await _messageManager.decryptContent(message);
+        final content = await messageManager.decryptContent(message);
         if (content != null) {
           _deliverToApplication(message, content);
         }
@@ -531,7 +808,10 @@ class MeshRouterService extends ChangeNotifier {
         await _lazyFlood(message.copyForForwarding(), fromPeerAddress);
       }
 
-      DistributedTracer.endSpan('receiveMessage', traceId: message.messageId, spanId: spanId, attributes: {'result': result.name});
+      DistributedTracer.endSpan('receiveMessage',
+          traceId: message.messageId,
+          spanId: spanId,
+          attributes: {'result': result.name});
       notifyListeners();
     } catch (e) {
       AppLogger.print('Error receiving message: $e');
@@ -548,7 +828,7 @@ class MeshRouterService extends ChangeNotifier {
         queuedTimestamp: DateTime.now().millisecondsSinceEpoch,
         origin: QueueOrigin.mesh,
       );
-      await _messageQueue.enqueue(queuedMessage);
+      await messageQueue.enqueue(queuedMessage);
     }
   }
 
@@ -597,7 +877,7 @@ class MeshRouterService extends ChangeNotifier {
       final transportId = _connectionManager.getTransportId(peerId);
       if (transportId == null) continue;
       final sent =
-          await _transportService.sendMessage(transportId, message.toBytes());
+          await transportService.sendMessage(transportId, message.toBytes());
       if (sent) {
         forwardedCount++;
         _deduplicationCache.markForwardedTo(message.messageId, peerId);
@@ -623,8 +903,8 @@ class MeshRouterService extends ChangeNotifier {
     _maintenanceTimer = Timer.periodic(
         MeshRouterTimerConfig.maintenanceInterval, (timer) async {
       try {
-        await _routeManager.expireStaleRoutes();
-        final expiredDroppedIds = await _messageQueue.removeExpired();
+        await routeManager.expireStaleRoutes();
+        final expiredDroppedIds = await messageQueue.removeExpired();
         if (expiredDroppedIds.isNotEmpty) {
           await _markMessagesFailed(expiredDroppedIds);
         }
@@ -650,9 +930,9 @@ class MeshRouterService extends ChangeNotifier {
 
   Future<void> _processQueue() async {
     final localQueuedMessages =
-        await _messageQueue.getReadyMessagesByOrigin(QueueOrigin.local);
+        await messageQueue.getReadyMessagesByOrigin(QueueOrigin.local);
     final meshQueuedMessages =
-        await _messageQueue.getReadyMessagesByOrigin(QueueOrigin.mesh);
+        await messageQueue.getReadyMessagesByOrigin(QueueOrigin.mesh);
     final queuedMessages = <QueuedMessage>[
       ...localQueuedMessages,
       ...meshQueuedMessages,
@@ -662,13 +942,13 @@ class MeshRouterService extends ChangeNotifier {
 
     for (final queuedMessage in queuedMessages) {
       if (queuedMessage.isExpired || queuedMessage.shouldDrop) {
-        await _messageQueue.dequeue(queuedMessage.message.messageId);
+        await messageQueue.dequeue(queuedMessage.message.messageId);
         await _markMessageFailed(queuedMessage.message.messageId);
         continue;
       }
 
       final currentNextHop =
-          await _routeManager.getNextHop(queuedMessage.message.recipientPeerId);
+          await routeManager.getNextHop(queuedMessage.message.recipientPeerId);
       if (currentNextHop == null) {
         final handedOff = await _tryOpportunisticQueueForward(queuedMessage);
         if (!handedOff) {
@@ -692,7 +972,7 @@ class MeshRouterService extends ChangeNotifier {
         continue;
       }
 
-      final sent = await _transportService.sendMessage(
+      final sent = await transportService.sendMessage(
           transportId, queuedMessage.message.toBytes());
 
       if (sent) {
@@ -704,26 +984,27 @@ class MeshRouterService extends ChangeNotifier {
             queuedMessage.message.messageId,
             MessageStatus.routing,
             clearHopCount: true,
-            correlationId: queuedMessage.message.messageId, // Use messageId as distributed Trace ID
+            correlationId:
+                queuedMessage.message.messageId, // Use messageId as distributed Trace ID
           );
           _statusUpdateController.add(queuedMessage.message.messageId);
         }
-        await _messageQueue.dequeue(queuedMessage.message.messageId);
-        await _routeManager.markRouteSuccess(
+        await messageQueue.dequeue(queuedMessage.message.messageId);
+        await routeManager.markRouteSuccess(
             queuedMessage.message.recipientPeerId, currentNextHop);
       } else {
         final handedOff = await _tryOpportunisticQueueForward(queuedMessage);
         if (handedOff) {
-          await _routeManager.markRouteFailed(
+          await routeManager.markRouteFailed(
               queuedMessage.message.recipientPeerId, currentNextHop);
           continue;
         }
         final dropped =
-            await _messageQueue.updateAttempt(queuedMessage.message.messageId);
+            await messageQueue.updateAttempt(queuedMessage.message.messageId);
         if (dropped) {
           await _markMessageFailed(queuedMessage.message.messageId);
         }
-        await _routeManager.markRouteFailed(
+        await routeManager.markRouteFailed(
             queuedMessage.message.recipientPeerId, currentNextHop);
       }
     }
@@ -744,7 +1025,7 @@ class MeshRouterService extends ChangeNotifier {
     }
 
     _lastQueueDiscoveryAttempt[recipientPeerId] = now;
-    _routeManager.discoverRoute(recipientPeerId);
+    routeManager.discoverRoute(recipientPeerId);
   }
 
   Future<bool> _tryOpportunisticQueueForward(
@@ -771,7 +1052,7 @@ class MeshRouterService extends ChangeNotifier {
       _statusUpdateController.add(queuedMessage.message.messageId);
     }
 
-    await _messageQueue.dequeue(queuedMessage.message.messageId);
+    await messageQueue.dequeue(queuedMessage.message.messageId);
     return true;
   }
 
@@ -810,231 +1091,65 @@ class MeshRouterService extends ChangeNotifier {
         replyToMessageId: payload.replyToMessageId,
         replyToContent: payload.replyToContent,
         replyToPeerId: payload.replyToPeerId,
+        locationLatitude: payload.location?.latitude,
+        locationLongitude: payload.location?.longitude,
+        locationAccuracyMeters: payload.location?.accuracyMeters,
+        locationTimestamp: payload.location?.timestamp,
       );
+
       await _db.insertChatMessage(chatMessage);
       _incomingMessageController.add(chatMessage);
     }
-    notifyListeners();
   }
 
-  Future<RoutingStats> get stats async {
-    final routeStats = await _routeManager.getStats();
-    final queueStats = await _messageQueue.getStats();
-    final sigStats = await _signatureVerifier.getStats();
+  Future<void> _handleIdentityUpdate(String senderId, String name) async {
+    final peer = await _db.getPeer(senderId);
+    if (peer == null) return;
 
-    return RoutingStats(
-      totalRoutes: routeStats['total_routes'] ?? 0,
-      localQueuedMessages: queueStats.localOriginMessages,
-      meshQueuedMessages: queueStats.meshOriginMessages,
-      blockedPeers: sigStats['blocked_peers'] ?? 0,
-      messagesSent: _messagesSent,
+    final trimmedName = name.trim();
+    if (trimmedName.isEmpty) return;
+    if (peer.displayName == trimmedName) return;
 
-      messagesFailed: _messagesFailed,
-      activePeerCount: getConnectedPeerIds().length,
+    final oldName = peer.displayName;
+    AppLogger.print('Identity update for $senderId: $oldName -> $trimmedName');
+
+    // Update DB
+    await _db.updatePeerName(senderId, trimmedName);
+
+    // Refresh UI
+    notifyListeners();
+
+    // Add system message to chat
+    final systemMsg = ChatMessage(
+      id: 'system_${DateTime.now().millisecondsSinceEpoch}_${senderId.hashCode}',
+      peerId: senderId,
+      content: '$oldName changed their name to $trimmedName',
+      timestamp: DateTime.now().millisecondsSinceEpoch,
+      isSentByMe: false,
+      status: MessageStatus.sent,
+      isRead: true,
+      isSystem: true,
     );
+    await _db.insertChatMessage(systemMsg);
+    _incomingMessageController.add(systemMsg);
   }
-
-  Future<QueueStats> get queueStatus => _messageQueue.getStats();
-
-  Future<List<mesh_route.Route>> getAllRoutesForStatus() async {
-    return _routeManager.getAllRoutes();
-  }
-
-  Future<List<QueuedMessageDetail>> getQueuedMessageDetails() async {
-    final queued = await _messageQueue.getAllQueued();
-    if (queued.isEmpty) return [];
-
-    final messageIds = queued.map((q) => q.message.messageId).toSet().toList();
-    final chatMessages = await _db.getChatMessagesByIds(messageIds);
-
-    final details = queued.map((q) {
-      final chat = chatMessages[q.message.messageId];
-      return QueuedMessageDetail(
-        messageId: q.message.messageId,
-        recipientPeerId: q.message.recipientPeerId,
-        nextHopPeerId: q.nextHopPeerId,
-        queuedTimestamp: q.queuedTimestamp,
-        origin: q.origin,
-        attemptCount: q.attemptCount,
-        priority: q.message.priority,
-        contentPreview: chat?.content,
-      );
-    }).toList()
-      ..sort((a, b) {
-        final priorityOrder = a.priority.index.compareTo(b.priority.index);
-        if (priorityOrder != 0) return priorityOrder;
-        return a.queuedTimestamp.compareTo(b.queuedTimestamp);
-      });
-
-    return details;
-  }
-
-  Future<int> removeQueuedMessage(String messageId) async {
-    await _messageQueue.dequeue(messageId);
-    notifyListeners();
-    return 1;
-  }
-
-  Future<int> removeQueuedMessagesForPeer(
-    String recipientPeerId, {
-    QueueOrigin? origin,
-  }) async {
-    final queued = await _messageQueue.getAllQueued();
-    final ids = queued
-        .where((q) =>
-            q.message.recipientPeerId == recipientPeerId &&
-            (origin == null || q.origin == origin))
-        .map((q) => q.message.messageId)
-        .toList();
-    for (final id in ids) {
-      await _messageQueue.dequeue(id);
-    }
-    notifyListeners();
-    return ids.length;
-  }
-
-  Future<int> promoteQueuedMessageToMesh(String messageId) async {
-    final queued = await _messageQueue.getAllQueued();
-    QueuedMessage? target;
-    for (final item in queued) {
-      if (item.message.messageId == messageId &&
-          item.origin == QueueOrigin.local) {
-        target = item;
-        break;
-      }
-    }
-    if (target == null) return 0;
-
-    final updated = target.copyWith(
-      origin: QueueOrigin.mesh,
-      attemptCount: 0,
-      nextRetryTime: 0,
-    );
-    await _messageQueue.enqueue(updated);
-    _routeManager.discoverRoute(target.message.recipientPeerId);
-    _scheduleQueueProcessing();
-    notifyListeners();
-    return 1;
-  }
-
-  Future<int> promoteQueuedMessagesForPeerToMesh(String recipientPeerId) async {
-    final queued = await _messageQueue.getAllQueued();
-    var moved = 0;
-    for (final item in queued) {
-      if (item.message.recipientPeerId != recipientPeerId ||
-          item.origin != QueueOrigin.local) {
-        continue;
-      }
-      final updated = item.copyWith(
-        origin: QueueOrigin.mesh,
-        attemptCount: 0,
-        nextRetryTime: 0,
-      );
-      await _messageQueue.enqueue(updated);
-      moved++;
-    }
-
-    if (moved > 0) {
-      _routeManager.discoverRoute(recipientPeerId);
-      _scheduleQueueProcessing();
-      notifyListeners();
-    }
-    return moved;
-  }
-
-  RouteManager get routeManager => _routeManager;
-  MessageQueue get messageQueue => _messageQueue;
-  MessageManager get messageManager => _messageManager;
-  MultiTransportService get transportService => _transportService;
-  String get localPeerId => _cryptoService.localPeerId;
-
-  List<String> getConnectedPeerIds() =>
-      _connectionManager.getConnectedCryptoPeerIds();
-
-  RuntimeProfile? getPeerRuntimeProfile(String peerId) =>
-      _connectionManager.getPeerRuntimeProfile(peerId);
 
   Future<void> shutdown() async {
+    dispose();
+  }
+
+  @override
+  void dispose() {
     _maintenanceTimer?.cancel();
     _queueProcessingTimer?.cancel();
     _queueDebounceTimer?.cancel();
     _peerDiscoverySubscription?.cancel();
     _transportMessageSubscription?.cancel();
     _routeUpdateSubscription?.cancel();
-    _routeManager.dispose();
-    await _incomingMessageController.close();
-    await _statusUpdateController.close();
-    await _wifiDiscoveryFailureController.close();
-    await _rawMessageController.close();
-    await _transportService.dispose();
-  }
-
-  @override
-  void dispose() {
-    unawaited(shutdown());
+    _incomingMessageController.close();
+    _rawMessageController.close();
+    _statusUpdateController.close();
+    _wifiDiscoveryFailureController.close();
     super.dispose();
   }
 }
-
-enum SendResult {
-  routed,
-  noRoute,
-  queued,
-  failed,
-}
-
-class RoutingStats {
-  final int totalRoutes;
-  final int localQueuedMessages;
-  final int meshQueuedMessages;
-  final int blockedPeers;
-  final int messagesSent;
-
-  final int messagesFailed;
-  final int activePeerCount;
-
-  RoutingStats({
-    required this.totalRoutes,
-    required this.localQueuedMessages,
-    required this.meshQueuedMessages,
-    required this.blockedPeers,
-    required this.messagesSent,
-
-    required this.messagesFailed,
-    required this.activePeerCount,
-  });
-
-  int get queuedMessages => localQueuedMessages;
-  int get totalQueuedMessages => localQueuedMessages + meshQueuedMessages;
-
-
-
-
-
-
-
-
-}
-
-class QueuedMessageDetail {
-  final String messageId;
-  final String recipientPeerId;
-  final String nextHopPeerId;
-  final int queuedTimestamp;
-  final QueueOrigin origin;
-  final int attemptCount;
-  final MessagePriority priority;
-  final String? contentPreview;
-
-  QueuedMessageDetail({
-    required this.messageId,
-    required this.recipientPeerId,
-    required this.nextHopPeerId,
-    required this.queuedTimestamp,
-    required this.origin,
-    required this.attemptCount,
-    required this.priority,
-    this.contentPreview,
-  });
-}
-

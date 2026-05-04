@@ -7,7 +7,7 @@ import 'package:sodium/sodium.dart';
 class CryptoService {
   final Sodium _sodium;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
-  
+
   KeyPair? _encryptionKeyPair;
   KeyPair? _signingKeyPair;
 
@@ -92,14 +92,14 @@ class CryptoService {
   Uint8List encryptContent(String content, Uint8List recipientPublicKey) {
     final contentBytes = Uint8List.fromList(utf8.encode(content));
     final nonce = _sodium.randombytes.buf(24); // 24-byte nonce for crypto_box
-    
+
     final ciphertext = _sodium.crypto.box.easy(
       message: contentBytes,
       nonce: nonce,
       publicKey: recipientPublicKey,
       secretKey: _encryptionKeyPair!.secretKey,
     );
-    
+
     // Prepend nonce to ciphertext for transmission
     return Uint8List.fromList([...nonce, ...ciphertext]);
   }
@@ -109,31 +109,31 @@ class CryptoService {
     if (encryptedData.length < 24) {
       throw Exception('Invalid encrypted data: too short');
     }
-    
+
     final nonce = encryptedData.sublist(0, 24);
     final ciphertext = encryptedData.sublist(24);
-    
+
     final plaintext = _sodium.crypto.box.openEasy(
       cipherText: ciphertext,
       nonce: nonce,
       publicKey: senderPublicKey,
       secretKey: _encryptionKeyPair!.secretKey,
     );
-    
+
     return utf8.decode(plaintext);
   }
 
   // Encrypt raw bytes using recipient's public key
   Uint8List encryptBytes(Uint8List data, Uint8List recipientPublicKey) {
     final nonce = _sodium.randombytes.buf(24);
-    
+
     final ciphertext = _sodium.crypto.box.easy(
       message: data,
       nonce: nonce,
       publicKey: recipientPublicKey,
       secretKey: _encryptionKeyPair!.secretKey,
     );
-    
+
     return Uint8List.fromList([...nonce, ...ciphertext]);
   }
 
@@ -142,10 +142,10 @@ class CryptoService {
     if (encryptedData.length < 24) {
       throw Exception('Invalid encrypted data: too short');
     }
-    
+
     final nonce = encryptedData.sublist(0, 24);
     final ciphertext = encryptedData.sublist(24);
-    
+
     return _sodium.crypto.box.openEasy(
       cipherText: ciphertext,
       nonce: nonce,
@@ -163,7 +163,8 @@ class CryptoService {
   }
 
   // Verify signature using sender's public key
-  bool verifySignature(Uint8List messageBytes, Uint8List signature, Uint8List senderPublicKey) {
+  bool verifySignature(
+      Uint8List messageBytes, Uint8List signature, Uint8List senderPublicKey) {
     try {
       return _sodium.crypto.sign.verifyDetached(
         signature: signature,
@@ -184,6 +185,7 @@ class CryptoService {
   String get localPeerId => getPeerId(_signingKeyPair!.publicKey);
 
   // Helper methods
-  static Uint8List base64Decode(String s) => Uint8List.fromList(base64.decode(s));
+  static Uint8List base64Decode(String s) =>
+      Uint8List.fromList(base64.decode(s));
   static String base64Encode(Uint8List b) => base64.encode(b);
 }

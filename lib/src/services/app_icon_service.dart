@@ -7,9 +7,10 @@ import 'battery_status_service.dart';
 class AppIconService {
   final DeviceSystemService _deviceService;
   final int cacheLimit;
-  
+
   // LRU Cache: LinkedHashMap maintains insertion order
-  final LinkedHashMap<String, Uint8List> _cache = LinkedHashMap<String, Uint8List>();
+  final LinkedHashMap<String, Uint8List> _cache =
+      LinkedHashMap<String, Uint8List>();
   final Set<String> _pending = {};
 
   AppIconService(this._deviceService, {this.cacheLimit = 50});
@@ -29,7 +30,9 @@ class AppIconService {
 
   /// Non-blocking load of an icon into the cache.
   Future<void> loadIcon(String packageName, Function() onLoaded) async {
-    if (_cache.containsKey(packageName) || _pending.contains(packageName)) return;
+    if (_cache.containsKey(packageName) || _pending.contains(packageName)) {
+      return;
+    }
 
     _pending.add(packageName);
     try {

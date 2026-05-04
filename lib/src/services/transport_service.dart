@@ -6,7 +6,8 @@ abstract class TransportService {
   Stream<TransportMessage> get onMessageReceived;
   Stream<FileTransferProgressEvent> get onFileProgress;
   Future<void> init();
-  Future<bool> sendMessage(String peerId, Uint8List data, {bool isControl = false});
+  Future<bool> sendMessage(String peerId, Uint8List data,
+      {bool isControl = false});
   Future<bool> sendFile(String peerId, String filePath, String fileId);
   List<String> getConnectedPeerIds(); // Get list of connected peer IDs
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {}
@@ -23,6 +24,81 @@ class TransportMessage {
     required this.fromAddress,
     required this.data,
   });
+}
+
+abstract class BaseTransport implements TransportService {
+  final StreamController<TransportMessage> _messageController =
+      StreamController<TransportMessage>.broadcast();
+  @override
+  Stream<TransportMessage> get onMessageReceived => _messageController.stream;
+
+  final StreamController<FileTransferProgressEvent> _fileProgressController =
+      StreamController<FileTransferProgressEvent>.broadcast();
+  @override
+  Stream<FileTransferProgressEvent> get onFileProgress =>
+      _fileProgressController.stream;
+
+  void Function(String transportId)? onConnectionEstablished;
+  void Function(String transportId)? onConnectionLost;
+
+  final Map<String, bool> _activeConnections = {};
+  final Map<String, List<Uint8List>> _pendingQueues = {};
+
+  bool isConnected(String transportId) =>
+      _activeConnections[transportId] ?? false;
+
+  @protected
+  void notifyMessageReceived(TransportMessage message) {
+    _messageController.add(message);
+  }
+
+  @protected
+  void notifyFileProgress(FileTransferProgressEvent event) {
+    _fileProgressController.add(event);
+  }
+
+  @protected
+  void setConnectionState(String transportId, bool connected) {
+    final wasConnected = _activeConnections[transportId] ?? false;
+    _activeConnections[transportId] = connected;
+
+    if (connected && !wasConnected) {
+      onConnectionEstablished?.call(transportId);
+      _flushQueue(transportId);
+    } else if (!connected && wasConnected) {
+      onConnectionLost?.call(transportId);
+    }
+  }
+
+  @protected
+  void enqueueMessage(String transportId, Uint8List data) {
+    _pendingQueues.putIfAbsent(transportId, () => []).add(data);
+    debugPrint(
+        "Message queued for $transportId (total: ${_pendingQueues[transportId]!.length})");
+  }
+
+  Future<void> _flushQueue(String transportId) async {
+    final queue = _pendingQueues[transportId];
+    if (queue == null || queue.isEmpty) return;
+
+    debugPrint("Flushing ${queue.length} messages for $transportId");
+    final toSend = List<Uint8List>.from(queue);
+    queue.clear();
+
+    for (final data in toSend) {
+      final success = await sendMessage(transportId, data);
+      if (!success) {
+        queue.insert(0, data);
+        break;
+      }
+    }
+  }
+
+  @override
+  Future<void> dispose() async {
+    await _messageController.close();
+    await _fileProgressController.close();
+  }
 }
 
 class FileTransferProgressEvent {
@@ -73,7 +149,8 @@ class MultiTransportService extends ChangeNotifier {
     }
   }
 
-  Future<bool> sendMessage(String peerId, Uint8List data, {bool isControl = false}) async {
+  Future<bool> sendMessage(String peerId, Uint8List data,
+      {bool isControl = false}) async {
     debugPrint('=== TRANSPORT SEND ===');
     debugPrint('Target peer: $peerId');
     debugPrint('Data size: ${data.length} bytes');
@@ -84,7 +161,8 @@ class MultiTransportService extends ChangeNotifier {
       final transport = _transports[i];
       try {
         debugPrint('  Transport ${i + 1}: ${transport.runtimeType}');
-        final success = await transport.sendMessage(peerId, data, isControl: isControl);
+        final success =
+            await transport.sendMessage(peerId, data, isControl: isControl);
         if (success) {
           debugPrint('  ✓ SUCCESS via ${transport.runtimeType}');
           return true;

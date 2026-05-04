@@ -8,6 +8,10 @@ class ProtocolConfig {
 
   /// Keepalive byte value repeated in payload.
   static const int keepAliveByte = 0xFF;
+
+  /// Bluetooth Serial Port Profile UUID used for RFCOMM connections.
+  static const String bluetoothSerialServiceUuid =
+      '00001101-0000-1000-8000-00805f9b34fb';
 }
 
 /// Token bucket rate limits for flow control.
@@ -122,4 +126,3 @@ class DeviceHeuristicConfig {
     'mouse',
   ];
 }
-

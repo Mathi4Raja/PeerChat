@@ -23,7 +23,7 @@ class DBService {
     final path = join(documentsDirectory.path, 'peerchat.db');
     _db = await openDatabase(
       path,
-      version: 20,
+      version: 21,
       onConfigure: (db) async {
         try {
           await db.execute('PRAGMA foreign_keys = ON');
@@ -36,8 +36,9 @@ class DBService {
       },
       onOpen: (db) async {
         final currentVersion = await db.getVersion();
-        if (currentVersion != 20) {
-          AppLogger.w('DB Version Mismatch: Expected 20, found $currentVersion. Triggering recovery schema fix.');
+        if (currentVersion != 21) {
+          AppLogger.w(
+              'DB Version Mismatch: Expected 21, found $currentVersion. Triggering recovery schema fix.');
         }
         await _ensureCriticalSchema(db);
         await _verifySchema(db);
@@ -100,6 +101,9 @@ class DBService {
         if (oldVersion < 20) {
           await _migrateTo20(db);
         }
+        if (oldVersion < 21) {
+          await _migrateTo21(db);
+        }
       },
     );
     return _db!;
@@ -131,7 +135,11 @@ class DBService {
         hopCount INTEGER,
         replyToMessageId TEXT,
         replyToContent TEXT,
-        replyToPeerId TEXT
+        replyToPeerId TEXT,
+        locationLatitude REAL,
+        locationLongitude REAL,
+        locationAccuracyMeters REAL,
+        locationTimestamp INTEGER
       )
     ''');
 
@@ -239,7 +247,7 @@ class DBService {
         timestamp INTEGER NOT NULL
       )
     ''');
-    
+
     await db.execute('''
       CREATE TABLE event_log (
         event_id TEXT PRIMARY KEY,
@@ -250,7 +258,8 @@ class DBService {
         correlation_id TEXT
       )
     ''');
-    await db.execute('CREATE INDEX idx_event_log_entity ON event_log(entity_id)');
+    await db
+        .execute('CREATE INDEX idx_event_log_entity ON event_log(entity_id)');
     await db.execute('CREATE INDEX idx_event_log_ts ON event_log(timestamp)');
   }
 
@@ -416,8 +425,14 @@ class DBService {
         correlation_id TEXT
       )
     ''');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_event_log_entity ON event_log(entity_id)');
-    await db.execute('CREATE INDEX IF NOT EXISTS idx_event_log_ts ON event_log(timestamp)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_event_log_entity ON event_log(entity_id)');
+    await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_event_log_ts ON event_log(timestamp)');
+  }
+
+  Future<void> _migrateTo21(Database db) async {
+    await _ensureChatLocationColumns(db);
   }
 
   Future<void> _ensureCriticalSchema(Database db) async {
@@ -452,6 +467,11 @@ class DBService {
       await db
           .execute('ALTER TABLE chat_messages ADD COLUMN replyToPeerId TEXT');
     }
+    await _ensureChatLocationColumns(db);
+    if (!await _hasColumn(db, 'chat_messages', 'isSystem')) {
+      await db.execute(
+          'ALTER TABLE chat_messages ADD COLUMN isSystem INTEGER DEFAULT 0');
+    }
 
     final queueHasOrigin = await _hasColumn(db, 'message_queue', 'origin_type');
     if (!queueHasOrigin) {
@@ -464,6 +484,21 @@ class DBService {
     // Remove obsolete delivery-ACK table from older installations.
     await db.execute('DROP TABLE IF EXISTS pending_acks');
     await _ensureFileTransfersTable(db);
+  }
+
+  Future<void> _ensureChatLocationColumns(Database db) async {
+    final columns = <String, String>{
+      'locationLatitude': 'REAL',
+      'locationLongitude': 'REAL',
+      'locationAccuracyMeters': 'REAL',
+      'locationTimestamp': 'INTEGER',
+    };
+    for (final entry in columns.entries) {
+      if (!await _hasColumn(db, 'chat_messages', entry.key)) {
+        await db.execute(
+            'ALTER TABLE chat_messages ADD COLUMN ${entry.key} ${entry.value}');
+      }
+    }
   }
 
   Future<void> _ensureFileTransfersTable(Database db) async {
@@ -494,14 +529,14 @@ class DBService {
       'file_transfers',
       'deduplication_cache'
     ];
-    
+
     for (var table in criticalTables) {
       final res = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        [table]
-      );
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+          [table]);
       if (res.isEmpty) {
-        AppLogger.e('CRITICAL: Table "$table" is missing! Attempting emergency recovery.');
+        AppLogger.e(
+            'CRITICAL: Table "$table" is missing! Attempting emergency recovery.');
         if (table == 'file_transfers') {
           await _ensureFileTransfersTable(db);
         } else {
@@ -619,6 +654,16 @@ class DBService {
     ''');
   }
 
+  Future<void> updatePeerName(String id, String name) async {
+    final d = await db;
+    await d.update(
+      'peers',
+      {'displayName': name},
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
   Future<void> upsertPeer(Peer p) async {
     final d = await db;
 
@@ -658,8 +703,21 @@ class DBService {
 
   Future<List<Peer>> allPeers() async {
     final d = await db;
-    final rows = await d.query('peers');
-    return rows.map((r) => Peer.fromMap(r)).toList();
+    final List<Map<String, dynamic>> maps = await d.query('peers');
+    return List.generate(maps.length, (i) {
+      return Peer.fromMap(maps[i]);
+    });
+  }
+
+  Future<Peer?> getPeer(String id) async {
+    final d = await db;
+    final List<Map<String, dynamic>> maps = await d.query(
+      'peers',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (maps.isEmpty) return null;
+    return Peer.fromMap(maps.first);
   }
 
   // Chat message operations
@@ -719,13 +777,15 @@ class DBService {
   }) async {
     final d = await db;
     // Check current state for strict transition
-    final currentRows = await d.query('chat_messages', columns: ['status'], where: 'id = ?', whereArgs: [messageId]);
+    final currentRows = await d.query('chat_messages',
+        columns: ['status'], where: 'id = ?', whereArgs: [messageId]);
     if (currentRows.isNotEmpty) {
       final currentStatusIndex = currentRows.first['status'] as int;
       final currentStatus = MessageStatus.values[currentStatusIndex];
-      StateGuard.transitionMessage(messageId, currentStatus, status, correlationId: correlationId);
+      StateGuard.transitionMessage(messageId, currentStatus, status,
+          correlationId: correlationId);
     }
-    
+
     final values = <String, Object?>{
       'status': status.index,
     };
@@ -761,6 +821,32 @@ class DBService {
     );
   }
 
+  Future<({Uint8List? signingKey, Uint8List? encryptionKey})> getPeerKeys(
+      String peerId) async {
+    final d = await db;
+    final rows = await d.query(
+      'peer_keys',
+      where: 'peer_id = ?',
+      whereArgs: [peerId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return (signingKey: null, encryptionKey: null);
+    return (
+      signingKey: rows.first['public_key'] as Uint8List?,
+      encryptionKey: rows.first['encryption_key'] as Uint8List?,
+    );
+  }
+
+  Future<Uint8List?> getPeerPublicKey(String peerId) async {
+    final keys = await getPeerKeys(peerId);
+    return keys.signingKey;
+  }
+
+  Future<Uint8List?> getPeerEncryptionKey(String peerId) async {
+    final keys = await getPeerKeys(peerId);
+    return keys.encryptionKey;
+  }
+
   Future<void> savePeerPublicKey(String peerId, Uint8List publicKey) async {
     final d = await db;
     await d.insert(
@@ -772,28 +858,6 @@ class DBService {
       },
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
-  }
-
-  Future<Uint8List?> getPeerPublicKey(String peerId) async {
-    final d = await db;
-    final rows = await d.query(
-      'peer_keys',
-      where: 'peer_id = ?',
-      whereArgs: [peerId],
-    );
-    if (rows.isEmpty) return null;
-    return rows.first['public_key'] as Uint8List?;
-  }
-
-  Future<Uint8List?> getPeerEncryptionKey(String peerId) async {
-    final d = await db;
-    final rows = await d.query(
-      'peer_keys',
-      where: 'peer_id = ?',
-      whereArgs: [peerId],
-    );
-    if (rows.isEmpty) return null;
-    return rows.first['encryption_key'] as Uint8List?;
   }
 
   Future<Map<String, int>> getUnreadMessageCounts() async {
@@ -881,13 +945,11 @@ class DBService {
   /// Deletes all local chat messages with a peer.
   Future<void> deleteChatConversation(String peerId) async {
     final d = await db;
-    await d.transaction((txn) async {
-      await txn.delete(
-        'chat_messages',
-        where: 'peerId = ?',
-        whereArgs: [peerId],
-      );
-    });
+    await d.delete(
+      'chat_messages',
+      where: 'peerId = ?',
+      whereArgs: [peerId],
+    );
   }
 
   /// Get latest emergency broadcast messages (newest first).
@@ -947,7 +1009,8 @@ class DBService {
     return rows.first;
   }
 
-  Future<List<Map<String, dynamic>>> getFileTransfersForPeer(String peerId) async {
+  Future<List<Map<String, dynamic>>> getFileTransfersForPeer(
+      String peerId) async {
     final d = await db;
     return await d.query(
       'file_transfers',
@@ -999,8 +1062,10 @@ class DBService {
 
   Future<int> purgeOldFileTransfers({int days = 30}) async {
     final d = await db;
-    final cutoff = DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch;
-    return d.delete('file_transfers', where: 'timestamp < ?', whereArgs: [cutoff]);
+    final cutoff =
+        DateTime.now().subtract(Duration(days: days)).millisecondsSinceEpoch;
+    return d
+        .delete('file_transfers', where: 'timestamp < ?', whereArgs: [cutoff]);
   }
 
   // Known WiFi Direct endpoints operations

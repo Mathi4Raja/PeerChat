@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:math';
-import 'dart:convert';
+import 'package:bluetooth_classic/bluetooth_classic.dart';
+import 'package:bluetooth_classic/models/device.dart';
 import 'package:flutter/foundation.dart';
 import 'package:multicast_dns/multicast_dns.dart';
-import 'package:flutter_blue_classic/flutter_blue_classic.dart';
-import 'package:nsd/nsd.dart';
 import '../models/peer.dart';
 import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
@@ -12,15 +11,13 @@ import '../config/network_config.dart';
 import '../config/protocol_config.dart';
 
 class DiscoveryService {
-  final MDnsClient _mdns = MDnsClient();
-  final FlutterBlueClassic _bluetooth = FlutterBlueClassic();
+  final BluetoothClassic _bluetooth = BluetoothClassic();
   StreamController<Peer> _foundController = StreamController.broadcast();
-  bool _advertising = false;
   bool _bluetoothScanning = false;
   StreamSubscription? _scanSubscription;
   Timer? _scanStopTimer;
   Timer? _scanRestartTimer;
-  Registration? _nsdRegistration;
+  MDnsClient? _mdnsClient;
   String? _localId;
   String? _localName;
   final Random _scanJitterRandom = Random();
@@ -29,7 +26,7 @@ class DiscoveryService {
   // Track discovered peers to avoid duplicates
   final Set<String> _discoveredPeerIds = {};
 
-  // Adaptive discovery policy (Phase 9 baseline)
+  // Adaptive discovery policy
   int _connectedPeerCount = 0;
   bool _fileTransferActive = false;
   bool _batteryLow = false;
@@ -42,15 +39,13 @@ class DiscoveryService {
   Future<void> start(String myId, int port, {String name = 'PeerChat'}) async {
     _localId = myId;
     _localName = name;
-    // Start mDNS discovery (for WiFi)
+    // Start mDNS discovery lookup (passive)
     await _startMdnsDiscovery(myId, port, name);
 
     // Start Bluetooth discovery
     await _startBluetoothDiscovery(myId, name);
   }
 
-  /// Temporarily use aggressive Bluetooth discovery intervals.
-  /// Ignored in Battery Saver profile by design.
   void startFastDiscoveryBurst({
     Duration window = DiscoveryTimerConfig.fastBurstWindow,
   }) {
@@ -65,7 +60,6 @@ class DiscoveryService {
     final localName = _localName;
     if (localId == null || localName == null) return;
 
-    // If we are currently waiting for the next cycle, start immediately.
     _scanRestartTimer?.cancel();
     if (!_bluetoothScanning) {
       _startBluetoothDiscovery(localId, localName);
@@ -74,130 +68,85 @@ class DiscoveryService {
 
   Future<void> _startMdnsDiscovery(String myId, int port, String name) async {
     try {
-      await _mdns.start();
+      // Discover peers using multicast_dns (Passive lookup only)
+      _mdnsClient = MDnsClient();
+      await _mdnsClient!.start();
 
-      // Advertise our service using NSD (Network Service Discovery)
-      if (!_advertising) {
-        _advertising = true;
-        try {
-          // Register service on local network
-          _nsdRegistration = await register(
-            Service(
-              name:
-                  'PeerChat', // Name will be appended with unique ID by OS usually
-              type: NetworkConfig.mdnsServiceType,
-              port: NetworkConfig.discoveryPort,
-              txt: {
-                'id': Uint8List.fromList(utf8.encode(myId)),
-                'name': Uint8List.fromList(utf8.encode(name)),
-              },
-            ),
-          );
-          debugPrint(
-              'mDNS service registered: ${_nsdRegistration?.service.name}');
-        } catch (e) {
-          debugPrint('Error registering mDNS service: $e');
-          _advertising = false;
-        }
-      }
-      // Browse for _peerchat._tcp local services
-      _mdns
-          .lookup<PtrResourceRecord>(
-              ResourceRecordQuery.serverPointer(NetworkConfig.mdnsServiceQuery))
-          .listen((ptr) async {
-        final String domainName = ptr.domainName;
-        // resolve SRV
-        await for (final SrvResourceRecord srv
-            in _mdns.lookup<SrvResourceRecord>(
-                ResourceRecordQuery.service(domainName))) {
-          final target = srv.target;
-          final srvPort = srv.port;
-          // resolve A/AAAA
-          await for (final IPAddressResourceRecord ip
-              in _mdns.lookup<IPAddressResourceRecord>(
-                  ResourceRecordQuery.addressIPv4(target))) {
-            final addr = ip.address.address;
-            // For this MVP we expect TXT records with id and name
-            await for (final TxtResourceRecord txt
-                in _mdns.lookup<TxtResourceRecord>(
-                    ResourceRecordQuery.text(domainName))) {
-              final map = <String, String>{};
-              for (var s in txt.text.split('\n')) {
-                // Fix: base64 IDs often contain '=', so only split on the FIRST '='
-                final index = s.indexOf('=');
-                if (index != -1) {
-                  final key = s.substring(0, index);
-                  final value = s.substring(index + 1);
-                  map[key] = value;
-                }
-              }
-              final id = map['id'] ?? 'unknown';
+      debugPrint('mDNS discovery lookup started');
 
-              // CRITICAL: Robust self-filter
-              if (id == _localId || id == 'unknown') continue;
+      _mdnsClient!.lookup<PtrResourceRecord>(
+        ResourceRecordQuery.serverPointer(NetworkConfig.mdnsServiceType),
+      ).listen((ptr) {
+        _mdnsClient!.lookup<SrvResourceRecord>(
+          ResourceRecordQuery.service(ptr.domainName),
+        ).listen((srv) {
+          _mdnsClient!.lookup<TxtResourceRecord>(
+            ResourceRecordQuery.text(ptr.domainName),
+          ).listen((txt) {
+            final props = _parseTxt(txt.text);
+            final peerId = props['id'];
+            if (peerId == null || peerId == _localId) return;
 
-              final peerName = map['name'] ?? target;
-              final peer = Peer(
-                id: id,
-                displayName: peerName,
-                address: '$addr:$srvPort',
-                lastSeen: DateTime.now().millisecondsSinceEpoch,
-                hasApp: true, // mDNS discovery means they have the app
-                isWiFi: true,
-                isBluetooth: false,
-              );
-              _foundController.add(peer);
-            }
-          }
-        }
+            final peerName = props['name'] ?? 'Unknown';
+            final peer = Peer(
+              id: peerId,
+              displayName: peerName,
+              address: '${srv.target}:${srv.port}',
+              lastSeen: DateTime.now().millisecondsSinceEpoch,
+              hasApp: true,
+              isWiFi: true,
+              isBluetooth: false,
+            );
+            _foundController.add(peer);
+          });
+        });
       });
     } catch (e) {
-      debugPrint('DiscoveryService: mDNS lookup error: $e');
+      debugPrint('DiscoveryService: mDNS discovery lookup error: $e');
     }
+  }
+
+  Map<String, String> _parseTxt(String text) {
+    final map = <String, String>{};
+    final parts = text.split(RegExp(r'[\n\x00]'));
+    for (final part in parts) {
+      final kv = part.split('=');
+      if (kv.length == 2) {
+        map[kv[0]] = kv[1];
+      }
+    }
+    return map;
   }
 
   Future<void> _startBluetoothDiscovery(String myId, String name) async {
     if (_bluetoothScanning || _bluetoothDiscoverySuspended) return;
 
     try {
-      // Check if Bluetooth is supported
-      final isSupported = await _bluetooth.isSupported;
-      if (!isSupported) return;
-
-      // Check if Bluetooth is enabled
-      final isEnabled = await _bluetooth.isEnabled;
-      if (!isEnabled) {
-        // Try to enable Bluetooth
-        _bluetooth.turnOn();
-        // Wait a bit for Bluetooth to turn on
-        await Future.delayed(DiscoveryTimerConfig.bluetoothEnableDelay);
+      final permissionGranted = await _bluetooth.initPermissions();
+      if (!permissionGranted) {
+        _scheduleBluetoothRestart(myId, name);
+        return;
       }
 
       _bluetoothScanning = true;
       _scanRestartTimer?.cancel();
       _scanStopTimer?.cancel();
 
-      // Get bonded (paired) devices first
-      final bondedDevices = await _bluetooth.bondedDevices;
-      if (bondedDevices != null) {
-        for (final device in bondedDevices) {
-          _addBluetoothPeer(device);
-        }
+      final bondedDevices = await _bluetooth.getPairedDevices();
+      for (final device in bondedDevices) {
+        _addBluetoothPeer(device);
       }
 
-      // Start scanning for nearby devices
-      _bluetooth.startScan();
+      await _bluetooth.startScan();
 
-      // Listen to scan results
-      _scanSubscription = _bluetooth.scanResults.listen((device) {
+      _scanSubscription = _bluetooth.onDeviceDiscovered().listen((device) {
         _addBluetoothPeer(device);
       });
 
-      // Stop scan after adaptive active window and restart
       _scanStopTimer = Timer(_activeScanDuration(), () async {
         await _scanSubscription?.cancel();
         _scanSubscription = null;
-        _bluetooth.stopScan();
+        await _bluetooth.stopScan();
         _bluetoothScanning = false;
         _scheduleBluetoothRestart(myId, name);
       });
@@ -222,12 +171,11 @@ class DiscoveryService {
     await _scanSubscription?.cancel();
     _scanSubscription = null;
     try {
-      _bluetooth.stopScan();
+      await _bluetooth.stopScan();
     } catch (e) {
-      debugPrint('DiscoveryService: stopScan failed during suspend: $e');
+      debugPrint('DiscoveryService: stopScan failed: $e');
     }
     _bluetoothScanning = false;
-    debugPrint('DiscoveryService: Bluetooth discovery suspended');
   }
 
   Future<void> resumeBluetoothDiscovery() async {
@@ -237,25 +185,15 @@ class DiscoveryService {
     final localName = _localName;
     if (localId == null || localName == null) return;
     await _startBluetoothDiscovery(localId, localName);
-    debugPrint('DiscoveryService: Bluetooth discovery resumed');
   }
 
-  /// Update adaptive discovery policy.
-  ///
-  /// Rule:
-  /// - 0 connections: 5s
-  /// - 1-2 connections: 15s
-  /// - 3+ connections: 30s (+ jitter)
-  /// - Active transfer: disable throttle (5s baseline)
-  /// - Low battery: double intervals
   void updateAdaptiveDiscoveryPolicy({
     required int connectedPeerCount,
     required bool fileTransferActive,
     required bool batteryLow,
     required RuntimeProfile runtimeProfile,
   }) {
-    final signature =
-        '$connectedPeerCount|$fileTransferActive|$batteryLow|${runtimeProfile.storageValue}';
+    final signature = '$connectedPeerCount|$fileTransferActive|$batteryLow|${runtimeProfile.storageValue}';
     _connectedPeerCount = connectedPeerCount;
     _fileTransferActive = fileTransferActive;
     _batteryLow = batteryLow;
@@ -263,9 +201,7 @@ class DiscoveryService {
 
     if (signature != _lastPolicySignature) {
       _lastPolicySignature = signature;
-      final nextInterval = _nextScanIntervalWithJitter();
-      debugPrint(
-          'Discovery policy updated: profile=${_runtimeProfile.storageValue} connected=$_connectedPeerCount transfer=$_fileTransferActive batteryLow=$_batteryLow nextScan=${nextInterval.inSeconds}s');
+      debugPrint('Discovery policy updated: profile=${_runtimeProfile.storageValue}');
     }
   }
 
@@ -295,58 +231,37 @@ class DiscoveryService {
   }
 
   bool get _isFastBurstActive {
-    if (_runtimeProfile == RuntimeProfile.emergencyBattery) {
-      return false;
-    }
+    if (_runtimeProfile == RuntimeProfile.emergencyBattery) return false;
     return DateTime.now().millisecondsSinceEpoch < _fastBurstUntilTimestamp;
   }
 
-  void _addBluetoothPeer(BluetoothDevice device) {
-    // Use device address as peer ID
+  void _addBluetoothPeer(Device device) {
     final peerId = device.address;
     final peerName = device.name ?? 'Unknown Device';
 
-    // Skip if already discovered
-    if (_discoveredPeerIds.contains(peerId)) {
-      return;
-    }
+    if (_discoveredPeerIds.contains(peerId)) return;
 
-    // Filter: Only add devices that can act as mesh nodes
-    if (device.name != null &&
-        device.name!.isNotEmpty &&
-        _isValidMeshNode(device)) {
-      // CRITICAL: Filter out self by name if possible
+    if (device.name != null && device.name!.isNotEmpty && _isValidMeshNode(device)) {
       if (device.name == _localName) return;
-
       _discoveredPeerIds.add(peerId);
 
-      // Emit unverified Bluetooth peer so it shows up in "Unconnected" list
       final peer = Peer(
         id: peerId,
         displayName: peerName,
         address: peerId,
         lastSeen: DateTime.now().millisecondsSinceEpoch,
-        hasApp: false, // Don't know if they have the app yet
+        hasApp: false,
         isWiFi: false,
         isBluetooth: true,
       );
       _foundController.add(peer);
-
-      debugPrint('BT device found and emitted: $peerName ($peerId)');
     }
   }
 
-  // Add peer from WiFi Direct discovery
   void addWiFiDirectPeer(String endpointId, String endpointName) {
-    // Skip if already discovered
-    if (_discoveredPeerIds.contains(endpointId)) {
-      return;
-    }
-
+    if (_discoveredPeerIds.contains(endpointId)) return;
     _discoveredPeerIds.add(endpointId);
 
-    // NOTE: WiFi Direct peers ARE emitted because they were discovered
-    // via PeerChat's nearby_connections advertising — they DO have the app.
     final peer = Peer(
       id: endpointId,
       displayName: endpointName,
@@ -359,44 +274,12 @@ class DiscoveryService {
     _foundController.add(peer);
   }
 
-  bool _isValidMeshNode(BluetoothDevice device) {
-    // Check device type/class to filter out non-mesh-capable devices
-    // BluetoothDeviceType: unknown, classic, le, dual
-    // We want classic or dual mode devices (phones, tablets, computers)
-
-    // Filter by device name patterns (common exclusions)
+  bool _isValidMeshNode(Device device) {
     final name = device.name?.toLowerCase() ?? '';
-
-    // Exclude audio devices
-    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshAudioKeywords)) {
-      return false;
-    }
-
-    // Exclude wearables
-    if (_containsAnyKeyword(
-        name, DeviceHeuristicConfig.nonMeshWearableKeywords)) {
-      return false;
-    }
-
-    // Exclude car systems
-    if (_containsAnyKeyword(
-        name, DeviceHeuristicConfig.nonMeshVehicleKeywords)) {
-      return false;
-    }
-
-    // Exclude IoT devices
-    if (_containsAnyKeyword(
-        name, DeviceHeuristicConfig.nonMeshPeripheralKeywords)) {
-      return false;
-    }
-
-    // Include devices with typical phone/tablet/computer names
-    // Most phones show as "User's Phone", "Galaxy S21", "iPhone", "Pixel", etc.
-    // Tablets: "iPad", "Galaxy Tab", etc.
-    // Computers: "User's PC", "MacBook", etc.
-
-    // If device type is classic or dual, and name doesn't match exclusions, include it
-    // This will catch most phones, tablets, and computers
+    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshAudioKeywords)) return false;
+    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshWearableKeywords)) return false;
+    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshVehicleKeywords)) return false;
+    if (_containsAnyKeyword(name, DeviceHeuristicConfig.nonMeshPeripheralKeywords)) return false;
     return true;
   }
 
@@ -408,19 +291,15 @@ class DiscoveryService {
   }
 
   Future<void> stop() async {
-    // Stop mDNS
-    _mdns.stop();
-    if (_nsdRegistration != null) {
-      await unregister(_nsdRegistration!);
-      _nsdRegistration = null;
-    }
-    _advertising = false;
+    _mdnsClient?.stop();
+    _mdnsClient = null;
 
-    // Stop Bluetooth scanning
     _scanStopTimer?.cancel();
     _scanRestartTimer?.cancel();
     await _scanSubscription?.cancel();
-    _bluetooth.stopScan();
+    try {
+      await _bluetooth.stopScan();
+    } catch (_) {}
     _bluetoothScanning = false;
 
     await _foundController.close();
@@ -429,7 +308,6 @@ class DiscoveryService {
 
   Future<void> dispose() async {
     await stop();
-    // Do not re-open the controller on dispose
     await _foundController.close();
   }
 }

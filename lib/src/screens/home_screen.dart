@@ -145,9 +145,6 @@ class _IdentitySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final appState = Provider.of<AppState>(context);
-    final email = appState.registeredEmail;
-
     return Container(
       decoration: AppTheme.accentBorderCard(),
       padding: const EdgeInsets.all(16),
@@ -195,19 +192,6 @@ class _IdentitySection extends StatelessWidget {
                         color: AppTheme.textPrimary,
                       ),
                     ),
-                    if (email != null) ...[
-                      const SizedBox(height: 2),
-                      Text(
-                        email,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: AppTheme.accent.withValues(alpha: 0.8),
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
                     const SizedBox(height: 2),
                     Text(
                       'Your P2P Identity (Local-only)',

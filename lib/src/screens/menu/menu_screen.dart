@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
-import 'package:provider/provider.dart';
-import 'package:peerchat_secure/main.dart';
-import '../../app_state.dart';
 import '../../theme.dart';
 import 'about_screen.dart';
 import 'account_settings_screen.dart';
 import 'help_faq_screen.dart';
 import 'notification_settings_screen.dart';
+import 'offline_maps_screen.dart';
 import 'share_app_screen.dart';
 import 'support_screen.dart';
 
@@ -62,9 +60,7 @@ class MenuScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-
                 ),
-
                 const SizedBox(width: 16),
                 Expanded(
                   child: Column(
@@ -106,6 +102,13 @@ class MenuScreen extends StatelessWidget {
             onTap: () => _open(context, const NotificationSettingsScreen()),
           ),
           _MenuTile(
+            icon: Icons.map_rounded,
+            iconColor: AppTheme.online,
+            title: 'Offline Maps',
+            subtitle: 'Street-map area and storage estimate',
+            onTap: () => _open(context, const OfflineMapsScreen()),
+          ),
+          _MenuTile(
             icon: Icons.share_rounded,
             iconColor: AppTheme.accent,
             title: 'Share This App',
@@ -134,44 +137,6 @@ class MenuScreen extends StatelessWidget {
             onTap: () => _open(context, const AboutScreen()),
           ),
           const SizedBox(height: 20),
-          _MenuTile(
-            icon: Icons.logout_rounded,
-            iconColor: AppTheme.danger,
-            title: 'Logout',
-            subtitle: 'Sign out and reset identity',
-            onTap: () async {
-              final confirm = await showDialog<bool>(
-                context: context,
-                builder: (context) => AlertDialog(
-                  title: const Text('Logout'),
-                  content: const Text('Are you sure you want to logout? This will reset your identity selection.'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('Cancel'),
-                    ),
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Logout', style: TextStyle(color: AppTheme.danger)),
-                    ),
-                  ],
-                ),
-              );
-
-              if (confirm == true) {
-                if (context.mounted) {
-                  final appState = Provider.of<AppState>(context, listen: false);
-                  await appState.signOut();
-                  if (context.mounted) {
-                    Navigator.of(context).pushAndRemoveUntil(
-                      MaterialPageRoute(builder: (_) => const BootstrapApp()),
-                      (route) => false,
-                    );
-                  }
-                }
-              }
-            },
-          ),
         ],
       ),
     );

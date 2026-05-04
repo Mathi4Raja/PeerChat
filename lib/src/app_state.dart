@@ -27,8 +27,6 @@ import 'services/wifi_transport.dart';
 import 'services/web_share_service.dart';
 import 'services/file_transfer_service.dart';
 import 'services/app_icon_service.dart';
-import 'services/first_sign_in_service.dart';
-import 'services/auth_service.dart';
 import 'services/event_sourcing_logger.dart';
 import 'utils/name_generator.dart';
 
@@ -36,7 +34,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final Sodium _sodium;
   final DBService _db = DBService();
   final DiscoveryService _discovery = DiscoveryService();
-  final FirstSignInService _firstSignInService = FirstSignInService();
   late final MeshRouterService meshRouter;
   late final EmergencyBroadcastService emergencyBroadcastService;
   late final WebShareService webShareService;
@@ -48,9 +45,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   StreamSubscription<WiFiDiscoveryFailure>? _wifiDiscoveryFailureSubscription;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
   final DeviceSystemService deviceService = DeviceSystemService();
-
-  String? _registeredEmail;
-  String? get registeredEmail => _registeredEmail;
 
   static const String _runtimeProfileStorageKey = 'runtime_profile';
   static const String _lastNormalRuntimeProfileStorageKey =
@@ -128,12 +122,10 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   // Get connected peers (those we have active connections with)
   List<Peer> get connectedPeers {
     final connectedIds = meshRouter.getConnectedPeerIds();
+    // If transport layer says we are connected, show as connected regardless of activity window.
+    final connected = peers.where((p) => connectedIds.contains(p.id)).toList();
     debugPrint(
-        'AppState.connectedPeers: ${connectedIds.length} connected IDs from MeshRouter');
-    final connected =
-        activePeers.where((p) => connectedIds.contains(p.id)).toList();
-    debugPrint(
-        'AppState.connectedPeers: ${connected.length} peers match connected IDs');
+        'AppState.connectedPeers: ${connected.length} peers connected (from ${connectedIds.length} transport IDs)');
     return connected;
   }
 
@@ -204,7 +196,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
       debugPrint('AppState.init: Opening Database...');
       EventSourcingLogger().initialize(_db);
-      _registeredEmail = await _firstSignInService.getStoredEmail();
       peers = await _db.allPeers();
       _runtimeProfile = await _loadRuntimeProfile();
       _lastNormalRuntimeProfile = await _loadLastNormalRuntimeProfile();
@@ -566,7 +557,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
   Future<void> setNormalRuntimeProfile(RuntimeProfile profile) async {
     if (profile == RuntimeProfile.emergencyBattery) return;
-    await setRuntimeProfile(RuntimeProfile.normalDirect);
+    await setRuntimeProfile(profile);
   }
 
   Future<void> enableBatterySaver() async {
@@ -751,15 +742,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     await refreshUnreadCounts();
     notifyListeners();
     return result;
-  }
-
-  Future<void> signOut() async {
-    await AuthService().signOut();
-    await _firstSignInService.reset();
-    _registeredEmail = null;
-    notifyListeners();
-    // In a real app, you might want to trigger a full app restart or 
-    // navigate to the sign-in screen via a global key.
   }
 
   Future<void> refreshUnreadCounts() async {

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../../app_state.dart';
-import '../../services/mesh_router_service.dart';
+import '../../models/queued_message_detail.dart';
 import '../../models/queued_message.dart';
 import '../../config/identity_ui_config.dart';
 import '../../theme.dart';

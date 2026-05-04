@@ -17,19 +17,18 @@ class UploadRequest {
   final String id;
   final String filename;
   final int size;
-  
+
   UploadRequest({required this.id, required this.filename, required this.size});
 }
-
 
 class WebShareService {
   HttpServer? _server;
   final List<PlatformFile> _sharedFiles = [];
   bool _isRunning = false;
-  
+
   final _eventController = StreamController<String>.broadcast();
   Stream<String> get onEvent => _eventController.stream;
-  
+
   final List<String> _eventLog = [];
   List<String> get eventLog => _eventLog;
 
@@ -41,7 +40,6 @@ class WebShareService {
   final Set<String> _activeTransfers = {};
   final Set<String> _completedPaths = {};
   final _uuid = const Uuid();
-
 
   bool get isRunning => _isRunning;
   List<PlatformFile> get sharedFiles => _sharedFiles;
@@ -84,7 +82,6 @@ class WebShareService {
     }
   }
 
-
   void _addEvent(String message) {
     final timestamp = DateTime.now().toString().substring(11, 16);
     final logEntry = "[$timestamp] $message";
@@ -109,7 +106,6 @@ class WebShareService {
     }
   }
 
-
   Future<void> start() async {
     if (_isRunning) return;
 
@@ -133,7 +129,7 @@ class WebShareService {
 
   Future<void> stop() async {
     if (!_isRunning) return;
-    
+
     // Cleanup any lingering temp files
     for (var file in _sharedFiles) {
       await _cleanupIfTemp(file.path);
@@ -147,7 +143,6 @@ class WebShareService {
     _addEvent("Service stopped");
     AppLogger.i("WebShareService stopped");
   }
-
 
   Future<String?> _getIp() async {
     try {
@@ -178,36 +173,36 @@ class WebShareService {
         final id = request.uri.queryParameters['id'];
         if (id != null) {
           final idx = int.tryParse(id);
-           if (idx != null && idx >= 0 && idx < _sharedFiles.length) {
-              final fileInfo = _sharedFiles[idx];
-              final filePath = fileInfo.path;
-              if (filePath == null) {
-                AppLogger.w("File path is null for shared file at index $idx");
-                request.response.statusCode = HttpStatus.notFound;
-                await request.response.close();
-                return;
-              }
-              final file = File(filePath);
-
-              
-              if (await file.exists()) {
-                request.response.headers.contentType = ContentType.binary;
-                request.response.headers.add('Content-Disposition', 'attachment; filename="${fileInfo.name}"');
-                request.response.headers.add('Content-Length', fileInfo.size);
-                
-                _activeTransfers.add(fileInfo.name);
-                _addEvent("Sending: ${fileInfo.name}");
-                
-                await request.response.addStream(file.openRead());
-                await request.response.close();
-                
-                _completedPaths.add(filePath);
-                
-                _activeTransfers.remove(fileInfo.name);
-                _addEvent("Sent: ${fileInfo.name}");
-                return;
-              }
+          if (idx != null && idx >= 0 && idx < _sharedFiles.length) {
+            final fileInfo = _sharedFiles[idx];
+            final filePath = fileInfo.path;
+            if (filePath == null) {
+              AppLogger.w("File path is null for shared file at index $idx");
+              request.response.statusCode = HttpStatus.notFound;
+              await request.response.close();
+              return;
             }
+            final file = File(filePath);
+
+            if (await file.exists()) {
+              request.response.headers.contentType = ContentType.binary;
+              request.response.headers.add('Content-Disposition',
+                  'attachment; filename="${fileInfo.name}"');
+              request.response.headers.add('Content-Length', fileInfo.size);
+
+              _activeTransfers.add(fileInfo.name);
+              _addEvent("Sending: ${fileInfo.name}");
+
+              await request.response.addStream(file.openRead());
+              await request.response.close();
+
+              _completedPaths.add(filePath);
+
+              _activeTransfers.remove(fileInfo.name);
+              _addEvent("Sent: ${fileInfo.name}");
+              return;
+            }
+          }
         }
         request.response.statusCode = HttpStatus.notFound;
         request.response.write("File not found");
@@ -220,22 +215,17 @@ class WebShareService {
         final data = jsonDecode(content);
         final filename = data['filename'] as String;
         final size = data['size'] as int;
-        
+
         final requestId = _uuid.v4();
         final completer = Completer<bool>();
         _pendingApprovals[requestId] = completer;
-        
-        _uploadRequestController.add(UploadRequest(
-          id: requestId, 
-          filename: filename, 
-          size: size
-        ));
-        
-        final accepted = await completer.future.timeout(
-          const Duration(minutes: 2), 
-          onTimeout: () => false
-        );
-        
+
+        _uploadRequestController
+            .add(UploadRequest(id: requestId, filename: filename, size: size));
+
+        final accepted = await completer.future
+            .timeout(const Duration(minutes: 2), onTimeout: () => false);
+
         if (accepted) {
           final token = _uuid.v4();
           _approvedTokens.add(token);
@@ -247,7 +237,8 @@ class WebShareService {
           request.response
             ..statusCode = HttpStatus.forbidden
             ..headers.contentType = ContentType.json
-            ..write(jsonEncode({'status': 'rejected', 'message': 'Upload rejected by host'}));
+            ..write(jsonEncode(
+                {'status': 'rejected', 'message': 'Upload rejected by host'}));
         }
         await request.response.close();
         return;
@@ -307,25 +298,26 @@ class WebShareService {
 
     await for (final part in parts) {
       final contentDisposition = part.headers['content-disposition'];
-      if (contentDisposition != null && contentDisposition.contains('filename=')) {
+      if (contentDisposition != null &&
+          contentDisposition.contains('filename=')) {
         final RegExp regex = RegExp(r'filename="([^"]+)"');
         final match = regex.firstMatch(contentDisposition);
         if (match != null) {
           final filename = match.group(1)!;
-          
+
           final dirPath = await _determineUploadDir();
           final savedFilePath = p.join(dirPath, filename);
           final file = File(savedFilePath);
           IOSink? sink;
-          
+
           try {
             sink = file.openWrite();
-            
+
             _activeTransfers.add(filename);
             _addEvent("Receiving: $filename");
-            
+
             await part.pipe(sink);
-            
+
             _activeTransfers.remove(filename);
             _addEvent("Received: $filename");
             debugPrint("Saved uploaded file to $savedFilePath");
@@ -360,7 +352,9 @@ class WebShareService {
       }
 
       final dirs = await ExternalPath.getExternalStorageDirectories();
-      final root = (dirs != null && dirs.isNotEmpty) ? dirs.first : '/storage/emulated/0';
+      final root = (dirs != null && dirs.isNotEmpty)
+          ? dirs.first
+          : '/storage/emulated/0';
       final dir = Directory(p.join(root, 'PeerChat', 'WebShare'));
       if (!await dir.exists()) {
         await dir.create(recursive: true);

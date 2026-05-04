@@ -25,6 +25,7 @@
 - **No Type Ignores**: Do not add `# type: ignore` or similar. Fix the underlying type issue.
 - **Complete Migrations**: When moving modules, update imports to the new owner and remove old compatibility shims in the same change unless preserving a published interface is explicitly required.
 - **Maximum Test Coverage**: There should be maximum test coverage for everything, preferably live smoke test coverage to catch bugs early.
+- **Legacy Compatibility**: Keep updates backward-compatible with legacy code/protocols whenever possible. If a breaking change is unavoidable, strictly notify the user about the compatibility issues and document them under "Residual Risks" or a new "Legacy Compatible" section.
 
 ## 4. Invariant-Driven Design
 Every critical system component MUST guarantee systemic invariants.

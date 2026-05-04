@@ -27,8 +27,7 @@ class LocalNotificationService {
 
   static const String _chatChannelId = 'chat_messages';
   static const String _chatChannelName = 'Chat messages';
-  static const String _chatChannelDescription =
-      'Incoming direct chat messages';
+  static const String _chatChannelDescription = 'Incoming direct chat messages';
   static const String _broadcastChannelId = 'broadcast_mentions';
   static const String _broadcastChannelName = 'Broadcast mentions';
   static const String _broadcastChannelDescription =

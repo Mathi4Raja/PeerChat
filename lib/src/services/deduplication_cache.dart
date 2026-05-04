@@ -134,7 +134,7 @@ class DeduplicationCache {
     if (!_forwardedTo.containsKey(messageId)) {
       _forwardedTo[messageId] = {};
     }
-    
+
     // LRU: move this messageId to the end
     final peers = _forwardedTo.remove(messageId)!;
     peers.add(peerId);

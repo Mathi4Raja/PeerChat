@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
+import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../utils/app_logger.dart';
 import 'package:nearby_connections/nearby_connections.dart';
@@ -12,38 +13,22 @@ import '../config/limits_config.dart';
 import 'transport_service.dart';
 import 'db_service.dart';
 
-class WiFiTransport implements TransportService {
+class WiFiTransport extends BaseTransport {
   final Nearby _nearby = Nearby();
-  final StreamController<TransportMessage> _messageController =
-      StreamController.broadcast();
-  final StreamController<FileTransferProgressEvent> _fileProgressController =
-      StreamController.broadcast();
   final Map<String, String> _connectedPeers = {}; // endpointId -> peerId
-  
+
   // Mapping of Nearby Payload IDs to our internal File IDs and source endpoints
   final Map<int, String> _nearbyIdToFileId = {};
   final Map<int, String> _nearbyIdToEndpointId = {};
-  
+
   // Mapping of Nearby Payload IDs to their local file paths
   final Map<int, String> _nearbyIdToLocalPath = {};
-  
+
   final Function(String peerId, String address)? onPeerDiscovered;
   final DBService _db = DBService();
 
-  // Callback for when connection is established
-  Function(String transportId)? onConnectionEstablished;
-
-  // Callback for when connection is lost
-  Function(String transportId)? onConnectionLost;
-
   // Callback for discovery failures that require user action.
   Function(WiFiDiscoveryFailure failure)? onDiscoveryFailure;
-
-  @override
-  Stream<TransportMessage> get onMessageReceived => _messageController.stream;
-
-  @override
-  Stream<FileTransferProgressEvent> get onFileProgress => _fileProgressController.stream;
 
   // Keepalive and Health mechanism
   Timer? _keepaliveTimer;
@@ -74,9 +59,10 @@ class WiFiTransport implements TransportService {
   int _lastEndpointFoundTimestamp = 0;
   int _lastDiscoveryFailureNoticeAt = 0;
   bool _nearbySuspended = false;
-  final Queue<_OutboundFrame> _controlSendQueue = Queue<_OutboundFrame>();
-  final Queue<_OutboundFrame> _bulkSendQueue = Queue<_OutboundFrame>();
-  bool _outboundPumpActive = false;
+  final Map<String, Queue<_OutboundFrame>> _endpointControlQueues = {};
+  final Map<String, Queue<_OutboundFrame>> _endpointBulkQueues = {};
+  final Set<String> _activeEndpointPumps = {};
+  final Random _random = Random();
 
   WiFiTransport({this.onPeerDiscovered});
 
@@ -166,7 +152,8 @@ class WiFiTransport implements TransportService {
   void _startReconnectionCheck() {
     _reconnectCheckTimer?.cancel();
     // Periodically check reconnect state and refresh discovery if needed.
-    _reconnectCheckTimer = Timer.periodic(WiFiTimerConfig.reconnectCheckInterval, (timer) async {
+    _reconnectCheckTimer =
+        Timer.periodic(WiFiTimerConfig.reconnectCheckInterval, (timer) async {
       if (_nearbySuspended) {
         return;
       }
@@ -208,7 +195,8 @@ class WiFiTransport implements TransportService {
             !hasRecentEndpointActivity &&
             elapsed > WiFiTimerConfig.discoveryRefreshCooldown.inMilliseconds) {
           _lastDiscoveryRefreshTimestamp = nowMs;
-          AppLogger.print('No active peers. Proactively refreshing WiFi Direct...');
+          AppLogger.print(
+              'No active peers. Proactively refreshing WiFi Direct...');
           await restartWiFiDirect();
         }
       }
@@ -219,7 +207,8 @@ class WiFiTransport implements TransportService {
 
   void _startKeepalive() {
     _keepaliveTimer?.cancel();
-    _keepaliveTimer = Timer.periodic(WiFiTimerConfig.keepAliveInterval, (timer) {
+    _keepaliveTimer =
+        Timer.periodic(WiFiTimerConfig.keepAliveInterval, (timer) {
       if (_nearbySuspended) {
         return;
       }
@@ -231,7 +220,8 @@ class WiFiTransport implements TransportService {
 
   void _startHealthCheck() {
     _healthCheckTimer?.cancel();
-    _healthCheckTimer = Timer.periodic(WiFiTimerConfig.healthCheckInterval, (timer) {
+    _healthCheckTimer =
+        Timer.periodic(WiFiTimerConfig.healthCheckInterval, (timer) {
       if (_nearbySuspended) {
         return;
       }
@@ -285,7 +275,11 @@ class WiFiTransport implements TransportService {
 
   void _sendKeepalives() {
     for (final endpointId in _connectedPeers.keys) {
-      _nearby.sendBytesPayload(endpointId, keepAlivePacket);
+      unawaited(_enqueuePayload(
+        endpointId: endpointId,
+        data: keepAlivePacket,
+        isControl: true,
+      ));
     }
   }
 
@@ -442,7 +436,8 @@ class WiFiTransport implements TransportService {
       }
     }
     for (final endpointId in stale) {
-      AppLogger.print('Clearing stale pending WiFi connection attempt: $endpointId');
+      AppLogger.print(
+          'Clearing stale pending WiFi connection attempt: $endpointId');
       _pendingConnectionAttempts.remove(endpointId);
       _pendingAttemptStartedAt.remove(endpointId);
     }
@@ -501,10 +496,14 @@ class WiFiTransport implements TransportService {
 
     if (_shouldWaitForRemoteInitiator(endpointName)) {
       if (!_waitForInitiatorTimers.containsKey(endpointId)) {
+        // Add random jitter to break symmetry between devices timing out at the same time
+        final jitter = Duration(milliseconds: _random.nextInt(600));
+        final totalTimeout = WiFiTimerConfig.initiatorWaitTimeout + jitter;
+        
         AppLogger.print(
-            'Waiting for remote initiator for $endpointId to avoid collision');
+            'Waiting for remote initiator for $endpointId to avoid collision (timeout: ${totalTimeout.inMilliseconds}ms)');
         _waitForInitiatorTimers[endpointId] =
-            Timer(WiFiTimerConfig.initiatorWaitTimeout, () async {
+            Timer(totalTimeout, () async {
           _waitForInitiatorTimers.remove(endpointId);
           if (_connectedPeers.containsKey(endpointId) ||
               _pendingConnectionAttempts.contains(endpointId)) {
@@ -543,9 +542,12 @@ class WiFiTransport implements TransportService {
     }
 
     _quickRetryCounts[endpointId] = attempts + 1;
-    final delay = WiFiTimerConfig.quickRetryDelay * (attempts + 1);
+    // Add significant jitter to retries to break 8012 collision loops
+    final jitter = Duration(milliseconds: _random.nextInt(800));
+    final delay = (WiFiTimerConfig.quickRetryDelay * (attempts + 1)) + jitter;
+    
     AppLogger.print(
-        'Scheduling quick retry for $endpointId in ${delay.inSeconds}s (reason: $reason)');
+        'Scheduling quick retry for $endpointId in ${delay.inMilliseconds}ms (reason: $reason)');
 
     _quickRetryTimers[endpointId] = Timer(delay, () async {
       _quickRetryTimers.remove(endpointId);
@@ -561,14 +563,28 @@ class WiFiTransport implements TransportService {
     });
   }
 
-  Future<void> _attemptConnection(String endpointId, String endpointName) async {
+  Future<void> _attemptConnection(
+      String endpointId, String endpointName) async {
     if (_nearbySuspended) return;
 
     _pendingConnectionAttempts.add(endpointId);
-    _pendingAttemptStartedAt[endpointId] = DateTime.now().millisecondsSinceEpoch;
+    _pendingAttemptStartedAt[endpointId] =
+        DateTime.now().millisecondsSinceEpoch;
     _lastConnectionAttempt[endpointId] = DateTime.now().millisecondsSinceEpoch;
 
     AppLogger.print('Requesting WiFi Direct connection: $endpointId');
+    
+    // Briefly pause discovery to reduce radio interference during handshake
+    bool wasDiscovering = _isDiscovering;
+    if (wasDiscovering) {
+      try {
+        await _nearby.stopDiscovery();
+        _isDiscovering = false;
+      } catch (e) {
+        AppLogger.print('WiFiTransport: failed to pause discovery: $e');
+      }
+    }
+
     try {
       await _nearby.requestConnection(
         _localName ?? IdentityUiConfig.defaultDisplayName,
@@ -578,11 +594,17 @@ class WiFiTransport implements TransportService {
         onDisconnected: _onDisconnected,
       );
     } catch (e) {
-      AppLogger.print('WiFi Direct requestConnection failed for $endpointId: $e');
+      AppLogger.print(
+          'WiFi Direct requestConnection failed for $endpointId: $e');
       _pendingConnectionAttempts.remove(endpointId);
       _pendingAttemptStartedAt.remove(endpointId);
       _scheduleQuickRetry(endpointId,
           endpointName: endpointName, reason: 'request_connection_exception');
+    } finally {
+      // Resume discovery if it was active before the request
+      if (wasDiscovering && !_isDiscovering && !_nearbySuspended) {
+        await _startDiscovery();
+      }
     }
   }
 
@@ -612,7 +634,8 @@ class WiFiTransport implements TransportService {
         },
       );
     } catch (e) {
-      AppLogger.print('WiFi Direct acceptConnection failed for $endpointId: $e');
+      AppLogger.print(
+          'WiFi Direct acceptConnection failed for $endpointId: $e');
     }
   }
 
@@ -627,15 +650,17 @@ class WiFiTransport implements TransportService {
       _knownPeers.add(endpointId);
       await _db.saveKnownWiFiEndpoint(endpointId);
       await _db.resetReconnectAttempts(endpointId);
-      onConnectionEstablished?.call(endpointId);
+      setConnectionState(endpointId, true);
       _clearQuickRetryState(endpointId);
     } else {
-      AppLogger.print('WiFi Direct connection failed: $endpointId (status: $status)');
+      AppLogger.print(
+          'WiFi Direct connection failed: $endpointId (status: $status)');
       _connectedPeers.remove(endpointId);
       _lastActivity.remove(endpointId);
       if (_knownPeers.contains(endpointId)) {
         await _db.incrementReconnectAttempts(endpointId);
       }
+      setConnectionState(endpointId, false);
       _scheduleQuickRetry(endpointId, reason: 'on_connection_result_$status');
     }
   }
@@ -645,7 +670,7 @@ class WiFiTransport implements TransportService {
     _connectedPeers.remove(endpointId);
     _lastActivity.remove(endpointId);
     _dropQueuedFramesForEndpoint(endpointId);
-    
+
     // Only clear mappings for this specific endpoint
     _nearbyIdToEndpointId.removeWhere((pId, eId) {
       if (eId == endpointId) {
@@ -658,7 +683,7 @@ class WiFiTransport implements TransportService {
     if (_knownPeers.contains(endpointId)) {
       await _db.resetReconnectAttempts(endpointId);
     }
-    onConnectionLost?.call(endpointId);
+    setConnectionState(endpointId, false);
   }
 
   void _handleIncomingPayload(String endpointId, Payload payload) {
@@ -676,7 +701,8 @@ class WiFiTransport implements TransportService {
             if (nearbyId != null) {
               _nearbyIdToFileId[nearbyId] = fileId;
               _nearbyIdToEndpointId[nearbyId] = endpointId;
-              AppLogger.print('Mapped Nearby ID $nearbyId to File ID $fileId for endpoint $endpointId');
+              AppLogger.print(
+                  'Mapped Nearby ID $nearbyId to File ID $fileId for endpoint $endpointId');
               return;
             }
           }
@@ -691,7 +717,7 @@ class WiFiTransport implements TransportService {
         }
 
         _updateActivity(endpointId);
-        _messageController.add(TransportMessage(
+        notifyMessageReceived(TransportMessage(
           fromPeerId: endpointId,
           fromAddress: endpointId,
           data: bytes,
@@ -699,13 +725,14 @@ class WiFiTransport implements TransportService {
       } else if (payload.type == PayloadType.FILE) {
         // Mapping should already exist from the header
         final fileId = _nearbyIdToFileId[payload.id];
-        
+
         // Store the URI for completion
         if (payload.uri != null) {
           _nearbyIdToLocalPath[payload.id] = payload.uri!;
-          AppLogger.print('Received file URI for payload ${payload.id}: ${payload.uri}');
+          AppLogger.print(
+              'Received file URI for payload ${payload.id}: ${payload.uri}');
         }
-        
+
         if (fileId != null) {
           AppLogger.print('Receiving file payload ${payload.id} for $fileId');
         } else {
@@ -717,7 +744,8 @@ class WiFiTransport implements TransportService {
     }
   }
 
-  void _handleNativeProgress(String endpointId, PayloadTransferUpdate update) async {
+  void _handleNativeProgress(
+      String endpointId, PayloadTransferUpdate update) async {
     final fileId = _nearbyIdToFileId[update.id];
     if (fileId == null) return;
 
@@ -725,22 +753,25 @@ class WiFiTransport implements TransportService {
     final isCompleted = update.status == PayloadStatus.SUCCESS;
     final localPath = isCompleted ? _nearbyIdToLocalPath[update.id] : null;
 
-    _fileProgressController.add(FileTransferProgressEvent(
+    notifyFileProgress(FileTransferProgressEvent(
       peerId: endpointId,
       fileId: fileId,
       progress: progress,
       isCompleted: isCompleted,
       localPath: localPath,
     ));
-    
-    if (isCompleted || update.status == PayloadStatus.FAILURE || update.status == PayloadStatus.CANCELED) {
+
+    if (isCompleted ||
+        update.status == PayloadStatus.FAILURE ||
+        update.status == PayloadStatus.CANCELED) {
       _nearbyIdToFileId.remove(update.id);
       _nearbyIdToLocalPath.remove(update.id);
     }
   }
 
   @override
-  Future<bool> sendMessage(String peerId, Uint8List data, {bool isControl = false}) async {
+  Future<bool> sendMessage(String peerId, Uint8List data,
+      {bool isControl = false}) async {
     String? endpointId;
     for (final entry in _connectedPeers.entries) {
       if (entry.value == peerId || entry.key == peerId) {
@@ -771,11 +802,12 @@ class WiFiTransport implements TransportService {
     try {
       // In nearby_connections 4.x, we use sendFilePayload directly
       final int nearbyId = await _nearby.sendFilePayload(endpointId, filePath);
-      
+
       // Send mapping header via bytes payload
-      final header = Uint8List.fromList(utf8.encode('FT_MAP:$nearbyId:$fileId'));
+      final header =
+          Uint8List.fromList(utf8.encode('FT_MAP:$nearbyId:$fileId'));
       await _nearby.sendBytesPayload(endpointId, header);
-      
+
       // Track our own progress mapping
       _nearbyIdToFileId[nearbyId] = fileId;
       _nearbyIdToEndpointId[nearbyId] = endpointId;
@@ -799,59 +831,73 @@ class WiFiTransport implements TransportService {
       data: data,
       completer: completer,
     );
+
     if (isControl) {
-      _controlSendQueue.addLast(frame);
+      _endpointControlQueues.putIfAbsent(endpointId, () => Queue<_OutboundFrame>()).addLast(frame);
     } else {
-      _bulkSendQueue.addLast(frame);
+      _endpointBulkQueues.putIfAbsent(endpointId, () => Queue<_OutboundFrame>()).addLast(frame);
     }
-    _drainOutboundQueue();
+
+    _startEndpointPump(endpointId);
     return completer.future;
   }
 
-  void _drainOutboundQueue() {
-    if (_outboundPumpActive) return;
-    _outboundPumpActive = true;
+  void _startEndpointPump(String endpointId) {
+    if (_activeEndpointPumps.contains(endpointId)) return;
+    _activeEndpointPumps.add(endpointId);
 
     unawaited(() async {
-      while (_controlSendQueue.isNotEmpty || _bulkSendQueue.isNotEmpty) {
-        final frame = _controlSendQueue.isNotEmpty 
-            ? _controlSendQueue.removeFirst() 
-            : _bulkSendQueue.removeFirst();
+      try {
+        final controlQueue = _endpointControlQueues[endpointId];
+        final bulkQueue = _endpointBulkQueues[endpointId];
 
-        if (!_connectedPeers.containsKey(frame.endpointId)) {
-          frame.completer.complete(false);
-          continue;
-        }
+        while ((controlQueue?.isNotEmpty ?? false) || (bulkQueue?.isNotEmpty ?? false)) {
+          final _OutboundFrame frame = (controlQueue?.isNotEmpty ?? false)
+              ? controlQueue!.removeFirst()
+              : bulkQueue!.removeFirst();
 
-        try {
-          await _nearby.sendBytesPayload(frame.endpointId, frame.data);
-          _updateActivity(frame.endpointId);
-          frame.completer.complete(true);
-        } catch (e) {
-          frame.completer.complete(false);
+          if (!_connectedPeers.containsKey(endpointId)) {
+            frame.completer.complete(false);
+            continue;
+          }
+
+          try {
+            await _nearby.sendBytesPayload(endpointId, frame.data);
+            _updateActivity(endpointId);
+            frame.completer.complete(true);
+          } catch (e) {
+            AppLogger.print('WiFiTransport: failed to send payload to $endpointId: $e');
+            frame.completer.complete(false);
+          }
         }
+      } finally {
+        _activeEndpointPumps.remove(endpointId);
       }
-      _outboundPumpActive = false;
     }());
   }
 
-  void _dropQueuedFramesForEndpoint(String endpointId, {bool bulkOnly = false}) {
+  void _dropQueuedFramesForEndpoint(String endpointId,
+      {bool bulkOnly = false}) {
     if (!bulkOnly) {
-      _controlSendQueue.removeWhere((f) => f.endpointId == endpointId);
+      _endpointControlQueues[endpointId]?.clear();
     }
-    _bulkSendQueue.removeWhere((f) => f.endpointId == endpointId);
+    _endpointBulkQueues[endpointId]?.clear();
   }
 
   void _clearQueuedFrames() {
-    _controlSendQueue.clear();
-    _bulkSendQueue.clear();
+    _endpointControlQueues.clear();
+    _endpointBulkQueues.clear();
+    _activeEndpointPumps.clear();
   }
 
   @override
   List<String> getConnectedPeerIds() => _connectedPeers.values.toList();
 
   void setLocalIdentity(String peerId, String name) {
-    _localName = name;
+    final suffix = peerId.length > 4
+        ? peerId.substring(0, 4).toUpperCase()
+        : peerId.toUpperCase();
+    _localName = "${name}_$suffix";
     if (_isAdvertising) {
       unawaited(_restartAdvertising());
     }
@@ -861,17 +907,25 @@ class WiFiTransport implements TransportService {
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {
     _dropQueuedFramesForEndpoint(peerId, bulkOnly: bulkOnly);
   }
+
   @override
   Future<void> dispose() async {
     _keepaliveTimer?.cancel();
     _healthCheckTimer?.cancel();
     _reconnectCheckTimer?.cancel();
+    for (final timer in _waitForInitiatorTimers.values) {
+      timer.cancel();
+    }
+    for (final timer in _quickRetryTimers.values) {
+      timer.cancel();
+    }
     _clearQueuedFrames();
     _nearbyIdToFileId.clear();
     _nearbyIdToLocalPath.clear();
-    await _nearby.stopAllEndpoints();
-    await _messageController.close();
-    await _fileProgressController.close();
+    try {
+      await _nearby.stopAllEndpoints();
+    } catch (_) {}
+    await super.dispose();
   }
 }
 
@@ -879,7 +933,8 @@ class _OutboundFrame {
   final String endpointId;
   final Uint8List data;
   final Completer<bool> completer;
-  _OutboundFrame({required this.endpointId, required this.data, required this.completer});
+  _OutboundFrame(
+      {required this.endpointId, required this.data, required this.completer});
 }
 
 class WiFiDiscoveryFailure {
@@ -899,10 +954,18 @@ class WiFiDiscoveryFailure {
         return "Location services are disabled. Please enable them.";
     }
   }
+
   static WiFiDiscoveryFailure? fromError(String raw) {
-    if (raw.contains('PERMISSION')) return WiFiDiscoveryFailure(code: WiFiDiscoveryFailureCode.locationPermissionMissing, details: raw);
+    if (raw.contains('PERMISSION')) {
+      return WiFiDiscoveryFailure(
+          code: WiFiDiscoveryFailureCode.locationPermissionMissing,
+          details: raw);
+    }
     return null;
   }
 }
 
-enum WiFiDiscoveryFailureCode { locationPermissionMissing, locationServiceDisabled }
+enum WiFiDiscoveryFailureCode {
+  locationPermissionMissing,
+  locationServiceDisabled
+}

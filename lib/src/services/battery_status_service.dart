@@ -54,20 +54,24 @@ class DeviceSystemService {
   /// Checks if the "Modify System Settings" permission is granted.
   Future<bool> checkSystemSettingsPermission() async {
     if (!Platform.isAndroid) return true;
-    return await _channel.invokeMethod<bool>('checkSystemSettingsPermission') ?? false;
+    return await _channel.invokeMethod<bool>('checkSystemSettingsPermission') ??
+        false;
   }
 
   /// Opens the system settings permission page for this app.
   Future<bool> openSystemSettingsPermission() async {
     if (!Platform.isAndroid) return true;
-    return await _channel.invokeMethod<bool>('openSystemSettingsPermission') ?? false;
+    return await _channel.invokeMethod<bool>('openSystemSettingsPermission') ??
+        false;
   }
 
   /// Toggles Bluetooth state (Android only).
   Future<bool> toggleBluetooth(bool enable) async {
     if (!Platform.isAndroid) return true;
     try {
-      return await _channel.invokeMethod<bool>('toggleBluetooth', {'enable': enable}) ?? false;
+      return await _channel
+              .invokeMethod<bool>('toggleBluetooth', {'enable': enable}) ??
+          false;
     } catch (e) {
       debugPrint('Error toggling bluetooth: $e');
       return false;
@@ -100,14 +104,17 @@ class DeviceSystemService {
   /// A stream of the current Bluetooth state (enabled/disabled).
   Stream<bool> get onBluetoothStateChanged {
     if (!Platform.isAndroid) return const Stream.empty();
-    return _btEventChannel.receiveBroadcastStream().map((event) => event as bool);
+    return _btEventChannel
+        .receiveBroadcastStream()
+        .map((event) => event as bool);
   }
 
   /// Fetches a list of installed apps that can be shared.
   Future<List<Map<String, dynamic>>> getInstalledApps() async {
     if (!Platform.isAndroid) return [];
     try {
-      final List<dynamic>? apps = await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
+      final List<dynamic>? apps =
+          await _channel.invokeMethod<List<dynamic>>('getInstalledApps');
       if (apps == null) return [];
       return apps.map((a) => Map<String, dynamic>.from(a as Map)).toList();
     } catch (e) {
@@ -120,7 +127,8 @@ class DeviceSystemService {
   Future<Uint8List?> getAppIcon(String packageName) async {
     if (!Platform.isAndroid) return null;
     try {
-      return await _channel.invokeMethod<Uint8List>('getAppIcon', {'packageName': packageName});
+      return await _channel
+          .invokeMethod<Uint8List>('getAppIcon', {'packageName': packageName});
     } catch (e) {
       debugPrint('Error fetching icon for $packageName: $e');
       return null;
@@ -148,7 +156,9 @@ class DeviceSystemService {
         {'type': type},
       );
       if (assets == null) return [];
-      return assets.map((a) => MediaAsset.fromMap(Map<String, dynamic>.from(a as Map))).toList();
+      return assets
+          .map((a) => MediaAsset.fromMap(Map<String, dynamic>.from(a as Map)))
+          .toList();
     } catch (e) {
       debugPrint('Error getting media assets ($type): $e');
       return [];
@@ -169,7 +179,8 @@ class DeviceSystemService {
   Future<bool> openBluetoothSettings() async {
     if (!Platform.isAndroid) return true;
     try {
-      return await _channel.invokeMethod<bool>('openBluetoothSettings') ?? false;
+      return await _channel.invokeMethod<bool>('openBluetoothSettings') ??
+          false;
     } catch (_) {
       return false;
     }

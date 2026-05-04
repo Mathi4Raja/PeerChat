@@ -1,21 +1,23 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
+import 'package:peerchat_secure/src/services/menu_settings_service.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../app_state.dart';
 import '../services/mesh_router_service.dart';
-import '../services/menu_settings_service.dart';
 import '../services/notification_sound_service.dart';
 import '../models/mesh_message.dart';
 import '../models/chat_payload.dart';
 import '../models/chat_message.dart';
+import '../models/location_payload.dart';
 import '../models/peer.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'direct_transfer_screen.dart';
+import 'location_map_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String? preselectedPeerId;
@@ -73,65 +75,78 @@ class _ChatScreenState extends State<ChatScreen> {
   final Map<String, GlobalKey> _messageKeys = {};
   String? _highlightedMessageId;
   Timer? _highlightResetTimer;
+  bool _hasKeys = false;
+  bool _isSecurelyConnected = false;
+
+  late AppState _appState;
+  late final VoidCallback _connectionUpdateListener;
 
   @override
   void initState() {
     super.initState();
     _selectedPeerId = widget.preselectedPeerId;
+    _appState = Provider.of<AppState>(context, listen: false);
+
     if (_selectedPeerId != null) {
       _loadMessages();
+      _updateConnectionState();
+      _appState.markChatAsRead(_selectedPeerId!);
     }
 
-    // Listen for incoming messages in real-time
-    final appState = Provider.of<AppState>(context, listen: false);
+    // Create a stable closure for the listener to ensure proper removal in dispose()
+    _connectionUpdateListener = () {
+      if (mounted) {
+        _updateConnectionState();
+      }
+    };
 
-    // Mark as read when opening
-    if (_selectedPeerId != null) {
-      appState.markChatAsRead(_selectedPeerId!);
-    }
+    _appState.addListener(_connectionUpdateListener);
 
     _incomingMessageSubscription =
-        appState.meshRouter.onMessageReceived.listen((chatMessage) {
-      // Only add if this message is from the currently selected peer
+        _appState.meshRouter.onMessageReceived.listen((chatMessage) {
       if (_selectedPeerId != null && chatMessage.peerId == _selectedPeerId) {
-        // Mark as read immediately since we are viewing it
-        appState.markChatAsRead(_selectedPeerId!);
+        _appState.markChatAsRead(_selectedPeerId!);
 
         setState(() {
           _messages.add(chatMessage);
           _sortMessagesChronologically();
         });
-        // Scroll to bottom
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (_scrollController.hasClients) {
-            _scrollController.animateTo(
-              _scrollController.position.maxScrollExtent,
-              duration: UiTimerConfig.chatAutoScrollAnimation,
-              curve: Curves.easeOut,
-            );
-          }
-        });
+        _scrollToBottom();
       }
     });
 
-    // Listen for local status updates (queue/routing transitions).
     _statusChangeSubscription =
-        appState.meshRouter.onMessageStatusChanged.listen((messageId) {
+        _appState.meshRouter.onMessageStatusChanged.listen((messageId) {
       if (_selectedPeerId == null || !mounted) return;
       _applyStatusUpdate(messageId);
     });
-
-    // File transfer feature removed.
   }
 
   @override
   void dispose() {
+    _appState.removeListener(_connectionUpdateListener);
     _incomingMessageSubscription?.cancel();
     _statusChangeSubscription?.cancel();
     _highlightResetTimer?.cancel();
     _messageController.dispose();
     _scrollController.dispose();
     super.dispose();
+  }
+
+  Future<void> _updateConnectionState() async {
+    if (_selectedPeerId == null || !mounted) return;
+    // Using cached _appState to avoid context lookup during disposal
+    final hasKeys = await _appState.meshRouter.hasPeerKeys(_selectedPeerId!);
+    final isSecurelyConnected =
+        _appState.meshRouter.isPeerSecurelyConnected(_selectedPeerId!);
+
+    if (mounted &&
+        (hasKeys != _hasKeys || isSecurelyConnected != _isSecurelyConnected)) {
+      setState(() {
+        _hasKeys = hasKeys;
+        _isSecurelyConnected = isSecurelyConnected;
+      });
+    }
   }
 
   Peer? _findPeerById(AppState appState, String peerId) {
@@ -290,10 +305,22 @@ class _ChatScreenState extends State<ChatScreen> {
       _isLoading = false;
     });
 
-    // Scroll to bottom
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+      }
+    });
+  }
+
+  void _scrollToBottom() {
+    if (!mounted) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_scrollController.hasClients) {
+        _scrollController.animateTo(
+          _scrollController.position.maxScrollExtent,
+          duration: UiTimerConfig.chatAutoScrollAnimation,
+          curve: Curves.easeOut,
+        );
       }
     });
   }
@@ -304,21 +331,16 @@ class _ChatScreenState extends State<ChatScreen> {
     final appState = Provider.of<AppState>(context, listen: false);
     final updated = await appState.db.getChatMessageById(messageId);
     if (updated == null || !mounted) return;
-    if (updated.peerId != _selectedPeerId) return;
 
     final existingIndex = _messages.indexWhere((m) => m.id == messageId);
     if (existingIndex == -1) {
-      setState(() {
-        _messages.add(updated);
-        _sortMessagesChronologically();
-      });
-      return;
-    }
-
-    final existing = _messages[existingIndex];
-    if (existing.status == updated.status &&
-        existing.isRead == updated.isRead &&
-        existing.hopCount == updated.hopCount) {
+      if (updated.peerId == _selectedPeerId) {
+        setState(() {
+          _messages.add(updated);
+          _sortMessagesChronologically();
+          _scrollToBottom();
+        });
+      }
       return;
     }
 
@@ -332,12 +354,37 @@ class _ChatScreenState extends State<ChatScreen> {
       return;
     }
 
+    await _sendComposedMessage(content: _messageController.text.trim());
+  }
+
+  Future<void> _sendCurrentLocation() async {
+    if (_selectedPeerId == null) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => LocationMapScreen(
+          isSelectionMode: true,
+          onLocationSelected: (location) {
+            _sendComposedMessage(
+              content: 'Location: ${location.coordinateLabel}',
+              location: location,
+            );
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _sendComposedMessage({
+    required String content,
+    LocationPayload? location,
+  }) async {
+    if (content.trim().isEmpty || _selectedPeerId == null) {
+      return;
+    }
+
     final appState = Provider.of<AppState>(context, listen: false);
-    final soundEnabled =
-        Provider.of<MenuSettingsController>(context, listen: false)
-            .notifications
-            .sound;
-    final content = _messageController.text.trim();
+    final trimmedContent = content.trim();
     final replyTarget = _replyingTo;
     final localPeerId = appState.publicKey ?? 'localpeer';
     final prefix = localPeerId.length >=
@@ -353,7 +400,8 @@ class _ChatScreenState extends State<ChatScreen> {
         ? null
         : (replyTarget.isSentByMe ? localPeerId : _selectedPeerId!);
     final payload = ChatPayload(
-      text: content,
+      text: trimmedContent,
+      location: location,
       replyToMessageId: replyTarget?.id,
       replyToContent:
           replyTarget == null ? null : _replySnippet(replyTarget.content),
@@ -361,25 +409,26 @@ class _ChatScreenState extends State<ChatScreen> {
     );
     final wireContent = payload.toWire();
 
-    // Create chat message
     final chatMessage = ChatMessage(
       id: messageId,
       peerId: _selectedPeerId!,
-      content: content,
+      content: trimmedContent,
       timestamp: DateTime.now().millisecondsSinceEpoch,
       isSentByMe: true,
       status: MessageStatus.sending,
-      isRead: true, // Sent messages are always read
+      isRead: true,
       replyToMessageId: replyTarget?.id,
       replyToContent:
           replyTarget == null ? null : _replySnippet(replyTarget.content),
       replyToPeerId: replyToPeerId,
+      locationLatitude: location?.latitude,
+      locationLongitude: location?.longitude,
+      locationAccuracyMeters: location?.accuracyMeters,
+      locationTimestamp: location?.timestamp,
     );
 
-    // Save to database
     await appState.db.insertChatMessage(chatMessage);
 
-    // Update UI
     setState(() {
       _messages.add(chatMessage);
       _sortMessagesChronologically();
@@ -387,18 +436,8 @@ class _ChatScreenState extends State<ChatScreen> {
       _replyingTo = null;
     });
 
-    // Scroll to bottom
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients) {
-        _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
-          duration: UiTimerConfig.chatAutoScrollAnimation,
-          curve: Curves.easeOut,
-        );
-      }
-    });
-
-    // Send via mesh router
+    _scrollToBottom();
+    
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: _selectedPeerId!,
       content: wireContent,
@@ -406,55 +445,22 @@ class _ChatScreenState extends State<ChatScreen> {
       messageId: messageId,
     );
 
-    // Update message status
-    MessageStatus newStatus;
-    switch (result) {
-      case SendResult.routed:
-        newStatus = MessageStatus.routing;
-        if (soundEnabled) {
-          unawaited(_notificationSoundService.playSentTick());
-        }
-        break;
-      case SendResult.noRoute:
-      case SendResult.queued:
-        newStatus = MessageStatus.queued;
-        break;
-      default:
-        newStatus = MessageStatus.failed;
+    if (result == SendResult.routed && mounted) {
+      // Check mounted before accessing Provider.of(context)
+      final soundEnabled =
+          Provider.of<MenuSettingsController>(context, listen: false)
+              .notifications
+              .sound;
+      if (soundEnabled && mounted) {
+        unawaited(_notificationSoundService.playSentTick());
+      }
     }
-
-    await appState.db.updateMessageStatus(
-      messageId,
-      newStatus,
-      clearHopCount: true,
-    );
-    if (!mounted) return;
-
-    final index = _messages.indexWhere((m) => m.id == messageId);
-    if (index == -1) return;
-    setState(() {
-      final old = _messages[index];
-      _messages[index] = ChatMessage(
-        id: old.id,
-        peerId: old.peerId,
-        content: old.content,
-        timestamp: old.timestamp,
-        isSentByMe: old.isSentByMe,
-        status: newStatus,
-        isRead: old.isRead,
-        hopCount: null,
-        replyToMessageId: old.replyToMessageId,
-        replyToContent: old.replyToContent,
-        replyToPeerId: old.replyToPeerId,
-      );
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
 
-    // Get peer name
     String peerName = 'Select a peer';
     String peerInitials = '?';
     if (_selectedPeerId != null) {
@@ -697,19 +703,22 @@ class _ChatScreenState extends State<ChatScreen> {
         return Column(
           children: [
             if (showDateHeader) _buildDateSeparator(message.timestamp),
-            Dismissible(
-              key: ValueKey('reply_${message.id}'),
-              direction: DismissDirection.startToEnd,
-              dismissThresholds: const {
-                DismissDirection.startToEnd: 0.25,
-              },
-              confirmDismiss: (_) async {
-                _startReply(message);
-                return false;
-              },
-              background: _buildReplySwipeBackground(),
-              child: _buildMessageBubble(message, appState),
-            ),
+            if (message.isSystem)
+              _buildSystemMessage(message)
+            else
+              Dismissible(
+                key: ValueKey('reply_${message.id}'),
+                direction: DismissDirection.startToEnd,
+                dismissThresholds: const {
+                  DismissDirection.startToEnd: 0.25,
+                },
+                confirmDismiss: (_) async {
+                  _startReply(message);
+                  return false;
+                },
+                background: _buildReplySwipeBackground(),
+                child: _buildMessageBubble(message, appState),
+              ),
           ],
         );
       },
@@ -862,6 +871,10 @@ class _ChatScreenState extends State<ChatScreen> {
                 ),
               ),
             ],
+            if (message.hasLocation) ...[
+              _buildLocationPreview(message, isMe),
+              const SizedBox(height: 8),
+            ],
             LayoutBuilder(
               builder: (context, constraints) {
                 final painter = TextPainter(
@@ -928,6 +941,110 @@ class _ChatScreenState extends State<ChatScreen> {
               ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLocationPreview(ChatMessage message, bool isMe) {
+    final location = LocationPayload(
+      latitude: message.locationLatitude!,
+      longitude: message.locationLongitude!,
+      accuracyMeters: message.locationAccuracyMeters,
+      timestamp: message.locationTimestamp ?? message.timestamp,
+    );
+    final previewColor =
+        isMe ? Colors.white.withValues(alpha: 0.16) : AppTheme.bgDeep;
+    final textColor = isMe ? Colors.white : AppTheme.textPrimary;
+    final mutedColor =
+        isMe ? Colors.white.withValues(alpha: 0.78) : AppTheme.textSecondary;
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => LocationMapScreen(location: location),
+            ),
+          );
+        },
+        child: Container(
+          width: 230,
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: previewColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isMe
+                  ? Colors.white.withValues(alpha: 0.18)
+                  : Colors.white.withValues(alpha: 0.07),
+            ),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                height: 92,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(9),
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1F2937), Color(0xFF0F766E)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                ),
+                child: Stack(
+                  children: [
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: _MapPreviewPainter(
+                          lineColor: Colors.white.withValues(alpha: 0.18),
+                        ),
+                      ),
+                    ),
+                    const Center(
+                      child: Icon(
+                        Icons.location_on_rounded,
+                        size: 34,
+                        color: AppTheme.warning,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Location',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: textColor,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                location.coordinateLabel,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  color: mutedColor,
+                ),
+              ),
+              if (location.accuracyMeters != null) ...[
+                const SizedBox(height: 2),
+                Text(
+                  'Accuracy ~${location.accuracyMeters!.round()} m',
+                  style: GoogleFonts.inter(
+                    fontSize: 10,
+                    color: mutedColor,
+                  ),
+                ),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -1117,18 +1234,14 @@ class _ChatScreenState extends State<ChatScreen> {
             Row(
               children: [
                 IconButton(
-                  onPressed: _selectedPeerId == null ? null : () {
-                    Navigator.of(context).push(
-                      MaterialPageRoute(
-                        builder: (_) => DirectTransferScreen(peerId: _selectedPeerId!),
-                      ),
-                    );
-                  },
+                  onPressed: (_selectedPeerId == null || !_hasKeys) ? null : _showAttachmentMenu,
                   icon: Icon(
-                    Icons.attach_file_rounded,
-                    color: _selectedPeerId == null ? AppTheme.textSecondary : AppTheme.primary,
+                    Icons.add_circle_outline_rounded,
+                    color: (_selectedPeerId == null || !_hasKeys)
+                        ? AppTheme.textSecondary
+                        : AppTheme.primary,
                   ),
-                  tooltip: 'Transfers & Add Files',
+                  tooltip: 'Attachments',
                 ),
                 Expanded(
                   child: Container(
@@ -1140,14 +1253,17 @@ class _ChatScreenState extends State<ChatScreen> {
                     ),
                     child: TextField(
                       controller: _messageController,
+                      enabled: _hasKeys,
                       style: GoogleFonts.inter(
                         fontSize: 14,
                         color: AppTheme.textPrimary,
                       ),
                       decoration: InputDecoration(
-                        hintText: _replyingTo == null
-                            ? 'Type a message...'
-                            : 'Type a reply...',
+                        hintText: !_hasKeys
+                            ? 'Connecting...'
+                            : (_replyingTo == null
+                                ? 'Type a message...'
+                                : 'Type a reply...'),
                         hintStyle: GoogleFonts.inter(
                           color: AppTheme.textSecondary,
                           fontSize: 14,
@@ -1180,7 +1296,7 @@ class _ChatScreenState extends State<ChatScreen> {
                   child: IconButton(
                     icon: const Icon(Icons.send_rounded,
                         color: AppTheme.bgDeep, size: 20),
-                    onPressed: _sendMessage,
+                    onPressed: (!_hasKeys || _messageController.text.trim().isEmpty) ? null : _sendMessage,
                   ),
                 ),
               ],
@@ -1188,6 +1304,96 @@ class _ChatScreenState extends State<ChatScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _showAttachmentMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          decoration: BoxDecoration(
+            color: AppTheme.bgCard,
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Grid of attachment options
+              GridView.count(
+                shrinkWrap: true,
+                crossAxisCount: 2,
+                mainAxisSpacing: 16,
+                crossAxisSpacing: 8,
+                physics: const NeverScrollableScrollPhysics(),
+                children: [
+                  _buildAttachmentItem(
+                    icon: Icons.insert_drive_file_rounded,
+                    label: 'Files',
+                    color: const Color(0xFF7F66FF),
+                    onTap: () {
+                      Navigator.pop(context);
+                      Navigator.of(this.context).push(
+                        MaterialPageRoute(
+                          builder: (_) => DirectTransferScreen(peerId: _selectedPeerId!),
+                        ),
+                      );
+                    },
+                  ),
+                  _buildAttachmentItem(
+                    icon: Icons.location_on_rounded,
+                    label: 'Location',
+                    color: const Color(0xFF2EBD59),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _sendCurrentLocation();
+                    },
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildAttachmentItem({
+    required IconData icon,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(30),
+          child: Container(
+            width: 52,
+            height: 52,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+              border: Border.all(color: color.withValues(alpha: 0.25), width: 1.5),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          label,
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            color: AppTheme.textSecondary,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+      ],
     );
   }
 
@@ -1295,5 +1501,73 @@ class _ChatScreenState extends State<ChatScreen> {
         );
       },
     );
+  }
+  Widget _buildSystemMessage(ChatMessage message) {
+    return Center(
+      child: Container(
+        margin: const EdgeInsets.symmetric(vertical: 12, horizontal: 24),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 16),
+        decoration: BoxDecoration(
+          color: AppTheme.textSecondary.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          message.content,
+          textAlign: TextAlign.center,
+          style: GoogleFonts.inter(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.textSecondary.withValues(alpha: 0.8),
+            letterSpacing: 0.2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPreviewPainter extends CustomPainter {
+  final Color lineColor;
+
+  const _MapPreviewPainter({required this.lineColor});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = lineColor
+      ..strokeWidth = 1;
+
+    for (var x = size.width / 4; x < size.width; x += size.width / 4) {
+      canvas.drawLine(Offset(x, 0), Offset(x, size.height), paint);
+    }
+    for (var y = size.height / 3; y < size.height; y += size.height / 3) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y), paint);
+    }
+
+    final roadPaint = Paint()
+      ..color = Colors.white.withValues(alpha: 0.34)
+      ..strokeWidth = 3
+      ..style = PaintingStyle.stroke
+      ..strokeCap = StrokeCap.round;
+    final path = Path()
+      ..moveTo(0, size.height * 0.72)
+      ..quadraticBezierTo(
+        size.width * 0.32,
+        size.height * 0.55,
+        size.width * 0.55,
+        size.height * 0.68,
+      )
+      ..quadraticBezierTo(
+        size.width * 0.78,
+        size.height * 0.82,
+        size.width,
+        size.height * 0.48,
+      );
+    canvas.drawPath(path, roadPaint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _MapPreviewPainter oldDelegate) {
+    return oldDelegate.lineColor != lineColor;
   }
 }

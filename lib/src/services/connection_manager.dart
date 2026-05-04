@@ -7,47 +7,10 @@ import '../models/handshake_message.dart';
 import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
-import '../config/limits_config.dart';
 import '../config/identity_ui_config.dart';
 import '../models/peer_connection_state.dart';
 import '../utils/state_guard.dart';
-import 'dart:collection';
-
-class _TaskQueue {
-  final Queue<_Task> _tasks = Queue();
-  bool _isProcessing = false;
-
-  Future<void> enqueue(Future<void> Function() action) {
-    final completer = Completer<void>();
-    _tasks.add(_Task(action, completer));
-    _process();
-    return completer.future;
-  }
-
-  Future<void> _process() async {
-    if (_isProcessing) return;
-    _isProcessing = true;
-    try {
-      while (_tasks.isNotEmpty) {
-        final task = _tasks.removeFirst();
-        try {
-          await task.action();
-          task.completer.complete();
-        } catch (e, st) {
-          task.completer.completeError(e, st);
-        }
-      }
-    } finally {
-      _isProcessing = false;
-    }
-  }
-}
-
-class _Task {
-  final Future<void> Function() action;
-  final Completer<void> completer;
-  _Task(this.action, this.completer);
-}
+import '../utils/task_queue.dart';
 
 /// Manages peer connections and ID mappings
 /// Maps transport IDs (MAC addresses, endpoint IDs) to cryptographic peer IDs
@@ -58,7 +21,7 @@ class ConnectionManager extends ChangeNotifier {
   // Map transport ID -> crypto peer ID
   final Map<String, String> _transportToCrypto = {};
 
-  final _TaskQueue _stateQueue = _TaskQueue();
+  final TaskQueue _stateQueue = TaskQueue();
 
   // Map crypto peer ID -> currently preferred transport ID
   final Map<String, String> _cryptoToTransport = {};
@@ -119,6 +82,13 @@ class ConnectionManager extends ChangeNotifier {
     return _handshakeComplete.contains(transportId);
   }
 
+  /// Check if a peer has at least one securely handshaked transport connection
+  bool isPeerSecurelyConnected(String cryptoPeerId) {
+    final transports = _peerTransports[cryptoPeerId];
+    if (transports == null || transports.isEmpty) return false;
+    return transports.any((tid) => _handshakeComplete.contains(tid));
+  }
+
   bool hasSentInitialHandshake(String transportId) {
     return _initialHandshakeSent.contains(transportId);
   }
@@ -141,12 +111,15 @@ class ConnectionManager extends ChangeNotifier {
   /// Handle new connection - send handshake
   Future<void> onConnectionEstablished(String transportId) async {
     return _stateQueue.enqueue(() async {
-      final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
-      StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.connecting);
+      final currentState =
+          _transportStates[transportId] ?? PeerConnectionState.disconnected;
+      StateGuard.transitionConnection(
+          transportId, currentState, PeerConnectionState.connecting);
       _transportStates[transportId] = PeerConnectionState.connecting;
-      
-      StateGuard.transitionConnection(transportId, PeerConnectionState.connecting, PeerConnectionState.handshake_pending);
-      _transportStates[transportId] = PeerConnectionState.handshake_pending;
+
+      StateGuard.transitionConnection(transportId,
+          PeerConnectionState.connecting, PeerConnectionState.handshakePending);
+      _transportStates[transportId] = PeerConnectionState.handshakePending;
 
       await sendHandshake(
         transportId: transportId,
@@ -184,60 +157,62 @@ class ConnectionManager extends ChangeNotifier {
   Future<void> handleHandshake(
       String transportId, HandshakeMessage handshake) async {
     return _stateQueue.enqueue(() async {
-    debugPrint(
-        'Received handshake from $transportId: ${handshake.displayName}');
-    final wasComplete = _handshakeComplete.contains(transportId);
-    final previousPeerId = _transportToCrypto[transportId];
+      debugPrint(
+          'Received handshake from $transportId: ${handshake.displayName}');
+      final wasComplete = _handshakeComplete.contains(transportId);
+      final previousPeerId = _transportToCrypto[transportId];
 
-    // Validate timestamp (not older than 5 minutes)
-    final now = DateTime.now().millisecondsSinceEpoch;
-    if (now - handshake.timestamp > ConnectionLimits.handshakeMaxAgeMs) {
-      debugPrint('Handshake rejected: too old');
-      return;
-    }
+      // Validate timestamp (not older than 5 minutes)
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - handshake.timestamp > ConnectionLimits.handshakeMaxAgeMs) {
+        debugPrint('Handshake rejected: too old');
+        return;
+      }
 
-    // Store mapping (update if transport ID changed) using peerId merge guard.
-    _mergeSessionsByPeerId(
-      peerId: handshake.peerId,
-      newTransportId: transportId,
-    );
-    
-    final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
-    // Allow transitioning to connected from handshake_pending or connecting (if we received it before we sent ours)
-    if (currentState != PeerConnectionState.connected) {
-      StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.connected);
-      _transportStates[transportId] = PeerConnectionState.connected;
-    }
+      // Store mapping (update if transport ID changed) using peerId merge guard.
+      _mergeSessionsByPeerId(
+        peerId: handshake.peerId,
+        newTransportId: transportId,
+      );
 
-    _peerRuntimeProfiles[handshake.peerId] =
-        runtimeProfileFromStorage(handshake.runtimeProfile);
+      final currentState =
+          _transportStates[transportId] ?? PeerConnectionState.disconnected;
+      // Allow transitioning to connected from handshakePending or connecting (if we received it before we sent ours)
+      if (currentState != PeerConnectionState.connected) {
+        StateGuard.transitionConnection(
+            transportId, currentState, PeerConnectionState.connected);
+        _transportStates[transportId] = PeerConnectionState.connected;
+      }
 
-    // Delete old peer entry with transport ID (if exists)
-    await _db.deletePeer(transportId);
+      _peerRuntimeProfiles[handshake.peerId] =
+          runtimeProfileFromStorage(handshake.runtimeProfile);
 
-    // Save peer to database with crypto ID and public key
-    final peer = Peer(
-      id: handshake.peerId, // Use crypto ID as primary ID
-      displayName: handshake.displayName,
-      address: transportId, // Store transport ID as address
-      lastSeen: DateTime.now().millisecondsSinceEpoch,
-      hasApp: true, // They have the app if they sent handshake
-    );
+      // Delete old peer entry with transport ID (if exists)
+      await _db.deletePeer(transportId);
 
-    await _db.upsertPeer(peer);
+      // Save peer to database with crypto ID and public key
+      final peer = Peer(
+        id: handshake.peerId, // Use crypto ID as primary ID
+        displayName: handshake.displayName,
+        address: transportId, // Store transport ID as address
+        lastSeen: DateTime.now().millisecondsSinceEpoch,
+        hasApp: true, // They have the app if they sent handshake
+      );
 
-    // Save both public keys
-    await _db.savePeerKeys(
-      peerId: handshake.peerId,
-      signingKey: handshake.publicKey,
-      encryptionKey: handshake.encryptionPublicKey,
-    );
+      await _db.upsertPeer(peer);
 
-    debugPrint('Handshake complete: ${handshake.peerId} <-> $transportId');
-    if (!wasComplete || previousPeerId != handshake.peerId) {
-      onHandshakeComplete?.call(handshake.peerId);
-    }
-    notifyListeners();
+      // Save both public keys
+      await _db.savePeerKeys(
+        peerId: handshake.peerId,
+        signingKey: handshake.publicKey,
+        encryptionKey: handshake.encryptionPublicKey,
+      );
+
+      debugPrint('Handshake complete: ${handshake.peerId} <-> $transportId');
+      if (!wasComplete || previousPeerId != handshake.peerId) {
+        onHandshakeComplete?.call(handshake.peerId);
+      }
+      notifyListeners();
     });
   }
 
@@ -274,73 +249,76 @@ class ConnectionManager extends ChangeNotifier {
   void onConnectionLost(String transportId) {
     _stateQueue.enqueue(() async {
       debugPrint('Connection lost with $transportId');
-      
-      final currentState = _transportStates[transportId] ?? PeerConnectionState.disconnected;
+
+      final currentState =
+          _transportStates[transportId] ?? PeerConnectionState.disconnected;
       if (currentState != PeerConnectionState.disconnected) {
         if (currentState == PeerConnectionState.connected) {
-           StateGuard.transitionConnection(transportId, currentState, PeerConnectionState.disconnecting);
-           _transportStates[transportId] = PeerConnectionState.disconnecting;
+          StateGuard.transitionConnection(
+              transportId, currentState, PeerConnectionState.disconnecting);
+          _transportStates[transportId] = PeerConnectionState.disconnecting;
         }
-        StateGuard.transitionConnection(transportId, _transportStates[transportId]!, PeerConnectionState.disconnected);
+        StateGuard.transitionConnection(transportId,
+            _transportStates[transportId]!, PeerConnectionState.disconnected);
         _transportStates[transportId] = PeerConnectionState.disconnected;
       }
 
-    final cryptoId = _transportToCrypto[transportId];
-    if (cryptoId != null) {
-      final transports = _peerTransports[cryptoId];
-      if (transports != null) {
-        transports.remove(transportId);
-        if (transports.isEmpty) {
-          _peerTransports.remove(cryptoId);
+      final cryptoId = _transportToCrypto[transportId];
+      if (cryptoId != null) {
+        final transports = _peerTransports[cryptoId];
+        if (transports != null) {
+          transports.remove(transportId);
+          if (transports.isEmpty) {
+            _peerTransports.remove(cryptoId);
+          }
         }
+        _updatePreferredTransportForPeer(cryptoId);
       }
-      _updatePreferredTransportForPeer(cryptoId);
-    }
-    _transportToCrypto.remove(transportId);
-    _handshakeComplete.remove(transportId);
-    _initialHandshakeSent.remove(transportId);
+      _transportToCrypto.remove(transportId);
+      _handshakeComplete.remove(transportId);
+      _initialHandshakeSent.remove(transportId);
 
-    notifyListeners();
+      notifyListeners();
     });
   }
 
   /// Update peer's lastSeen timestamp (call when receiving data/keepalives)
   Future<void> updatePeerActivity(String transportId) async {
     return _stateQueue.enqueue(() async {
-    final cryptoId = _transportToCrypto[transportId];
-    if (cryptoId == null) {
-      debugPrint(
-          '⚠️ updatePeerActivity: No crypto ID for transport $transportId');
-      return;
-    }
+      final cryptoId = _transportToCrypto[transportId];
+      if (cryptoId == null) {
+        debugPrint(
+            '⚠️ updatePeerActivity: No crypto ID for transport $transportId');
+        return;
+      }
 
-    // Get all peers and find the one we need to update
-    final peers = await _db.allPeers();
-    final peer = peers.where((p) => p.id == cryptoId).firstOrNull;
+      // Get all peers and find the one we need to update
+      final peers = await _db.allPeers();
+      final peer = peers.where((p) => p.id == cryptoId).firstOrNull;
 
-    if (peer != null) {
-      final now = DateTime.now().millisecondsSinceEpoch;
-      final shortPeerId = peer.id.length >= IdentityUiConfig.shortIdLength
-          ? peer.id.substring(0, IdentityUiConfig.shortIdLength)
-          : peer.id;
-      final updatedPeer = Peer(
-        id: peer.id,
-        displayName: peer.displayName,
-        address: peer.address,
-        lastSeen: now,
-        hasApp: peer.hasApp,
-      );
-      await _db.upsertPeer(updatedPeer);
-      debugPrint(
-          '✓ Updated peer activity: ${peer.displayName} ($shortPeerId) lastSeen=$now');
-      notifyListeners(); // Notify listeners so AppState can react
-    } else {
-      final shortCryptoId = cryptoId.length >= IdentityUiConfig.shortIdLength
-          ? cryptoId.substring(0, IdentityUiConfig.shortIdLength)
-          : cryptoId;
-      debugPrint(
-          '⚠️ updatePeerActivity: Peer not found for crypto ID $shortCryptoId');
-    }
+      if (peer != null) {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final shortPeerId = peer.id.length >= IdentityUiConfig.shortIdLength
+            ? peer.id.substring(0, IdentityUiConfig.shortIdLength)
+            : peer.id;
+        final updatedPeer = Peer(
+          id: peer.id,
+          displayName: peer.displayName,
+          address: peer.address,
+          lastSeen: now,
+          hasApp: peer.hasApp,
+        );
+        await _db.upsertPeer(updatedPeer);
+        debugPrint(
+            '✓ Updated peer activity: ${peer.displayName} ($shortPeerId) lastSeen=$now');
+        notifyListeners(); // Notify listeners so AppState can react
+      } else {
+        final shortCryptoId = cryptoId.length >= IdentityUiConfig.shortIdLength
+            ? cryptoId.substring(0, IdentityUiConfig.shortIdLength)
+            : cryptoId;
+        debugPrint(
+            '⚠️ updatePeerActivity: Peer not found for crypto ID $shortCryptoId');
+      }
     });
   }
 

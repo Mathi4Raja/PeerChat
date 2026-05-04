@@ -1,20 +1,26 @@
 import 'dart:convert';
 
+import 'location_payload.dart';
+
 class ChatPayload {
   static const String _wireKind = 'pc_chat';
   static const int _wireVersion = 1;
 
   final String text;
+  final LocationPayload? location;
   final String? replyToMessageId;
   final String? replyToContent;
   final String? replyToPeerId;
 
   const ChatPayload({
     required this.text,
+    this.location,
     this.replyToMessageId,
     this.replyToContent,
     this.replyToPeerId,
   });
+
+  bool get hasLocation => location != null;
 
   bool get hasReply =>
       (replyToMessageId != null && replyToMessageId!.isNotEmpty) ||
@@ -22,7 +28,7 @@ class ChatPayload {
       (replyToPeerId != null && replyToPeerId!.isNotEmpty);
 
   String toWire() {
-    if (!hasReply) return text;
+    if (!hasReply && !hasLocation) return text;
 
     final reply = <String, Object?>{
       if (replyToMessageId != null && replyToMessageId!.isNotEmpty)
@@ -38,6 +44,7 @@ class ChatPayload {
       'v': _wireVersion,
       't': text,
       if (reply.isNotEmpty) 'r': reply,
+      if (location != null) 'loc': location!.toWireMap(),
     };
     return jsonEncode(payload);
   }
@@ -61,6 +68,7 @@ class ChatPayload {
       String? replyToMessageId;
       String? replyToContent;
       String? replyToPeerId;
+      final location = LocationPayload.fromWireValue(map['loc']);
       final reply = map['r'];
       if (reply is Map) {
         replyToMessageId = _readNonEmptyString(reply['id']);
@@ -70,6 +78,7 @@ class ChatPayload {
 
       return ChatPayload(
         text: text,
+        location: location,
         replyToMessageId: replyToMessageId,
         replyToContent: replyToContent,
         replyToPeerId: replyToPeerId,

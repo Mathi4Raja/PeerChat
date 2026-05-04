@@ -26,7 +26,6 @@ class RouteManager {
 
   final StreamController<String> _routeUpdateController =
       StreamController<String>.broadcast();
-  Stream<String> get onRouteFound => _routeUpdateController.stream;
   Stream<String> get onRouteUpdated => _routeUpdateController.stream;
 
   RouteManager(
@@ -171,35 +170,17 @@ class RouteManager {
       messageId: _uuid.v4(),
       type: MessageType.routeRequest,
       senderPeerId: _cryptoService.localPeerId,
-      recipientPeerId: destinationPeerId, // Target of the discovery
+      recipientPeerId: destinationPeerId,
       ttl: MessageLimits.routeControlTtl,
       hopCount: 0,
       priority: MessagePriority.high,
       timestamp: timestamp,
-      signature: Uint8List(
-          0), // Signature logic for wrapper might be redundant if inner is signed
-      encryptedContent: request.toBytes(), // Payload is the request
+      signature: Uint8List(0),
+      encryptedContent: request.toBytes(),
     );
 
-    // We haven't signed the wrapper properly here (it needs to be signed).
-    // A better approach might be to send the payload directly if Transport handles packaging,
-    // BUT MeshRouterService.receiveMessage expects MeshMessage.fromBytes.
-    // So we MUST send a MeshMessage.
-
-    // Sign the wrapper
-    final wrapperSignature =
-        _cryptoService.signMessage(meshMessage.toBytesForSigning());
-    final signedWrapper = MeshMessage(
-      messageId: meshMessage.messageId,
-      type: MessageType.routeRequest,
-      senderPeerId: meshMessage.senderPeerId,
-      recipientPeerId: meshMessage.recipientPeerId,
-      ttl: meshMessage.ttl,
-      hopCount: meshMessage.hopCount,
-      priority: meshMessage.priority,
-      timestamp: meshMessage.timestamp,
-      encryptedContent: meshMessage.encryptedContent,
-      signature: wrapperSignature,
+    final signedWrapper = meshMessage.copyWithSignature(
+      _cryptoService.signMessage(meshMessage.toBytesForSigning()),
     );
 
     final messageBytes = signedWrapper.toBytes();

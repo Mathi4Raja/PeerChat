@@ -26,17 +26,21 @@ class FileTransferService {
   // Active sessions in memory
   final Map<String, FileTransferSession> _activeSessions = {};
   StreamSubscription? _rawMessageSub;
-  
+
   final _progressController = StreamController<FileTransferSession>.broadcast();
   Stream<FileTransferSession> get onProgress => _progressController.stream;
 
   final _requestController = StreamController<FileTransferSession>.broadcast();
-  Stream<FileTransferSession> get onIncomingRequest => _requestController.stream;
+  Stream<FileTransferSession> get onIncomingRequest =>
+      _requestController.stream;
 
-  final _completedController = StreamController<FileTransferSession>.broadcast();
-  Stream<FileTransferSession> get onTransferCompleted => _completedController.stream;
+  final _completedController =
+      StreamController<FileTransferSession>.broadcast();
+  Stream<FileTransferSession> get onTransferCompleted =>
+      _completedController.stream;
 
-  Map<String, FileTransferSession> get activeSessions => Map.unmodifiable(_activeSessions);
+  Map<String, FileTransferSession> get activeSessions =>
+      Map.unmodifiable(_activeSessions);
 
   FileTransferService(this._db, this._router) {
     _listenToMeshPackets();
@@ -62,15 +66,16 @@ class FileTransferService {
     if (session == null) return;
 
     session.progress = event.progress;
-    
+
     if (event.isCompleted) {
       session.status = FileTransferStatus.completed;
       _addEvent('Native transfer completed: ${event.fileId}');
-      
+
       if (session.isIncoming && event.localPath != null) {
         unawaited(_finalizeNativeFile(session, event.localPath!));
       } else if (!session.isIncoming) {
-        unawaited(_db.updateFileTransferStatus(session.fileId, FileTransferStatus.completed.index));
+        unawaited(_db.updateFileTransferStatus(
+            session.fileId, FileTransferStatus.completed.index));
         _completedController.add(session);
       }
     } else {
@@ -80,14 +85,15 @@ class FileTransferService {
     _progressController.add(session);
   }
 
-  Future<void> _finalizeNativeFile(FileTransferSession session, String tempPath) async {
+  Future<void> _finalizeNativeFile(
+      FileTransferSession session, String tempPath) async {
     try {
       final dbRow = await _db.getFileTransfer(session.fileId);
       if (dbRow == null || dbRow['file_path'] == null) return;
 
       final targetPath = dbRow['file_path'];
       final targetFile = File(targetPath);
-      
+
       // Ensure directory exists
       await targetFile.parent.create(recursive: true);
 
@@ -95,12 +101,14 @@ class FileTransferService {
       try {
         await File(tempPath).rename(targetPath);
       } catch (e) {
-        AppLogger.print('Rename failed (possibly cross-partition), falling back to copy/delete: $e');
+        AppLogger.print(
+            'Rename failed (possibly cross-partition), falling back to copy/delete: $e');
         await File(tempPath).copy(targetPath);
         await File(tempPath).delete();
       }
-      
-      await _db.updateFileTransferStatus(session.fileId, FileTransferStatus.completed.index);
+
+      await _db.updateFileTransferStatus(
+          session.fileId, FileTransferStatus.completed.index);
       _completedController.add(session);
       _addEvent('Moved native file to target: $targetPath');
     } catch (e) {
@@ -121,8 +129,7 @@ class FileTransferService {
 
       final decrypted = await _router.messageManager.decryptBytes(message);
       if (decrypted == null) {
-        _addEvent(
-            'Dropping transfer packet from $senderId: decryption failed');
+        _addEvent('Dropping transfer packet from $senderId: decryption failed');
         return;
       }
 
@@ -167,7 +174,8 @@ class FileTransferService {
         (kind.startsWith('CHUNK#') || kind.startsWith('ACK#')) &&
             result == SendResult.routed;
     if (!noisyDataPacket) {
-      _addEvent('Packet out: type=$kind fileId=$fileId to=$peerId result=$result');
+      _addEvent(
+          'Packet out: type=$kind fileId=$fileId to=$peerId result=$result');
     }
     if (result == SendResult.failed) {
       AppLogger.w(
@@ -175,7 +183,6 @@ class FileTransferService {
     }
     return result;
   }
-
 
   // --- Bitmask Helpers ---
 
@@ -207,12 +214,11 @@ class FileTransferService {
     final fileName = p.basename(filePath);
     final fileSize = await file.length();
 
-
     final fileId = _uuid.v4();
-    
+
     // Hash file for verification
     final hash = (await sha256.bind(file.openRead()).last).toString();
-    
+
     final meta = FileMetadata(
       fileId: fileId,
       name: fileName,
@@ -229,7 +235,7 @@ class FileTransferService {
       status: FileTransferStatus.requesting,
       isIncoming: false,
     );
-    
+
     _activeSessions[fileId] = session;
     _addEvent(
         'Start transfer: fileId=$fileId peer=$peerId name=$fileName size=$fileSize');
@@ -264,7 +270,8 @@ class FileTransferService {
     );
     if (result == SendResult.failed) {
       session.status = FileTransferStatus.failed;
-      await _db.updateFileTransferStatus(fileId, FileTransferStatus.failed.index);
+      await _db.updateFileTransferStatus(
+          fileId, FileTransferStatus.failed.index);
       _progressController.add(session);
       _addEvent('Transfer start failed: unable to send META for $fileId');
     }
@@ -272,23 +279,26 @@ class FileTransferService {
 
   // --- Receiver Logic ---
 
-  Future<void> _handleIncomingMeta(String senderId, FileTransferPayload payload) async {
+  Future<void> _handleIncomingMeta(
+      String senderId, FileTransferPayload payload) async {
     final meta = FileMetadata.fromMap(jsonDecode(utf8.decode(payload.data)));
     _addEvent(
         'META in: fileId=${meta.fileId} from=$senderId name=${meta.name} size=${meta.size}');
-    
+
     // Security: Sanitize filename and validate metadata
     final sanitizedName = _sanitizeFileName(meta.name);
     // Native transfer doesn't use chunks, so we just validate basic bounds
     if (meta.size <= 0) {
-      _addEvent('Rejecting META for ${meta.fileId}: invalid size (${meta.size})');
+      _addEvent(
+          'Rejecting META for ${meta.fileId}: invalid size (${meta.size})');
       return;
     }
 
     var sessionRow = await _db.getFileTransfer(meta.fileId);
 
     if (sessionRow == null) {
-      final uniquePath = await _getUniqueFilePath(await getTargetDir(false), sanitizedName);
+      final uniquePath =
+          await _getUniqueFilePath(await getTargetDir(false), sanitizedName);
 
       final session = FileTransferSession(
         fileId: meta.fileId,
@@ -297,11 +307,11 @@ class FileTransferService {
         status: FileTransferStatus.requesting,
         isIncoming: true,
       );
-      
+
       _activeSessions[meta.fileId] = session;
       _requestController.add(session);
       _addEvent('Incoming transfer request created for ${meta.fileId}');
-      
+
       await _db.insertFileTransfer({
         'id': meta.fileId,
         'peer_id': senderId,
@@ -330,7 +340,8 @@ class FileTransferService {
 
   // --- Control & Sync ---
 
-  Future<void> _handleControl(String senderId, FileTransferPayload payload) async {
+  Future<void> _handleControl(
+      String senderId, FileTransferPayload payload) async {
     final session = _activeSessions[payload.fileId];
     if (session == null) {
       _addEvent(
@@ -349,7 +360,8 @@ class FileTransferService {
     }
 
     final controlType = FileTransferControl.values[controlIndex];
-    _addEvent('CONTROL in: fileId=${payload.fileId} from=$senderId type=$controlType');
+    _addEvent(
+        'CONTROL in: fileId=${payload.fileId} from=$senderId type=$controlType');
     switch (controlType) {
       case FileTransferControl.accept:
         session.status = FileTransferStatus.accepted;
@@ -392,10 +404,11 @@ class FileTransferService {
       _addEvent('acceptTransfer ignored: unknown session $fileId');
       return;
     }
-    
+
     session.status = FileTransferStatus.accepted;
-    await _db.updateFileTransferStatus(fileId, FileTransferStatus.accepted.index);
-    
+    await _db.updateFileTransferStatus(
+        fileId, FileTransferStatus.accepted.index);
+
     final payload = FileTransferPayload(
       fileId: fileId,
       typeIndicator: FileTransferPayload.typeControl,
@@ -420,10 +433,11 @@ class FileTransferService {
       _addEvent('rejectTransfer ignored: unknown session $fileId');
       return;
     }
-    
+
     session.status = FileTransferStatus.rejected;
-    await _db.updateFileTransferStatus(fileId, FileTransferStatus.rejected.index);
-    
+    await _db.updateFileTransferStatus(
+        fileId, FileTransferStatus.rejected.index);
+
     final payload = FileTransferPayload(
       fileId: fileId,
       typeIndicator: FileTransferPayload.typeControl,
@@ -453,14 +467,12 @@ class FileTransferService {
     return targetPath;
   }
 
-
   String _sanitizeFileName(String name) {
     // Prevent path traversal and remove risky characters
     var sanitized = p.basename(name);
     sanitized = sanitized.replaceAll(RegExp(r'[<>:"/\\|?*]'), '_');
     return sanitized;
   }
-
 
   void _addEvent(String msg) {
     AppLogger.print("[FileTransfer] $msg");
@@ -485,7 +497,9 @@ class FileTransferService {
       }
 
       final dirs = await ExternalPath.getExternalStorageDirectories();
-      final root = (dirs != null && dirs.isNotEmpty) ? dirs.first : '/storage/emulated/0';
+      final root = (dirs != null && dirs.isNotEmpty)
+          ? dirs.first
+          : '/storage/emulated/0';
       final dir = Directory(p.join(root, 'PeerChat', subDir));
       if (!await dir.exists()) {
         await dir.create(recursive: true);
@@ -524,14 +538,15 @@ class FileTransferService {
     }
 
     session.status = FileTransferStatus.aborted;
-    await _db.updateFileTransferStatus(fileId, FileTransferStatus.aborted.index);
-    
+    await _db.updateFileTransferStatus(
+        fileId, FileTransferStatus.aborted.index);
+
     final payload = FileTransferPayload(
       fileId: fileId,
       typeIndicator: FileTransferPayload.typeControl,
       data: Uint8List(1)..[0] = FileTransferControl.abort.index,
     );
-    
+
     await _sendTransferPayload(
       peerId: session.peerId,
       fileId: fileId,
@@ -571,7 +586,7 @@ class FileTransferService {
     );
 
     _activeSessions[fileId] = session;
-    
+
     // Send resume request
     final payload = FileTransferPayload(
       fileId: fileId,
@@ -602,9 +617,11 @@ class FileTransferService {
   }
 
   void _processQueue() {
-    int activeCount = _activeSessions.values.where((s) => 
-      s.status == FileTransferStatus.transferring || 
-      s.status == FileTransferStatus.accepted).length;
+    int activeCount = _activeSessions.values
+        .where((s) =>
+            s.status == FileTransferStatus.transferring ||
+            s.status == FileTransferStatus.accepted)
+        .length;
 
     while (activeCount < maxConcurrentTransfers && _transferQueue.isNotEmpty) {
       final fileId = _transferQueue.removeAt(0);
@@ -635,11 +652,11 @@ class FileTransferService {
 
     if (!success) {
       session.status = FileTransferStatus.failed;
-      await _db.updateFileTransferStatus(session.fileId, FileTransferStatus.failed.index);
+      await _db.updateFileTransferStatus(
+          session.fileId, FileTransferStatus.failed.index);
       _progressController.add(session);
     }
   }
-
 
   Future<void> deleteTransfer(String fileId) async {
     final session = _activeSessions.remove(fileId);
@@ -691,7 +708,7 @@ class FileTransferSession {
 
     if (delta >= 1000) {
       speedMBps = (bytesSinceLastTick / 1024 / 1024) / (delta / 1000);
-      
+
       // Calculate ETA
       if (speedMBps > 0) {
         final remainingBytes = metadata.size * (1.0 - progress);

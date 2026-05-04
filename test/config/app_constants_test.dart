@@ -13,6 +13,7 @@ void main() {
     expect(ProtocolConfig.keepAlivePacketLength, 2);
     expect(ProtocolConfig.keepAlivePacket, [0xFF, 0xFF]);
     expect(ProtocolConfig.keepAliveByte, 0xFF);
+    expect(ProtocolConfig.bluetoothSerialServiceUuid, isNotEmpty);
   });
 
   test('identity and limit constants remain sane', () {
@@ -33,4 +34,3 @@ void main() {
     expect(DeviceHeuristicConfig.nonMeshAudioKeywords, isNotEmpty);
   });
 }
-

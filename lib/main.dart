@@ -9,8 +9,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:peerchat_secure/firebase_options.dart';
 import 'package:provider/provider.dart';
 import 'src/app_state.dart';
 import 'src/screens/first_sign_in_screen.dart';
@@ -22,14 +20,6 @@ import 'src/theme.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  try {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  } catch (e) {
-    debugPrint('Firebase initialization failed: $e');
-  }
-
   GoogleFonts.config.allowRuntimeFetching = false;
 
   // Immersive dark status/nav bars
@@ -128,15 +118,14 @@ class _BootstrapAppState extends State<BootstrapApp> {
   }
 
   Future<void> _completeFirstSignIn(
-    FirstSignInMethod method, {
-    String? email,
-  }) async {
+    FirstSignInMethod method,
+  ) async {
     if (_isLoading) return;
     setState(() {
       _isLoading = true;
     });
     try {
-      await _firstSignInService.complete(method: method, email: email);
+      await _firstSignInService.complete(method: method);
       await _initializeAppState();
     } catch (e, stack) {
       debugPrint('FATAL_CRASH: $e');

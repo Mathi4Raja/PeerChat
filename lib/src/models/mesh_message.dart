@@ -9,6 +9,7 @@ enum MessageType {
   connectionUpgradeRequest,
   connectionUpgradeResponse,
   fileTransfer,
+  identityUpdate,
 }
 
 

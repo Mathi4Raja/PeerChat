@@ -2,11 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:provider/provider.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import '../app_state.dart';
 import '../config/identity_ui_config.dart';
 import '../models/peer.dart';
 import '../theme.dart';
+import 'package:barcode_scan2/barcode_scan2.dart';
 
 class AddPeerScreen extends StatefulWidget {
   const AddPeerScreen({super.key});
@@ -17,93 +17,16 @@ class AddPeerScreen extends StatefulWidget {
 
 class _AddPeerScreenState extends State<AddPeerScreen> {
   final TextEditingController _peerKeyController = TextEditingController();
-  bool _showScanner = false;
-  final MobileScannerController _scannerController = MobileScannerController();
 
   @override
   void dispose() {
     _peerKeyController.dispose();
-    _scannerController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final appState = Provider.of<AppState>(context);
-
-    if (_showScanner) {
-      return Scaffold(
-        appBar: AppBar(
-          title: Text(
-            'Scan QR Code',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w700),
-          ),
-          leading: IconButton(
-            icon: const Icon(Icons.close_rounded),
-            onPressed: () {
-              setState(() {
-                _showScanner = false;
-              });
-            },
-          ),
-        ),
-        body: Stack(
-          children: [
-            MobileScanner(
-              controller: _scannerController,
-              onDetect: (capture) {
-                final List<Barcode> barcodes = capture.barcodes;
-                for (final barcode in barcodes) {
-                  if (barcode.rawValue != null) {
-                    final scannedKey = barcode.rawValue!;
-                    _handleScannedKey(scannedKey, appState);
-                    break;
-                  }
-                }
-              },
-            ),
-            // Overlay with crosshair
-            Center(
-              child: Container(
-                width: 250,
-                height: 250,
-                decoration: BoxDecoration(
-                  border: Border.all(
-                    color: AppTheme.primary.withValues(alpha: 0.6),
-                    width: 2,
-                  ),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-              ),
-            ),
-            // Bottom hint
-            Positioned(
-              bottom: 40,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-                  decoration: BoxDecoration(
-                    color: AppTheme.bgDeep.withValues(alpha: 0.8),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    'Point camera at peer\'s QR code',
-                    style: GoogleFonts.inter(
-                      color: AppTheme.textPrimary,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      );
-    }
 
     return Scaffold(
       appBar: AppBar(
@@ -120,7 +43,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Text(
-                  'Add a peer by scanning their QR code or entering their public key',
+                  'Add a peer by scanning their QR code or pasting their public key below.',
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     color: AppTheme.textSecondary,
@@ -129,83 +52,29 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // ─── Scan QR Button ───
-                Container(
-                  decoration: BoxDecoration(
-                    gradient: AppTheme.primaryGradient,
-                    borderRadius: BorderRadius.circular(14),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppTheme.primary.withValues(alpha: 0.3),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
-                      ),
-                    ],
-                  ),
-                  child: Material(
-                    color: Colors.transparent,
-                    child: InkWell(
-                      borderRadius: BorderRadius.circular(14),
-                      onTap: () {
-                        setState(() {
-                          _showScanner = true;
-                        });
-                      },
-                      child: Padding(
-                        padding: const EdgeInsets.all(16),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.qr_code_scanner_rounded,
-                                color: AppTheme.bgDeep),
-                            const SizedBox(width: 10),
-                            Text(
-                              'Scan QR Code',
-                              style: GoogleFonts.inter(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: AppTheme.bgDeep,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                // ─── QR Scanner Button ───
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () async {
+                      try {
+                        final result = await BarcodeScanner.scan();
+                        if (result.type == ResultType.Barcode && result.rawContent.isNotEmpty) {
+                          _handleScannedKey(result.rawContent, appState);
+                        }
+                      } catch (e) {
+                        _showMessage('Error opening scanner', isError: true);
+                      }
+                    },
+                    icon: const Icon(Icons.qr_code_scanner_rounded),
+                    label: const Text('Scan Peer QR'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 14),
                     ),
                   ),
                 ),
-
-                const SizedBox(height: 28),
-
-                // ─── Divider ───
-                Row(
-                  children: [
-                    Expanded(
-                      child: Container(
-                        height: 1,
-                        color: Colors.white.withValues(alpha: 0.06),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 16),
-                      child: Text(
-                        'OR',
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                          color: AppTheme.textSecondary,
-                          letterSpacing: 1,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Container(
-                        height: 1,
-                        color: Colors.white.withValues(alpha: 0.06),
-                      ),
-                    ),
-                  ],
-                ),
-
                 const SizedBox(height: 20),
 
                 // ─── Manual Key Entry ───
@@ -339,7 +208,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
       displayName: IdentityUiConfig.manualAddedPeerLabel,
       address: 'manual',
       lastSeen: DateTime.now().millisecondsSinceEpoch,
-      hasApp: true, // Assume they have the app if sharing QR code
+      hasApp: true,
     );
 
     // Save to database
@@ -350,14 +219,7 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
 
     _showMessage('Peer added successfully!');
 
-    // Close scanner or clear text field
-    if (_showScanner) {
-      setState(() {
-        _showScanner = false;
-      });
-    } else {
-      _peerKeyController.clear();
-    }
+    _peerKeyController.clear();
   }
 
   void _showMessage(String message, {bool isError = false}) {
@@ -369,4 +231,3 @@ class _AddPeerScreenState extends State<AddPeerScreen> {
     );
   }
 }
-

@@ -122,7 +122,8 @@ class MenuSettingsController extends ChangeNotifier {
   /// Set (or clear) the custom username.
   /// [username] — pass null/empty to revert to generated name.
   /// [generatedFallback] — the key-derived name used when username is null.
-  Future<void> setUsername(String? username, {required String generatedFallback}) async {
+  Future<void> setUsername(String? username,
+      {required String generatedFallback}) async {
     final trimmed = username?.trim();
     _username = (trimmed == null || trimmed.isEmpty) ? null : trimmed;
     notifyListeners();

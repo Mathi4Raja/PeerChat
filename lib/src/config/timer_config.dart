@@ -70,10 +70,10 @@ class BluetoothTimerConfig {
 /// WiFi Direct transport timers.
 class WiFiTimerConfig {
   /// Period for keep-alive heartbeats on active WiFi Direct links.
-  static const Duration keepAliveInterval = Duration(seconds: 8);
+  static const Duration keepAliveInterval = Duration(seconds: 15);
 
   /// Max duration allowed for a WiFi Direct connection attempt.
-  static const Duration connectionTimeout = Duration(seconds: 24);
+  static const Duration connectionTimeout = Duration(seconds: 60);
 
   /// Cooldown after a failed/disconnected link before reconnect attempt.
   static const Duration reconnectCooldown = Duration(seconds: 5);
@@ -91,7 +91,7 @@ class WiFiTimerConfig {
   static const Duration reconnectAttemptResetThreshold = Duration(minutes: 5);
 
   /// Interval for transport health probes/maintenance checks.
-  static const Duration healthCheckInterval = Duration(seconds: 10);
+  static const Duration healthCheckInterval = Duration(seconds: 30);
 
   /// Small delay before restarting WiFi Direct stack components.
   static const Duration restartDelay = Duration(milliseconds: 500);
@@ -104,12 +104,12 @@ class WiFiTimerConfig {
 
   /// How long a higher-name peer waits for the other side to initiate before
   /// falling back to self-initiation.
-  static const Duration initiatorWaitTimeout = Duration(seconds: 4);
+  static const Duration initiatorWaitTimeout = Duration(milliseconds: 2800);
 
   /// Minimum idle time since last endpoint discovery before proactive restart.
   /// Prevents churn while discovery events are still actively coming in.
   static const Duration endpointDiscoveryIdleBeforeRestart =
-      Duration(seconds: 45);
+      Duration(seconds: 35);
 
   /// Delay before sending fallback handshake when Nearby reports
   /// STATUS_ALREADY_CONNECTED_TO_ENDPOINT.
@@ -118,12 +118,12 @@ class WiFiTimerConfig {
 
   /// Maximum quick retries per endpoint before waiting for fresh discovery
   /// signals.
-  static const int connectionFailureMaxQuickRetries = 2;
+  static const int connectionFailureMaxQuickRetries = 3;
   static const int maxQuickRetries = connectionFailureMaxQuickRetries;
 
   /// Base delay for quick retry after transient requestConnection failures.
   static const Duration connectionFailureRetryInitialDelay =
-      Duration(milliseconds: 1200);
+      Duration(milliseconds: 800);
   static const Duration quickRetryDelay = connectionFailureRetryInitialDelay;
 }
 
@@ -142,7 +142,7 @@ class DiscoveryTimerConfig {
   static const Duration fastBurstActiveScanDuration = Duration(seconds: 12);
 
   /// Gap between scan cycles during fast discovery burst.
-  static const Duration fastBurstRestartInterval = Duration(seconds: 1);
+  static const Duration fastBurstRestartInterval = Duration(seconds: 3);
 
   static Duration nextScanBase({
     required RuntimeProfile runtimeProfile,

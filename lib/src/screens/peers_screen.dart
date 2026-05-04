@@ -256,7 +256,7 @@ class _PeerTile extends StatelessWidget {
       statusLabel = 'Active';
       statusColor = AppTheme.online;
     } else if (isVerified) {
-      statusLabel = 'Installed';
+      statusLabel = 'Connecting...';
       statusColor = AppTheme.accent;
     }
 
@@ -272,7 +272,7 @@ class _PeerTile extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: isVerified
+        onTap: isConnected
             ? () {
                 Navigator.of(context).push(
                   ChatScreen.route(preselectedPeerId: peer.id),

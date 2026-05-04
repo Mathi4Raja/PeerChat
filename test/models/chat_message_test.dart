@@ -17,6 +17,10 @@ void main() {
         replyToMessageId: 'r1',
         replyToContent: 'quoted',
         replyToPeerId: 'p1',
+        locationLatitude: 12.9,
+        locationLongitude: 77.5,
+        locationAccuracyMeters: 20,
+        locationTimestamp: 99,
       );
 
       final from = ChatMessage.fromMap(msg.toMap());
@@ -27,6 +31,11 @@ void main() {
       expect(from.replyToMessageId, 'r1');
       expect(from.replyToContent, 'quoted');
       expect(from.replyToPeerId, 'p1');
+      expect(from.locationLatitude, 12.9);
+      expect(from.locationLongitude, 77.5);
+      expect(from.locationAccuracyMeters, 20);
+      expect(from.locationTimestamp, 99);
+      expect(from.hasLocation, isTrue);
     });
 
     test('fromMap defaults read state and normalizes numeric hopCount', () {

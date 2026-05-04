@@ -1,32 +1,23 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
-import 'package:flutter_blue_classic/flutter_blue_classic.dart';
+import 'package:bluetooth_classic/bluetooth_classic.dart';
+import 'package:bluetooth_classic/models/device.dart';
 import 'package:permission_handler/permission_handler.dart';
 import '../config/timer_config.dart';
 import '../config/protocol_config.dart';
 import 'transport_service.dart';
 
-class BluetoothTransport implements TransportService {
-  final FlutterBlueClassic _bluetooth = FlutterBlueClassic();
-  final StreamController<TransportMessage> _messageController =
-      StreamController.broadcast();
-  final Map<String, BluetoothConnection> _connections = {};
+class BluetoothTransport extends BaseTransport {
+  final BluetoothClassic _bluetooth = BluetoothClassic();
   final Map<String, StreamSubscription> _subscriptions = {};
   final Set<String> _connectingDevices =
       {}; // Track devices we're connecting to
+  String? _connectedPeerId;
+  Device? _connectedDevice;
   static final RegExp _bluetoothMacPattern =
       RegExp(r'^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$');
 
-  // Callback for when connection is established
-  Function(String transportId)? onConnectionEstablished;
-
-  // Callback for when connection is lost
-  Function(String transportId)? onConnectionLost;
-
   Timer? _reconnectTimer;
-
-  @override
-  Stream<TransportMessage> get onMessageReceived => _messageController.stream;
 
   @override
   Future<void> init() async {
@@ -34,20 +25,13 @@ class BluetoothTransport implements TransportService {
       // Request Bluetooth permissions
       await _requestPermissions();
 
-      // Check if Bluetooth is supported
-      final isSupported = await _bluetooth.isSupported;
-      if (!isSupported) {
-        debugPrint('Bluetooth is not supported on this device');
+      final permissionGranted = await _bluetooth.initPermissions();
+      if (!permissionGranted) {
+        debugPrint('Bluetooth permissions were not granted');
         return;
       }
 
-      // Enable Bluetooth if not enabled
-      final isEnabled = await _bluetooth.isEnabled;
-      if (!isEnabled) {
-        debugPrint('Bluetooth is disabled, attempting to enable...');
-        _bluetooth.turnOn();
-        await Future.delayed(BluetoothTimerConfig.enableAfterTurnOnDelay);
-      }
+      _startBluetoothEventListeners();
 
       // Connect to bonded devices only (more reliable)
       await _connectToBondedDevices();
@@ -58,6 +42,46 @@ class BluetoothTransport implements TransportService {
       debugPrint('Bluetooth transport initialized');
     } catch (e) {
       debugPrint('Error initializing Bluetooth: $e');
+    }
+  }
+
+  void _startBluetoothEventListeners() {
+    _subscriptions['status'] ??= _bluetooth.onDeviceStatusChanged().listen(
+      _handleConnectionStatus,
+      onError: (error) {
+        debugPrint('Bluetooth status stream error: $error');
+      },
+    );
+    _subscriptions['data'] ??= _bluetooth.onDeviceDataReceived().listen(
+      (data) {
+        final peerId = _connectedPeerId;
+        if (peerId == null) {
+          debugPrint('Bluetooth data received without an active peer');
+          return;
+        }
+        _handleIncomingData(peerId, data);
+      },
+      onError: (error) {
+        debugPrint('Bluetooth data stream error: $error');
+      },
+    );
+  }
+
+  void _handleConnectionStatus(int status) {
+    if (status != Device.disconnected) return;
+    final disconnectedPeerId = _connectedPeerId;
+    if (disconnectedPeerId == null) return;
+
+    debugPrint('Bluetooth connection closed: $disconnectedPeerId');
+    _connectedPeerId = null;
+    final disconnectedDevice = _connectedDevice;
+    _connectedDevice = null;
+    onConnectionLost?.call(disconnectedPeerId);
+
+    if (disconnectedDevice != null) {
+      Future.delayed(BluetoothTimerConfig.reconnectAfterDisconnectDelay, () {
+        _connectToPeer(disconnectedDevice);
+      });
     }
   }
 
@@ -74,9 +98,9 @@ class BluetoothTransport implements TransportService {
   Future<void> _connectToBondedDevices() async {
     try {
       debugPrint('Connecting to bonded (paired) devices...');
-      final bondedDevices = await _bluetooth.bondedDevices;
+      final bondedDevices = await _bluetooth.getPairedDevices();
 
-      if (bondedDevices == null || bondedDevices.isEmpty) {
+      if (bondedDevices.isEmpty) {
         debugPrint(
             'No bonded devices found. Please pair devices in Android settings first.');
         return;
@@ -122,9 +146,9 @@ class BluetoothTransport implements TransportService {
     return false;
   }
 
-  Future<void> _connectToPeer(BluetoothDevice device) async {
+  Future<void> _connectToPeer(Device device) async {
     // Skip if already connected or connecting
-    if (_connections.containsKey(device.address) ||
+    if (_connectedPeerId == device.address ||
         _connectingDevices.contains(device.address)) {
       return;
     }
@@ -135,70 +159,50 @@ class BluetoothTransport implements TransportService {
       debugPrint(
           'Attempting Bluetooth connection to ${device.address} (${device.name})...');
 
-      final connection = await _bluetooth.connect(device.address).timeout(
+      if (_connectedPeerId != null) {
+        await _disconnectActivePeer();
+      }
+
+      final connected = await _bluetooth
+          .connect(device.address, ProtocolConfig.bluetoothSerialServiceUuid)
+          .timeout(
         BluetoothTimerConfig.connectTimeout,
         onTimeout: () {
           debugPrint('Bluetooth connection timeout: ${device.address}');
-          return null;
+          return false;
         },
       );
 
-      if (connection == null) {
-        debugPrint(
-            'Bluetooth connection failed: null connection for ${device.address}');
+      if (!connected) {
+        debugPrint('Bluetooth connection failed for ${device.address}');
         _connectingDevices.remove(device.address);
         return;
       }
 
-      if (!connection.isConnected) {
-        debugPrint(
-            'Bluetooth connection failed: not connected for ${device.address}');
-        _connectingDevices.remove(device.address);
-        return;
-      }
-
-      _connections[device.address] = connection;
+      _connectedPeerId = device.address;
+      _connectedDevice = device;
       _connectingDevices.remove(device.address);
       debugPrint('✓ Bluetooth connected: ${device.address}');
 
       // Notify connection established
-      if (onConnectionEstablished != null) {
-        onConnectionEstablished!(device.address);
-      }
-
-      // Listen for incoming data
-      final subscription = connection.input?.listen(
-        (data) {
-          _handleIncomingData(device.address, data);
-        },
-        onDone: () {
-          debugPrint('Bluetooth connection closed: ${device.address}');
-          _connections.remove(device.address);
-          _subscriptions[device.address]?.cancel();
-          _subscriptions.remove(device.address);
-
-          // Notify connection lost
-          if (onConnectionLost != null) {
-            onConnectionLost!(device.address);
-          }
-
-          // Try to reconnect after a delay
-          Future.delayed(BluetoothTimerConfig.reconnectAfterDisconnectDelay,
-              () {
-            _connectToPeer(device);
-          });
-        },
-        onError: (error) {
-          debugPrint('Bluetooth connection error: ${device.address} - $error');
-        },
-      );
-
-      if (subscription != null) {
-        _subscriptions[device.address] = subscription;
-      }
+      setConnectionState(device.address, true);
     } catch (e) {
       debugPrint('Error connecting to ${device.address}: $e');
       _connectingDevices.remove(device.address);
+    }
+  }
+
+  Future<void> _disconnectActivePeer() async {
+    final peerId = _connectedPeerId;
+    if (peerId == null) return;
+    try {
+      await _bluetooth.disconnect();
+    } catch (e) {
+      debugPrint('Bluetooth disconnect failed for $peerId: $e');
+    } finally {
+      _connectedPeerId = null;
+      _connectedDevice = null;
+      setConnectionState(peerId, false);
     }
   }
 
@@ -213,19 +217,19 @@ class BluetoothTransport implements TransportService {
   void _handleIncomingData(String address, Uint8List data) {
     try {
       debugPrint('Bluetooth received ${data.length} bytes from $address');
-      final message = TransportMessage(
+      notifyMessageReceived(TransportMessage(
         fromPeerId: address,
         fromAddress: address,
         data: data,
-      );
-      _messageController.add(message);
+      ));
     } catch (e) {
       debugPrint('Error handling incoming Bluetooth data: $e');
     }
   }
 
   @override
-  Future<bool> sendMessage(String peerId, Uint8List data, {bool isControl = false}) async {
+  Future<bool> sendMessage(String peerId, Uint8List data,
+      {bool isControl = false}) async {
     debugPrint('BluetoothTransport.sendMessage to $peerId');
 
     // Fail fast for non-Bluetooth transport IDs so MultiTransport can
@@ -235,65 +239,53 @@ class BluetoothTransport implements TransportService {
       return false;
     }
 
-    final connection = _connections[peerId];
-    if (connection == null || !connection.isConnected) {
+    if (_connectedPeerId != peerId) {
       debugPrint('  No active connection to $peerId');
-      debugPrint('  Available connections: ${_connections.keys.toList()}');
+      debugPrint('  Active Bluetooth peer: $_connectedPeerId');
 
       // Fallback behavior: attempt reconnect on Bluetooth path.
-      final bondedDevices = await _bluetooth.bondedDevices;
-      if (bondedDevices != null) {
-        BluetoothDevice? device;
-        try {
-          device = bondedDevices.firstWhere(
-            (d) => d.address == peerId,
-          );
-        } catch (e) {
-          debugPrint('  Device not found in bonded devices');
-          device = null;
-        }
-
-        if (device != null) {
-          debugPrint('  Attempting to reconnect...');
-          await _connectToPeer(device);
-
-          // Check again after reconnection attempt
-          final newConnection = _connections[peerId];
-          if (newConnection != null && newConnection.isConnected) {
-            debugPrint('  Reconnected! Sending message...');
-            try {
-              newConnection.output.add(data);
-              debugPrint('  Data sent successfully');
-              return true;
-            } catch (e) {
-              debugPrint('  Error sending after reconnect: $e');
-              return false;
-            }
-          }
-        }
+      final bondedDevices = await _bluetooth.getPairedDevices();
+      Device? device;
+      try {
+        device = bondedDevices.firstWhere(
+          (d) => d.address == peerId,
+        );
+      } catch (e) {
+        debugPrint('  Device not found in bonded devices');
+        device = null;
       }
 
-      return false;
+      if (device == null) return false;
+
+      debugPrint('  Attempting to reconnect...');
+      await _connectToPeer(device);
+
+      if (_connectedPeerId != peerId) return false;
     }
 
     try {
       debugPrint('  Sending ${data.length} bytes...');
-      connection.output.add(data);
+      final sent = await _bluetooth.writeBytes(data);
+      if (!sent) {
+        debugPrint('  Bluetooth write returned false');
+        return false;
+      }
       debugPrint('  Data sent successfully');
       return true;
     } catch (e) {
       debugPrint('  Error sending: $e');
-      _connections.remove(peerId);
+      if (_connectedPeerId == peerId) {
+        _connectedPeerId = null;
+        _connectedDevice = null;
+      }
       return false;
     }
   }
 
   @override
   List<String> getConnectedPeerIds() {
-    return _connections.keys.where((peerId) {
-      final connection = _connections[peerId];
-      return connection != null && connection.isConnected;
-    }).toList();
+    final peerId = _connectedPeerId;
+    return peerId == null ? [] : [peerId];
   }
 
   @override
@@ -317,9 +309,7 @@ class BluetoothTransport implements TransportService {
     for (final subscription in _subscriptions.values) {
       await subscription.cancel();
     }
-    for (final connection in _connections.values) {
-      await connection.close();
-    }
-    await _messageController.close();
+    await _disconnectActivePeer();
+    await super.dispose();
   }
 }

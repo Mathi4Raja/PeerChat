@@ -4,8 +4,6 @@ import 'package:sqflite/sqflite.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 import 'dart:collection';
-import '../config/limits_config.dart';
-import '../utils/distributed_tracer.dart';
 import 'db_service.dart';
 
 class EventSourcingLogger {
@@ -15,7 +13,7 @@ class EventSourcingLogger {
 
   DBService? _dbService;
   final _uuid = const Uuid();
-  
+
   final Queue<Map<String, dynamic>> _writeBuffer = Queue();
   bool _isFlushing = false;
   static const int _maxBufferSize = 1000;
@@ -25,7 +23,7 @@ class EventSourcingLogger {
 
   void initialize(DBService dbService) {
     _dbService = dbService;
-    _flushTimer = Timer.periodic(_flushInterval, (_) => _flushBuffer());
+    _flushTimer ??= Timer.periodic(_flushInterval, (_) => _flushBuffer());
   }
 
   /// Write an event asynchronously. Backpressure applied if buffer is full.
@@ -41,17 +39,17 @@ class EventSourcingLogger {
     }
 
     if (_writeBuffer.length >= _maxBufferSize) {
-      // Apply backpressure: drop oldest (low priority) log or ignore current. 
+      // Apply backpressure: drop oldest (low priority) log or ignore current.
       // For logging, we drop the oldest to keep the latest state history.
       _writeBuffer.removeFirst();
     }
 
     final eventId = _uuid.v4();
     final now = DateTime.now().millisecondsSinceEpoch;
-    
+
     // Auto-correlate if a span is active in DistributedTracer context
     // This is a naive heuristic if no explicit correlation provided.
-    final effectiveCorrelationId = correlationId ?? entityId; 
+    final effectiveCorrelationId = correlationId ?? entityId;
 
     final eventRecord = {
       'event_id': eventId,
@@ -71,21 +69,22 @@ class EventSourcingLogger {
 
   Future<void> _flushBuffer() async {
     if (_isFlushing || _writeBuffer.isEmpty || _dbService == null) return;
-    
+
     _isFlushing = true;
     try {
       final db = await _dbService!.db;
       final batch = db.batch();
-      
+
       int processed = 0;
       while (_writeBuffer.isNotEmpty && processed < 200) {
         final record = _writeBuffer.removeFirst();
-        batch.insert('event_log', record, conflictAlgorithm: ConflictAlgorithm.replace);
+        batch.insert('event_log', record,
+            conflictAlgorithm: ConflictAlgorithm.replace);
         processed++;
       }
-      
+
       await batch.commit(noResult: true);
-      
+
       // Enforce TTL/Size asynchronously occasionally
       if (DateTime.now().millisecond % 10 == 0) {
         _enforceRetentionPolicy(db);
@@ -100,9 +99,9 @@ class EventSourcingLogger {
   Future<void> _enforceRetentionPolicy(Database db) async {
     // Keep max 10,000 events or based on TTL.
     final count = Sqflite.firstIntValue(
-      await db.rawQuery('SELECT COUNT(*) FROM event_log')
-    ) ?? 0;
-    
+            await db.rawQuery('SELECT COUNT(*) FROM event_log')) ??
+        0;
+
     if (count > 10000) {
       final excess = count - 10000;
       await db.rawDelete('''
