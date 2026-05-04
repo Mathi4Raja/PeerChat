@@ -68,6 +68,17 @@ class DeviceHeuristicConfig {
     'st-',
     'pc',
     'laptop',
+    'boat',
+    'sony',
+    'jbl',
+    'airpods',
+    'beat',
+    'noise',
+    'fire-boltt',
+    'echo',
+    'alexa',
+    'home',
+    'speaker',
   ];
 
   /// Bonded-device name hints treated as phone-like peers.

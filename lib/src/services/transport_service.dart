@@ -11,6 +11,7 @@ abstract class TransportService {
   Future<bool> sendFile(String peerId, String filePath, String fileId);
   List<String> getConnectedPeerIds(); // Get list of connected peer IDs
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {}
+  void updatePeerMapping(String transportId, String cryptoPeerId) {}
   Future<void> dispose();
 }
 
@@ -204,6 +205,16 @@ class MultiTransportService extends ChangeNotifier {
       }
     }
     return connectedIds.toList();
+  }
+
+  void updatePeerMapping(String transportId, String cryptoPeerId) {
+    for (final transport in _transports) {
+      try {
+        transport.updatePeerMapping(transportId, cryptoPeerId);
+      } catch (e) {
+        debugPrint('Error updating peer mapping on ${transport.runtimeType}: $e');
+      }
+    }
   }
 
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {

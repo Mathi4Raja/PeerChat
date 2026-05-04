@@ -234,6 +234,10 @@ class MeshRouterService extends ChangeNotifier {
             _connectionManager.isHandshakeComplete(transportMsg.fromPeerId);
         await _connectionManager.handleHandshake(
             transportMsg.fromPeerId, handshake);
+        
+        // Sync the mapping back to the transport layer so it knows that
+        // this native ID corresponds to this crypto Peer ID.
+        transportService.updatePeerMapping(transportMsg.fromPeerId, handshake.peerId);
 
         // Ensure reciprocal handshake for peers that sent us one before our
         // connection-established callback fired.
@@ -339,8 +343,9 @@ class MeshRouterService extends ChangeNotifier {
   List<String> getConnectedPeerIds() {
     final transportIds = transportService.getConnectedPeerIds();
     return transportIds
-        .map((id) => _connectionManager.getCryptoPeerId(id))
+        .map((id) => _connectionManager.getCryptoPeerId(id) ?? id)
         .whereType<String>()
+        .toSet()
         .toList();
   }
 

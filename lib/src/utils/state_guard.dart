@@ -20,6 +20,7 @@ class StateGuard {
     MessageStatus.sending: {
       MessageStatus.queued,
       MessageStatus.routing,
+      MessageStatus.sent,
       MessageStatus.failed
     },
     MessageStatus.queued: {MessageStatus.routing, MessageStatus.failed},

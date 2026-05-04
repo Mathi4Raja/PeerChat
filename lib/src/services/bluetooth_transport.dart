@@ -283,6 +283,13 @@ class BluetoothTransport extends BaseTransport {
   }
 
   @override
+  void updatePeerMapping(String transportId, String cryptoPeerId) {
+    if (_connectedPeerId == transportId) {
+      debugPrint('BluetoothTransport: Mapping $transportId to $cryptoPeerId');
+    }
+  }
+
+  @override
   List<String> getConnectedPeerIds() {
     final peerId = _connectedPeerId;
     return peerId == null ? [] : [peerId];

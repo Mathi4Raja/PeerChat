@@ -101,6 +101,9 @@ class _ChatScreenState extends State<ChatScreen> {
     };
 
     _appState.addListener(_connectionUpdateListener);
+    _messageController.addListener(() {
+      if (mounted) setState(() {});
+    });
 
     _incomingMessageSubscription =
         _appState.meshRouter.onMessageReceived.listen((chatMessage) {
@@ -428,15 +431,17 @@ class _ChatScreenState extends State<ChatScreen> {
     );
 
     await appState.db.insertChatMessage(chatMessage);
-
-    setState(() {
-      _messages.add(chatMessage);
-      _sortMessagesChronologically();
-      _messageController.clear();
-      _replyingTo = null;
-    });
-
-    _scrollToBottom();
+    
+    // UI update immediately after DB persistence
+    if (mounted) {
+      setState(() {
+        _messages.add(chatMessage);
+        _sortMessagesChronologically();
+        _messageController.clear();
+        _replyingTo = null;
+      });
+      _scrollToBottom();
+    }
     
     final result = await appState.meshRouter.sendMessage(
       recipientPeerId: _selectedPeerId!,
@@ -445,14 +450,17 @@ class _ChatScreenState extends State<ChatScreen> {
       messageId: messageId,
     );
 
-    if (result == SendResult.routed && mounted) {
-      // Check mounted before accessing Provider.of(context)
-      final soundEnabled =
-          Provider.of<MenuSettingsController>(context, listen: false)
-              .notifications
-              .sound;
-      if (soundEnabled && mounted) {
-        unawaited(_notificationSoundService.playSentTick());
+    if (mounted) {
+      await _applyStatusUpdate(messageId);
+
+      if (result == SendResult.routed) {
+        final soundEnabled =
+            Provider.of<MenuSettingsController>(context, listen: false)
+                .notifications
+                .sound;
+        if (soundEnabled && mounted) {
+          unawaited(_notificationSoundService.playSentTick());
+        }
       }
     }
   }

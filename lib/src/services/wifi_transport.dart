@@ -818,6 +818,14 @@ class WiFiTransport extends BaseTransport {
     }
   }
 
+  @override
+  void updatePeerMapping(String transportId, String cryptoPeerId) {
+    if (_connectedPeers.containsKey(transportId)) {
+      AppLogger.print('WiFiTransport: Updating mapping $transportId -> $cryptoPeerId');
+      _connectedPeers[transportId] = cryptoPeerId;
+    }
+  }
+
   Future<bool> _enqueuePayload({
     required String endpointId,
     required Uint8List data,
@@ -891,7 +899,7 @@ class WiFiTransport extends BaseTransport {
   }
 
   @override
-  List<String> getConnectedPeerIds() => _connectedPeers.values.toList();
+  List<String> getConnectedPeerIds() => _connectedPeers.keys.toList();
 
   void setLocalIdentity(String peerId, String name) {
     final suffix = peerId.length > 4
