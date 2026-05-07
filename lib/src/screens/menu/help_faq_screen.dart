@@ -33,14 +33,14 @@ class _FaqItem {
 const _faqs = [
   _FaqItem(
     'What is PeerChat?',
-    'PeerChat is a serverless, peer-to-peer encrypted messaging and file transfer app. '
+    'PeerChat is a serverless, peer-to-peer encrypted messaging app with Web Share. '
     'It forms a temporary mesh network using Bluetooth Low Energy (BLE) and WiFi Direct — '
     'no servers, no central infrastructure, no data harvesting.',
   ),
   _FaqItem(
     'Does PeerChat require an internet connection?',
     'No. PeerChat works entirely offline. It uses BLE for peer discovery and small '
-    'data packets, and WiFi Direct or WiFi Hotspot for high-speed file transfers. '
+    'data packets. Web Share can host files over a local browser-accessible connection. '
     'Two devices just need to be within Bluetooth or WiFi range of each other.',
   ),
   _FaqItem(
@@ -75,10 +75,9 @@ const _faqs = [
   ),
   _FaqItem(
     'How do I transfer files?',
-    'Open a chat with a peer, tap the attachment icon (📎), and pick any file. '
-    'Files transfer directly between devices over WiFi Direct — no cloud upload, '
-    'no size limits beyond device storage. Large files use Native File Payloads '
-    'for maximum throughput.',
+    'Open Web Share, add the files you want to host, and share the displayed local URL '
+    'with a nearby device. The other device downloads or uploads through its browser; '
+    'no cloud upload is required.',
   ),
 ];
 

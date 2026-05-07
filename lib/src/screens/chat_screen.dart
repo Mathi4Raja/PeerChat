@@ -16,7 +16,6 @@ import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
-import 'direct_transfer_screen.dart';
 import 'location_map_screen.dart';
 
 class ChatScreen extends StatefulWidget {
@@ -1330,27 +1329,13 @@ class _ChatScreenState extends State<ChatScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Grid of attachment options
               GridView.count(
                 shrinkWrap: true,
-                crossAxisCount: 2,
+                crossAxisCount: 1,
                 mainAxisSpacing: 16,
                 crossAxisSpacing: 8,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _buildAttachmentItem(
-                    icon: Icons.insert_drive_file_rounded,
-                    label: 'Files',
-                    color: const Color(0xFF7F66FF),
-                    onTap: () {
-                      Navigator.pop(context);
-                      Navigator.of(this.context).push(
-                        MaterialPageRoute(
-                          builder: (_) => DirectTransferScreen(peerId: _selectedPeerId!),
-                        ),
-                      );
-                    },
-                  ),
                   _buildAttachmentItem(
                     icon: Icons.location_on_rounded,
                     label: 'Location',

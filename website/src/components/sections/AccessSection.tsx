@@ -23,7 +23,7 @@ const plans: Plan[] = [
     period: 'forever',
     features: [
       'Peer-to-peer messaging',
-      'WiFi Direct & Hotspot file sharing',
+      'Browser-based Web Share',
       'End-to-end encryption',
       'Multi-hop mesh routing',
       'Emergency broadcast',

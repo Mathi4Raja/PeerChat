@@ -12,10 +12,9 @@
 ## 🚀 Key Features
 
 - **🌐 Multi-Transport Mesh Networking**: Intelligent routing that automatically selects the best path using Bluetooth, WiFi Direct, or Hotspot relays.
-- **📁 Sliding-Window File Transfers**: High-speed, chunk-based P2P file sharing with native crash recovery and bitmask-guaranteed integrity.
+- **🌍 Web Share Proxy**: Share files instantly to any device with a browser via an embedded local HTTP service.
 - **🔒 Libsodium E2EE**: Absolute message confidentiality using Ed25519 signatures for identity and X25519 for encryption.
 - **📡 Multi-Hop Routing**: Messages find their way through intermediate peers to reach out-of-range devices.
-- **🌍 Web Share Proxy**: Share files instantly to any device with a browser via an embedded, secure HTTP service.
 - **🎨 Premium UX**: A beautiful, harmonized "Ink & Violet" design system with smooth animations and responsive layouts.
 
 ---

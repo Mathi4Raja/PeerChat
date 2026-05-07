@@ -163,6 +163,14 @@ class MessageManager {
     DistributedTracer.startSpan('MessageManager.processMessage',
         traceId: message.messageId, spanId: spanId);
     return _processingQueue.enqueue(() async {
+      if (message.type == MessageType.legacyFileTransfer) {
+        DistributedTracer.endSpan('MessageManager.processMessage',
+            traceId: message.messageId,
+            spanId: spanId,
+            attributes: {'result': 'legacy_file_transfer_disabled'});
+        return ProcessResult.invalid;
+      }
+
       // Verify signature
       final isValidSignature =
           await _signatureVerifier.verifyMessageSignature(message);

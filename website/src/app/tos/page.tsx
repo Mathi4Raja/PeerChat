@@ -10,7 +10,7 @@ const sections = [
   },
   {
     title: '2. Description of Service',
-    content: 'PeerChat is a free, open-source, peer-to-peer encrypted messaging and file transfer application. All communication occurs directly between user devices via Bluetooth Low Energy (BLE), WiFi Direct, and WiFi Hotspot. No central servers are involved in message routing.',
+    content: 'PeerChat is a free, open-source, peer-to-peer encrypted messaging application with browser-based Web Share for local file exchange. Message routing occurs between user devices via Bluetooth Low Energy (BLE), WiFi Direct, and WiFi Hotspot. No central servers are involved in message routing.',
   },
   {
     title: '3. Eligibility',

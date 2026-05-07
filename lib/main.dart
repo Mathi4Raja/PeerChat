@@ -1,4 +1,4 @@
-// PeerChat - Decentralized P2P mesh messaging and file sharing.
+// PeerChat - Decentralized P2P mesh messaging and Web Share.
 // Copyright (C) 2026  Mathiraja
 //
 // This program is free software: you can redistribute it and/or modify

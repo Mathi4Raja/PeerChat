@@ -28,7 +28,6 @@ class DiscoveryService {
 
   // Adaptive discovery policy
   int _connectedPeerCount = 0;
-  bool _fileTransferActive = false;
   bool _batteryLow = false;
   RuntimeProfile _runtimeProfile = RuntimeProfile.normalDirect;
   int _fastBurstUntilTimestamp = 0;
@@ -189,13 +188,12 @@ class DiscoveryService {
 
   void updateAdaptiveDiscoveryPolicy({
     required int connectedPeerCount,
-    required bool fileTransferActive,
     required bool batteryLow,
     required RuntimeProfile runtimeProfile,
   }) {
-    final signature = '$connectedPeerCount|$fileTransferActive|$batteryLow|${runtimeProfile.storageValue}';
+    final signature =
+        '$connectedPeerCount|$batteryLow|${runtimeProfile.storageValue}';
     _connectedPeerCount = connectedPeerCount;
-    _fileTransferActive = fileTransferActive;
     _batteryLow = batteryLow;
     _runtimeProfile = runtimeProfile;
 
@@ -212,7 +210,6 @@ class DiscoveryService {
     return DiscoveryTimerConfig.nextScanIntervalWithJitter(
       runtimeProfile: _runtimeProfile,
       connectedPeerCount: _connectedPeerCount,
-      fileTransferActive: _fileTransferActive,
       batteryLow: _batteryLow,
       random: _scanJitterRandom,
     );
@@ -225,7 +222,6 @@ class DiscoveryService {
     return DiscoveryTimerConfig.activeScanDuration(
       runtimeProfile: _runtimeProfile,
       connectedPeerCount: _connectedPeerCount,
-      fileTransferActive: _fileTransferActive,
       batteryLow: _batteryLow,
     );
   }

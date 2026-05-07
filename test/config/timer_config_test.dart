@@ -24,7 +24,6 @@ void main() {
         DiscoveryTimerConfig.nextScanBase(
           runtimeProfile: RuntimeProfile.normalDirect,
           connectedPeerCount: 0,
-          fileTransferActive: false,
         ),
         const Duration(seconds: 5),
       );
@@ -32,7 +31,6 @@ void main() {
         DiscoveryTimerConfig.nextScanBase(
           runtimeProfile: RuntimeProfile.normalDirect,
           connectedPeerCount: 3,
-          fileTransferActive: false,
         ),
         const Duration(seconds: 30),
       );
@@ -40,7 +38,6 @@ void main() {
         DiscoveryTimerConfig.nextScanBase(
           runtimeProfile: RuntimeProfile.emergencyBattery,
           connectedPeerCount: 1,
-          fileTransferActive: false,
         ),
         const Duration(seconds: 35),
       );
@@ -51,7 +48,6 @@ void main() {
       final out = DiscoveryTimerConfig.nextScanIntervalWithJitter(
         runtimeProfile: RuntimeProfile.normalDirect,
         connectedPeerCount: 1,
-        fileTransferActive: false,
         batteryLow: true,
         random: random,
       );
@@ -68,7 +64,6 @@ void main() {
         DiscoveryTimerConfig.activeScanDuration(
           runtimeProfile: RuntimeProfile.emergencyBattery,
           connectedPeerCount: 0,
-          fileTransferActive: false,
           batteryLow: true,
         ),
         const Duration(seconds: 2),
@@ -77,7 +72,6 @@ void main() {
         DiscoveryTimerConfig.activeScanDuration(
           runtimeProfile: RuntimeProfile.normalMesh,
           connectedPeerCount: 3,
-          fileTransferActive: false,
           batteryLow: false,
         ),
         const Duration(seconds: 6),
@@ -86,7 +80,6 @@ void main() {
         DiscoveryTimerConfig.activeScanDuration(
           runtimeProfile: RuntimeProfile.normalDirect,
           connectedPeerCount: 3,
-          fileTransferActive: false,
           batteryLow: true,
         ),
         const Duration(seconds: 3),

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:bluetooth_classic/bluetooth_classic.dart';
 import 'package:bluetooth_classic/models/device.dart';
@@ -9,9 +10,15 @@ import 'transport_service.dart';
 
 class BluetoothTransport extends BaseTransport {
   final BluetoothClassic _bluetooth = BluetoothClassic();
+  static const MethodChannel _systemChannel =
+      MethodChannel('peerchat_secure/device_status');
+  static const EventChannel _btStateChannel =
+      EventChannel('peerchat_secure/bluetooth_state');
+
   final Map<String, StreamSubscription> _subscriptions = {};
-  final Set<String> _connectingDevices =
-      {}; // Track devices we're connecting to
+  final Set<String> _connectingDevices = {};
+  bool _isBluetoothAdapterEnabled = true;
+
   String? _connectedPeerId;
   Device? _connectedDevice;
   static final RegExp _bluetoothMacPattern =
@@ -32,6 +39,7 @@ class BluetoothTransport extends BaseTransport {
       }
 
       _startBluetoothEventListeners();
+      _startAdapterStateMonitoring();
 
       // Connect to bonded devices only (more reliable)
       await _connectToBondedDevices();
@@ -67,6 +75,34 @@ class BluetoothTransport extends BaseTransport {
     );
   }
 
+  void _startAdapterStateMonitoring() {
+    _subscriptions['adapter_state'] ??= _btStateChannel
+        .receiveBroadcastStream()
+        .map((event) => event as bool)
+        .listen((enabled) {
+      debugPrint('Bluetooth adapter state changed: $enabled');
+      _isBluetoothAdapterEnabled = enabled;
+      if (!enabled) {
+        debugPrint('Bluetooth disabled - dropping active peer');
+        _handleConnectionStatus(Device.disconnected);
+      }
+    });
+
+    // Initial check
+    _systemChannel.invokeMethod<bool>('isBluetoothEnabled').then((enabled) {
+      if (enabled != null) {
+        _isBluetoothAdapterEnabled = enabled;
+        if (!enabled) {
+          debugPrint('Bluetooth is initially disabled');
+          _handleConnectionStatus(Device.disconnected);
+        }
+      }
+    }).catchError((e) {
+      debugPrint('Error checking initial BT state: $e');
+      return null;
+    });
+  }
+
   void _handleConnectionStatus(int status) {
     if (status != Device.disconnected) return;
     final disconnectedPeerId = _connectedPeerId;
@@ -78,7 +114,7 @@ class BluetoothTransport extends BaseTransport {
     _connectedDevice = null;
     onConnectionLost?.call(disconnectedPeerId);
 
-    if (disconnectedDevice != null) {
+    if (disconnectedDevice != null && _isBluetoothAdapterEnabled) {
       Future.delayed(BluetoothTimerConfig.reconnectAfterDisconnectDelay, () {
         _connectToPeer(disconnectedDevice);
       });
@@ -96,6 +132,7 @@ class BluetoothTransport extends BaseTransport {
   }
 
   Future<void> _connectToBondedDevices() async {
+    if (!_isBluetoothAdapterEnabled) return;
     try {
       debugPrint('Connecting to bonded (paired) devices...');
       final bondedDevices = await _bluetooth.getPairedDevices();
@@ -147,6 +184,8 @@ class BluetoothTransport extends BaseTransport {
   }
 
   Future<void> _connectToPeer(Device device) async {
+    if (!_isBluetoothAdapterEnabled) return;
+
     // Skip if already connected or connecting
     if (_connectedPeerId == device.address ||
         _connectingDevices.contains(device.address)) {
@@ -209,6 +248,7 @@ class BluetoothTransport extends BaseTransport {
   void _startReconnectionTimer() {
     _reconnectTimer = Timer.periodic(BluetoothTimerConfig.reconnectPollInterval,
         (timer) async {
+      if (!_isBluetoothAdapterEnabled) return;
       debugPrint('Checking Bluetooth connections...');
       await _connectToBondedDevices();
     });
@@ -232,10 +272,14 @@ class BluetoothTransport extends BaseTransport {
       {bool isControl = false}) async {
     debugPrint('BluetoothTransport.sendMessage to $peerId');
 
-    // Fail fast for non-Bluetooth transport IDs so MultiTransport can
-    // immediately fall back to WiFi instead of waiting on Bluetooth logic.
+    // Fail fast for non-Bluetooth transport IDs
     if (!_bluetoothMacPattern.hasMatch(peerId)) {
       debugPrint('  Not a Bluetooth MAC address, skipping Bluetooth send');
+      return false;
+    }
+
+    if (!_isBluetoothAdapterEnabled) {
+      debugPrint('  Bluetooth adapter is OFF - failing send');
       return false;
     }
 
@@ -297,18 +341,8 @@ class BluetoothTransport extends BaseTransport {
 
   @override
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {
-    // Bluetooth transport writes directly to the socket output stream and
-    // does not maintain an internal outbound queue to flush.
+    // Bluetooth transport writes directly to the socket output stream
   }
-
-  @override
-  Future<bool> sendFile(String peerId, String filePath, String fileId) async {
-    debugPrint('BluetoothTransport.sendFile not implemented');
-    return false;
-  }
-
-  @override
-  Stream<FileTransferProgressEvent> get onFileProgress => const Stream.empty();
 
   @override
   Future<void> dispose() async {

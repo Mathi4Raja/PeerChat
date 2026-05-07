@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:collection';
-import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/foundation.dart';
 import '../utils/app_logger.dart';
@@ -16,13 +15,6 @@ import 'db_service.dart';
 class WiFiTransport extends BaseTransport {
   final Nearby _nearby = Nearby();
   final Map<String, String> _connectedPeers = {}; // endpointId -> peerId
-
-  // Mapping of Nearby Payload IDs to our internal File IDs and source endpoints
-  final Map<int, String> _nearbyIdToFileId = {};
-  final Map<int, String> _nearbyIdToEndpointId = {};
-
-  // Mapping of Nearby Payload IDs to their local file paths
-  final Map<int, String> _nearbyIdToLocalPath = {};
 
   final Function(String peerId, String address)? onPeerDiscovered;
   final DBService _db = DBService();
@@ -629,9 +621,7 @@ class WiFiTransport extends BaseTransport {
         onPayLoadRecieved: (endpointId, payload) {
           _handleIncomingPayload(endpointId, payload);
         },
-        onPayloadTransferUpdate: (endpointId, update) {
-          _handleNativeProgress(endpointId, update);
-        },
+        onPayloadTransferUpdate: (_, __) {},
       );
     } catch (e) {
       AppLogger.print(
@@ -671,15 +661,6 @@ class WiFiTransport extends BaseTransport {
     _lastActivity.remove(endpointId);
     _dropQueuedFramesForEndpoint(endpointId);
 
-    // Only clear mappings for this specific endpoint
-    _nearbyIdToEndpointId.removeWhere((pId, eId) {
-      if (eId == endpointId) {
-        _nearbyIdToFileId.remove(pId);
-        _nearbyIdToLocalPath.remove(pId);
-        return true;
-      }
-      return false;
-    });
     if (_knownPeers.contains(endpointId)) {
       await _db.resetReconnectAttempts(endpointId);
     }
@@ -690,23 +671,6 @@ class WiFiTransport extends BaseTransport {
     try {
       if (payload.type == PayloadType.BYTES && payload.bytes != null) {
         final bytes = Uint8List.fromList(payload.bytes!);
-
-        // Check for File Transfer Mapping Header
-        final text = utf8.decode(bytes, allowMalformed: true);
-        if (text.startsWith('FT_MAP:')) {
-          final parts = text.split(':');
-          if (parts.length == 3) {
-            final nearbyId = int.tryParse(parts[1]);
-            final fileId = parts[2];
-            if (nearbyId != null) {
-              _nearbyIdToFileId[nearbyId] = fileId;
-              _nearbyIdToEndpointId[nearbyId] = endpointId;
-              AppLogger.print(
-                  'Mapped Nearby ID $nearbyId to File ID $fileId for endpoint $endpointId');
-              return;
-            }
-          }
-        }
 
         // Check for keepalive
         if (bytes.length == ProtocolConfig.keepAlivePacketLength &&
@@ -722,50 +686,9 @@ class WiFiTransport extends BaseTransport {
           fromAddress: endpointId,
           data: bytes,
         ));
-      } else if (payload.type == PayloadType.FILE) {
-        // Mapping should already exist from the header
-        final fileId = _nearbyIdToFileId[payload.id];
-
-        // Store the URI for completion
-        if (payload.uri != null) {
-          _nearbyIdToLocalPath[payload.id] = payload.uri!;
-          AppLogger.print(
-              'Received file URI for payload ${payload.id}: ${payload.uri}');
-        }
-
-        if (fileId != null) {
-          AppLogger.print('Receiving file payload ${payload.id} for $fileId');
-        } else {
-          AppLogger.print('Receiving unknown file payload ${payload.id}');
-        }
       }
     } catch (e) {
       AppLogger.print('Error handling WiFi Direct payload: $e');
-    }
-  }
-
-  void _handleNativeProgress(
-      String endpointId, PayloadTransferUpdate update) async {
-    final fileId = _nearbyIdToFileId[update.id];
-    if (fileId == null) return;
-
-    final progress = update.bytesTransferred / update.totalBytes;
-    final isCompleted = update.status == PayloadStatus.SUCCESS;
-    final localPath = isCompleted ? _nearbyIdToLocalPath[update.id] : null;
-
-    notifyFileProgress(FileTransferProgressEvent(
-      peerId: endpointId,
-      fileId: fileId,
-      progress: progress,
-      isCompleted: isCompleted,
-      localPath: localPath,
-    ));
-
-    if (isCompleted ||
-        update.status == PayloadStatus.FAILURE ||
-        update.status == PayloadStatus.CANCELED) {
-      _nearbyIdToFileId.remove(update.id);
-      _nearbyIdToLocalPath.remove(update.id);
     }
   }
 
@@ -786,36 +709,6 @@ class WiFiTransport extends BaseTransport {
       data: data,
       isControl: isControl,
     );
-  }
-
-  @override
-  Future<bool> sendFile(String peerId, String filePath, String fileId) async {
-    String? endpointId;
-    for (final entry in _connectedPeers.entries) {
-      if (entry.value == peerId || entry.key == peerId) {
-        endpointId = entry.key;
-        break;
-      }
-    }
-    if (endpointId == null) return false;
-
-    try {
-      // In nearby_connections 4.x, we use sendFilePayload directly
-      final int nearbyId = await _nearby.sendFilePayload(endpointId, filePath);
-
-      // Send mapping header via bytes payload
-      final header =
-          Uint8List.fromList(utf8.encode('FT_MAP:$nearbyId:$fileId'));
-      await _nearby.sendBytesPayload(endpointId, header);
-
-      // Track our own progress mapping
-      _nearbyIdToFileId[nearbyId] = fileId;
-      _nearbyIdToEndpointId[nearbyId] = endpointId;
-      return true;
-    } catch (e) {
-      AppLogger.print('Error in WiFiTransport.sendFile: $e');
-      return false;
-    }
   }
 
   @override
@@ -928,8 +821,6 @@ class WiFiTransport extends BaseTransport {
       timer.cancel();
     }
     _clearQueuedFrames();
-    _nearbyIdToFileId.clear();
-    _nearbyIdToLocalPath.clear();
     try {
       await _nearby.stopAllEndpoints();
     } catch (_) {}

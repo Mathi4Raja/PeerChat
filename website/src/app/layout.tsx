@@ -1,5 +1,5 @@
 /**
- * PeerChat - Decentralized P2P mesh messaging and file sharing.
+ * PeerChat - Decentralized P2P mesh messaging and Web Share.
  * Copyright (C) 2026  Mathiraja
  *
  * This program is free software: you can redistribute it and/or modify
@@ -34,7 +34,7 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://peerchat.mathi.live'),
   title: "PeerChat — Messages that find their way",
   description:
-    "Secure, serverless P2P mesh messaging and file transfers. Privacy-first communication that survives without infrastructure. Connect via BLE, WiFi Direct, or Hotspot.",
+    "Secure, serverless P2P mesh messaging with browser-based Web Share. Privacy-first communication that survives without infrastructure. Connect via BLE, WiFi Direct, or Hotspot.",
   keywords: ["P2P messaging", "mesh network", "encrypted chat", "serverless", "WiFi Direct messenger", "BLE messaging", "private communication", "decentralized network"],
   authors: [{ name: "Mathi4Raja" }],
   creator: "Mathi4Raja",
@@ -99,7 +99,7 @@ const jsonLd = {
           "name": "What exactly is PeerChat?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "PeerChat is a decentralized, serverless communication platform. It allows users to send encrypted messages and files directly between devices by forming a temporary or stable mesh network using Bluetooth and WiFi."
+            "text": "PeerChat is a decentralized, serverless communication platform. It sends encrypted messages across a temporary or stable mesh network using Bluetooth and WiFi, and includes Web Share for browser-based local file exchange."
           }
         },
         {
@@ -107,7 +107,7 @@ const jsonLd = {
           "name": "How does it work without internet?",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "PeerChat turns your device into a node in a mesh network. It uses BLE (Bluetooth Low Energy) for discovery and small data packets, and WiFi Direct or WiFi Hotspot for high-speed file transfers."
+            "text": "PeerChat turns your device into a node in a mesh network. It uses BLE (Bluetooth Low Energy) for discovery and small data packets. Web Share hosts files over a local browser-accessible connection when nearby devices need to exchange files."
           }
         },
         {

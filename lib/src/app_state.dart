@@ -25,7 +25,6 @@ import 'services/emergency_broadcast_service.dart';
 import 'services/battery_status_service.dart';
 import 'services/wifi_transport.dart';
 import 'services/web_share_service.dart';
-import 'services/file_transfer_service.dart';
 import 'services/app_icon_service.dart';
 import 'services/event_sourcing_logger.dart';
 import 'utils/name_generator.dart';
@@ -37,7 +36,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
   late final MeshRouterService meshRouter;
   late final EmergencyBroadcastService emergencyBroadcastService;
   late final WebShareService webShareService;
-  late final FileTransferService fileTransferService;
   late final AppIconService appIconService;
   bool _hasEmergencyBroadcastService = false;
   Timer? _peerRefreshTimer;
@@ -186,8 +184,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     meshRouter.updateLocalName(name);
   }
 
-  bool get hasActiveTransfer => fileTransferService.activeSessions.isNotEmpty;
-
   Future<void> init() async {
     try {
       WidgetsBinding.instance.addObserver(this);
@@ -271,15 +267,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
       meshRouter.setRuntimeProfile(_runtimeProfile);
       
-      // Now we have the meshRouter, initialize file transfer
-      fileTransferService = FileTransferService(_db, meshRouter);
-      
-      // Monitor file transfers for discovery throttling
-      fileTransferService.onProgress.listen((_) => notifyListeners());
-
-      // Perform 30-day cleanup of old transfers
-      _db.purgeOldFileTransfers(days: 30);
-
       await meshRouter.init();
       _wifiDiscoveryFailureSubscription =
           meshRouter.onWiFiDiscoveryFailure.listen(
@@ -477,11 +464,8 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
 
     final activeConnectedCount =
         connectedPeerCount ?? meshRouter.getConnectedPeerIds().length;
-    final hasActiveTransfer = fileTransferService.activeSessions.isNotEmpty;
-
     _discovery.updateAdaptiveDiscoveryPolicy(
       connectedPeerCount: activeConnectedCount,
-      fileTransferActive: hasActiveTransfer,
       batteryLow: _batteryLow,
       runtimeProfile: _runtimeProfile,
     );
@@ -680,7 +664,6 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
         debugPrint("Error shutting down discovery: $e");
       }
       webShareService.dispose();
-      fileTransferService.dispose();
       
       if (_hasEmergencyBroadcastService) {
         emergencyBroadcastService.dispose();

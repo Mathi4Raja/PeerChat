@@ -147,7 +147,6 @@ class DiscoveryTimerConfig {
   static Duration nextScanBase({
     required RuntimeProfile runtimeProfile,
     required int connectedPeerCount,
-    required bool fileTransferActive,
   }) {
     switch (runtimeProfile) {
       case RuntimeProfile.normalMesh:
@@ -159,7 +158,6 @@ class DiscoveryTimerConfig {
         if (connectedPeerCount <= 2) return const Duration(seconds: 35);
         return const Duration(seconds: 60);
       case RuntimeProfile.normalDirect:
-        if (fileTransferActive) return const Duration(seconds: 5);
         if (connectedPeerCount <= 0) return const Duration(seconds: 5);
         if (connectedPeerCount <= 2) return const Duration(seconds: 15);
         return const Duration(seconds: 30);
@@ -169,14 +167,12 @@ class DiscoveryTimerConfig {
   static Duration nextScanIntervalWithJitter({
     required RuntimeProfile runtimeProfile,
     required int connectedPeerCount,
-    required bool fileTransferActive,
     required bool batteryLow,
     required Random random,
   }) {
     var base = nextScanBase(
       runtimeProfile: runtimeProfile,
       connectedPeerCount: connectedPeerCount,
-      fileTransferActive: fileTransferActive,
     );
     if (batteryLow && runtimeProfile != RuntimeProfile.emergencyBattery) {
       base = Duration(milliseconds: base.inMilliseconds * 2);
@@ -188,7 +184,6 @@ class DiscoveryTimerConfig {
   static Duration activeScanDuration({
     required RuntimeProfile runtimeProfile,
     required int connectedPeerCount,
-    required bool fileTransferActive,
     required bool batteryLow,
   }) {
     if (runtimeProfile == RuntimeProfile.emergencyBattery) {
@@ -201,7 +196,6 @@ class DiscoveryTimerConfig {
       if (connectedPeerCount <= 2) return const Duration(seconds: 8);
       return const Duration(seconds: 6);
     }
-    if (fileTransferActive) return const Duration(seconds: 10);
     if (connectedPeerCount <= 0) return const Duration(seconds: 8);
     if (connectedPeerCount <= 2) return const Duration(seconds: 6);
     return batteryLow ? const Duration(seconds: 3) : const Duration(seconds: 4);

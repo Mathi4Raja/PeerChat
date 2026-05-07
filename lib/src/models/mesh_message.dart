@@ -8,7 +8,8 @@ enum MessageType {
   routeResponse,
   connectionUpgradeRequest,
   connectionUpgradeResponse,
-  fileTransfer,
+  // Reserved wire slot. Do not remove or later message type indices change.
+  legacyFileTransfer,
   identityUpdate,
 }
 

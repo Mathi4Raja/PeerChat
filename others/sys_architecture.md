@@ -22,7 +22,6 @@ AppState (composition root + runtime orchestration)
   |-- MeshRouterService (mode selection + routing)
   |-- ConnectionManager (transport <-> crypto identity + capability cache)
   |-- MultiTransportService (WiFi + Bluetooth coordinator)
-  |-- FileTransferService (0xFE protocol)
   |-- EmergencyBroadcastService
   |-- BatteryStatusService
 
@@ -67,8 +66,9 @@ local profile == normalDirect ?
                                 |-- no --> Mesh session
                                 '-- yes --> Direct session
 
-File transfer availability:
-- Allowed only when session is Direct AND remote supportsFileTransfer == true
+File exchange availability:
+- Direct peer-to-peer file transfer is removed.
+- Web Share remains available through the embedded local HTTP service.
 
 
 3) Startup and Composition Flow
@@ -90,7 +90,6 @@ AppState.init()
   |     ConnectionManager
   |
   |-- Compose higher layers:
-  |     FileTransferService
   |     EmergencyBroadcastService
   |     RouteManager
   |     MessageManager
@@ -98,7 +97,6 @@ AppState.init()
   |
   |-- meshRouter.setRuntimeProfile(...)
   |-- meshRouter.init()
-  |-- fileTransferService.init() (resume incomplete transfers + temp cleanup)
   |-- start battery monitoring + adaptive discovery policy
   |-- start discovery service
   '-- attach listeners (router changes, incoming messages, transfer updates)
@@ -116,7 +114,6 @@ Handshake payload includes:
 - encryption public key
 - displayName
 - runtimeProfile
-- supportsFileTransfer
 
 Connection identity behavior:
 - transport IDs are unstable (endpoint/mac).
@@ -126,7 +123,7 @@ Connection identity behavior:
 Capability propagation behavior:
 - local profile change rebroadcasts handshake capabilities immediately
 - a second rebroadcast occurs after ~700ms
-- remote caches update runtime profile + file transfer support quickly
+- remote caches update runtime profile quickly
 
 
 5) Message Send Flow (Direct / Mesh / Broadcast)
@@ -216,9 +213,7 @@ Incoming bytes from transport
         |     |     |-- store peer keys/capabilities
         |     |     '-- add/update direct route
         |     '-- no:
-        |           |-- file-transfer marker (0xFE)?
-        |           |     '-- yes -> FileTransferService.dispatchRawMessage(...)
-        |           '-- no -> parse MeshMessage
+        |           '-- parse MeshMessage
         |
         '-- MeshMessage path:
               |-- broadcast destination?
@@ -265,7 +260,7 @@ Flow:
 
 Sender picks file
   |
-  |-- verify direct connection + remote supportsFileTransfer
+  |-- verify direct connection
   |-- compute SHA-256
   |-- split into chunks
   '-- send FILE_META
@@ -326,7 +321,6 @@ Incoming broadcast
 DiscoveryService adaptive policy uses:
 - runtime profile
 - connected peer count
-- file transfer active state
 - battery low flag
 - jitter (0-3s)
 
@@ -351,7 +345,6 @@ Core tables:
 - pending_acks
 - peer_keys
 - known_wifi_endpoints
-- file_transfers
 - broadcast_messages
 
 
@@ -367,7 +360,7 @@ Core tables:
 14) Design Principles in Current Code
 
 - Stable cryptographic identity over unstable transport IDs
-- Profile/capability-gated direct/mesh/file-transfer UX
+- Profile/capability-gated direct/mesh UX
 - Delay-tolerant delivery via persistent queue + route learning
 - Opportunistic multi-transport sending
 - Signed emergency broadcast channel

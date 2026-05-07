@@ -29,7 +29,6 @@ dependencies:
  
   file_picker: ^11.0.2
   mime: ^2.0.0
-  open_filex: ^4.7.0
   external_path: ^2.2.0
   app_links: ^6.3.2
   url_launcher: ^6.3.1

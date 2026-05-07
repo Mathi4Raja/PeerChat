@@ -4,11 +4,9 @@ import 'package:flutter/foundation.dart';
 // Abstract transport interface
 abstract class TransportService {
   Stream<TransportMessage> get onMessageReceived;
-  Stream<FileTransferProgressEvent> get onFileProgress;
   Future<void> init();
   Future<bool> sendMessage(String peerId, Uint8List data,
       {bool isControl = false});
-  Future<bool> sendFile(String peerId, String filePath, String fileId);
   List<String> getConnectedPeerIds(); // Get list of connected peer IDs
   void clearPendingForPeer(String peerId, {bool bulkOnly = false}) {}
   void updatePeerMapping(String transportId, String cryptoPeerId) {}
@@ -33,12 +31,6 @@ abstract class BaseTransport implements TransportService {
   @override
   Stream<TransportMessage> get onMessageReceived => _messageController.stream;
 
-  final StreamController<FileTransferProgressEvent> _fileProgressController =
-      StreamController<FileTransferProgressEvent>.broadcast();
-  @override
-  Stream<FileTransferProgressEvent> get onFileProgress =>
-      _fileProgressController.stream;
-
   void Function(String transportId)? onConnectionEstablished;
   void Function(String transportId)? onConnectionLost;
 
@@ -51,11 +43,6 @@ abstract class BaseTransport implements TransportService {
   @protected
   void notifyMessageReceived(TransportMessage message) {
     _messageController.add(message);
-  }
-
-  @protected
-  void notifyFileProgress(FileTransferProgressEvent event) {
-    _fileProgressController.add(event);
   }
 
   @protected
@@ -98,24 +85,7 @@ abstract class BaseTransport implements TransportService {
   @override
   Future<void> dispose() async {
     await _messageController.close();
-    await _fileProgressController.close();
   }
-}
-
-class FileTransferProgressEvent {
-  final String peerId;
-  final String fileId;
-  final double progress;
-  final bool isCompleted;
-  final String? localPath;
-
-  FileTransferProgressEvent({
-    required this.peerId,
-    required this.fileId,
-    required this.progress,
-    required this.isCompleted,
-    this.localPath,
-  });
 }
 
 // Multi-transport coordinator
@@ -123,20 +93,13 @@ class MultiTransportService extends ChangeNotifier {
   final List<TransportService> _transports = [];
   final StreamController<TransportMessage> _messageController =
       StreamController.broadcast();
-  final StreamController<FileTransferProgressEvent> _fileProgressController =
-      StreamController.broadcast();
 
   Stream<TransportMessage> get onMessageReceived => _messageController.stream;
-  Stream<FileTransferProgressEvent> get onFileProgress =>
-      _fileProgressController.stream;
 
   void addTransport(TransportService transport) {
     _transports.add(transport);
     transport.onMessageReceived.listen((message) {
       _messageController.add(message);
-    });
-    transport.onFileProgress.listen((event) {
-      _fileProgressController.add(event);
     });
   }
 
@@ -176,22 +139,6 @@ class MultiTransportService extends ChangeNotifier {
     }
 
     debugPrint('All transports failed');
-    return false;
-  }
-
-  Future<bool> sendFile(String peerId, String filePath, String fileId) async {
-    debugPrint('=== TRANSPORT SEND FILE ===');
-    debugPrint('Target peer: $peerId');
-    debugPrint('File: $filePath');
-
-    for (final transport in _transports) {
-      try {
-        final success = await transport.sendFile(peerId, filePath, fileId);
-        if (success) return true;
-      } catch (e) {
-        debugPrint('Error sending file via ${transport.runtimeType}: $e');
-      }
-    }
     return false;
   }
 

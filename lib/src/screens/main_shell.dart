@@ -38,8 +38,6 @@ class _MainShellState extends State<MainShell> {
   StreamSubscription<NotificationTapAction>? _notificationTapSubscription;
   StreamSubscription? _webShareEventSubscription;
   StreamSubscription? _webShareUploadSubscription;
-  StreamSubscription? _directShareRequestSubscription;
-  StreamSubscription? _directShareCompletionSubscription;
   final NotificationSoundService _notificationSoundService =
       NotificationSoundService();
   final LocalNotificationService _localNotificationService =
@@ -134,7 +132,7 @@ class _MainShellState extends State<MainShell> {
       if (!mounted) return;
       if (event.contains('Received:')) {
         final fileName = event.split('Received: ').last;
-        _showSuccessToast(context, 'Received: $fileName', isWebShare: true);
+        _showSuccessToast(context, 'Received: $fileName');
       }
     });
 
@@ -150,30 +148,6 @@ class _MainShellState extends State<MainShell> {
         onAccept: () => webShareService.respondToUpload(request.id, true),
         onReject: () => webShareService.respondToUpload(request.id, false),
       );
-    });
-
-    final fileTransferService = appState.fileTransferService;
-    _directShareRequestSubscription ??= fileTransferService.onIncomingRequest.listen((session) {
-      if (!mounted) return;
-      _showIncomingTransferDialog(
-        context: context,
-        senderLabel: NameGenerator.generateShortName(session.peerId),
-        fileName: session.metadata.name,
-        fileSize: session.metadata.size,
-        icon: Icons.link_rounded,
-        accentColor: Colors.purpleAccent,
-        onAccept: () => fileTransferService.acceptTransfer(session.fileId),
-        onReject: () => fileTransferService.rejectTransfer(session.fileId),
-      );
-    });
-
-    _directShareCompletionSubscription ??= fileTransferService.onTransferCompleted.listen((session) {
-      if (!mounted) return;
-      if (session.isIncoming) {
-        _showSuccessToast(context, 'Received: ${session.metadata.name}', isWebShare: false);
-      } else {
-        _showSuccessToast(context, 'Sent: ${session.metadata.name}', isWebShare: false);
-      }
     });
   }
 
@@ -199,8 +173,6 @@ class _MainShellState extends State<MainShell> {
     _notificationTapSubscription?.cancel();
     _webShareEventSubscription?.cancel();
     _webShareUploadSubscription?.cancel();
-    _directShareRequestSubscription?.cancel();
-    _directShareCompletionSubscription?.cancel();
     unawaited(_localNotificationService.dispose());
     unawaited(_notificationSoundService.dispose());
     super.dispose();
@@ -334,13 +306,12 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  void _showSuccessToast(BuildContext context, String message, {required bool isWebShare}) {
+  void _showSuccessToast(BuildContext context, String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Row(
           children: [
-            Icon(isWebShare ? Icons.language_rounded : Icons.link_rounded, 
-              color: Colors.white, size: 20),
+            const Icon(Icons.language_rounded, color: Colors.white, size: 20),
             const SizedBox(width: 12),
             Expanded(
               child: Text(message, 
@@ -349,7 +320,7 @@ class _MainShellState extends State<MainShell> {
             const Icon(Icons.check_circle, color: Colors.white, size: 16),
           ],
         ),
-        backgroundColor: isWebShare ? Colors.blue.shade700 : Colors.purple.shade700,
+        backgroundColor: Colors.blue.shade700,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),

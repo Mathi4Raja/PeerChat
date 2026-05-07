@@ -99,11 +99,6 @@ class MeshRouterService extends ChangeNotifier {
   Stream<ChatMessage> get onMessageReceived =>
       _incomingMessageController.stream;
 
-  // Stream for raw mesh messages — FileTransferService listens to this
-  final StreamController<MeshMessage> _rawMessageController =
-      StreamController<MeshMessage>.broadcast();
-  Stream<MeshMessage> get onRawMessageReceived => _rawMessageController.stream;
-
   // Stream for message status updates (IDs of changed messages)
   final StreamController<String> _statusUpdateController =
       StreamController<String>.broadcast();
@@ -169,6 +164,15 @@ class MeshRouterService extends ChangeNotifier {
   }
 
   Future<void> _broadcastIdentityUpdate(String name) async {
+    // Clear any existing unsent identity updates from local peer to prevent queue growth
+    final existing = await messageQueue.getAllQueued();
+    for (final qm in existing) {
+      if (qm.message.senderPeerId == _cryptoService.localPeerId &&
+          qm.message.type == MessageType.identityUpdate) {
+        await messageQueue.dequeue(qm.message.messageId);
+      }
+    }
+
     final payload = {'peerId': _cryptoService.localPeerId, 'name': name};
     final bytes = utf8.encode(jsonEncode(payload));
 
@@ -365,10 +369,8 @@ class MeshRouterService extends ChangeNotifier {
     final routeStats = await routeManager.getStats();
     final allQueued = await messageQueue.getAllQueued();
 
-    // Filter for only "User" messages (Data/File) for the UI counters
-    final userMessages = allQueued.where((q) =>
-        q.message.type == MessageType.data ||
-        q.message.type == MessageType.fileTransfer);
+    final userMessages =
+        allQueued.where((q) => q.message.type == MessageType.data);
 
     final localCount =
         userMessages.where((q) => q.origin == QueueOrigin.local).length;
@@ -396,8 +398,7 @@ class MeshRouterService extends ChangeNotifier {
 
     for (final qm in messages) {
       // Hide system/protocol messages from the UI list
-      if (qm.message.type != MessageType.data &&
-          qm.message.type != MessageType.fileTransfer) {
+      if (qm.message.type != MessageType.data) {
         continue;
       }
       String? preview;
@@ -802,9 +803,6 @@ class MeshRouterService extends ChangeNotifier {
       if (result == ProcessResult.delivered) {
         DistributedTracer.logEvent('Message Delivered',
             traceId: message.messageId, spanId: spanId);
-        // Notify raw message listeners (like FileTransferService)
-        _rawMessageController.add(message);
-
         final content = await messageManager.decryptContent(message);
         if (content != null) {
           _deliverToApplication(message, content);
@@ -1152,7 +1150,6 @@ class MeshRouterService extends ChangeNotifier {
     _transportMessageSubscription?.cancel();
     _routeUpdateSubscription?.cancel();
     _incomingMessageController.close();
-    _rawMessageController.close();
     _statusUpdateController.close();
     _wifiDiscoveryFailureController.close();
     super.dispose();

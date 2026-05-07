@@ -6,11 +6,11 @@ import { useRef, useState } from 'react';
 const FAQS = [
   {
     question: "What exactly is PeerChat?",
-    answer: "PeerChat is a decentralized, serverless communication platform. It allows users to send encrypted messages and files directly between devices by forming a temporary or stable mesh network using Bluetooth and WiFi."
+    answer: "PeerChat is a decentralized, serverless communication platform. It sends encrypted messages across a temporary or stable mesh network using Bluetooth and WiFi, and includes Web Share for browser-based local file exchange."
   },
   {
     question: "How does it work without internet?",
-    answer: "PeerChat turns your device into a node in a mesh network. It uses BLE (Bluetooth Low Energy) for discovery and small data packets, and WiFi Direct or WiFi Hotspot for high-speed file transfers. If people are in range, they can communicate directly without any cellular towers or ISP."
+    answer: "PeerChat turns your device into a node in a mesh network. It uses BLE (Bluetooth Low Energy) for discovery and small data packets. Web Share hosts files over a local browser-accessible connection when nearby devices need to exchange files."
   },
   {
     question: "Is my data secure?",

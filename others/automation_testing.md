@@ -47,14 +47,14 @@ Output:
 
 During the capture window:
 1. Send a direct text message both ways.
-2. Send one file both ways.
+2. Exercise Web Share upload and download once.
 3. Background/foreground one app once.
 4. Force-close and reopen one app once.
 
 This gives enough signal to debug:
 - reconnect latency
 - queue vs pending ACK state transitions
-- file transfer resume/recovery behavior
+- Web Share upload/download behavior
 
 ## 3) What to check in logs
 

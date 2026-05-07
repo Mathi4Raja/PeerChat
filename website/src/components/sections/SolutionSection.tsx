@@ -295,7 +295,7 @@ export default function SolutionSection() {
             },
             {
               title: 'Resilient',
-              description: 'Works via BLE, WiFi Direct, and WiFi Hotspot. Transfer files or messages — the mesh adapts when reconnected.',
+              description: 'Works via BLE, WiFi Direct, and WiFi Hotspot. Messages keep moving through the mesh, and Web Share handles browser-based local file exchange.',
               color: '#6366F1',
             },
             {
