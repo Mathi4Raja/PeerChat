@@ -271,6 +271,15 @@ class MainActivity : FlutterActivity() {
                     }
                 }
 
+                "getSelfApkPath" -> {
+                    try {
+                        val apkPath = applicationInfo.sourceDir
+                        result.success(apkPath)
+                    } catch (e: Exception) {
+                        result.error("APK_PATH_ERROR", e.message, null)
+                    }
+                }
+
                 else -> result.notImplemented()
             }
         }

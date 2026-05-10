@@ -1,4 +1,5 @@
 import 'package:sqflite/sqflite.dart';
+import 'package:flutter/foundation.dart';
 import 'db_service.dart';
 import '../models/queued_message.dart';
 import '../models/mesh_message.dart';
@@ -36,35 +37,58 @@ class MessageQueue {
   // Add message to queue
   Future<void> enqueue(QueuedMessage message) async {
     final database = await _db.db;
-    await database.insert(
-      'message_queue',
-      message.toMap(),
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
-    await _enforceQueueLimit();
-    await _enforcePerPeerLimit(message.nextHopPeerId);
-  }
+    try {
+      await database.transaction((txn) async {
+        await txn.insert(
+          'message_queue',
+          message.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
 
-  // Enforce maximum queue size, dropping oldest lowest priority messages first
-  Future<void> _enforceQueueLimit() async {
-    final database = await _db.db;
-    final count = Sqflite.firstIntValue(
-          await database.rawQuery('SELECT COUNT(*) FROM message_queue'),
-        ) ??
-        0;
+        // 1. Enforce global queue limit
+        final count = Sqflite.firstIntValue(
+              await txn.rawQuery('SELECT COUNT(*) FROM message_queue'),
+            ) ??
+            0;
 
-    if (count > maxQueueSize) {
-      final excess = count - maxQueueSize;
+        if (count > maxQueueSize) {
+          final excess = count - maxQueueSize;
+          await txn.rawDelete('''
+            DELETE FROM message_queue
+            WHERE message_id IN (
+              SELECT message_id FROM message_queue
+              ORDER BY priority DESC, queued_timestamp ASC
+              LIMIT ?
+            )
+          ''', [excess]);
+        }
 
-      // Delete oldest, lowest priority messages
-      await database.rawDelete('''
-        DELETE FROM message_queue
-        WHERE message_id IN (
-          SELECT message_id FROM message_queue
-          ORDER BY priority DESC, queued_timestamp ASC
-          LIMIT ?
-        )
-      ''', [excess]);
+        // 2. Enforce per-peer limit
+        final peerCount = Sqflite.firstIntValue(
+              await txn.rawQuery(
+                'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
+                [message.nextHopPeerId],
+              ),
+            ) ??
+            0;
+
+        if (peerCount > maxMessagesPerPeer) {
+          final excess = peerCount - maxMessagesPerPeer;
+          await txn.rawDelete('''
+            DELETE FROM message_queue
+            WHERE message_id IN (
+              SELECT message_id FROM message_queue
+              WHERE next_hop_peer_id = ?
+              ORDER BY priority DESC, queued_timestamp ASC
+              LIMIT ?
+            )
+          ''', [message.nextHopPeerId, excess]);
+        }
+      });
+    } catch (e) {
+      // Don't log to AppLogger.e to avoid flooding during mesh floods,
+      // but debugPrint for developers.
+      debugPrint('MessageQueue: Failed to enqueue message (${message.message.messageId}): $e');
     }
   }
 
@@ -193,68 +217,53 @@ class MessageQueue {
   // Returns true if the message was dropped due to exceeding retry limit.
   Future<bool> updateAttempt(String messageId) async {
     final database = await _db.db;
-    final now = DateTime.now().millisecondsSinceEpoch;
+    try {
+      return await database.transaction((txn) async {
+        final now = DateTime.now().millisecondsSinceEpoch;
 
-    // Get current attempt count
-    final result = await database.query(
-      'message_queue',
-      columns: ['attempt_count'],
-      where: 'message_id = ?',
-      whereArgs: [messageId],
-    );
+        // Get current attempt count WITHIN transaction
+        final result = await txn.query(
+          'message_queue',
+          columns: ['attempt_count'],
+          where: 'message_id = ?',
+          whereArgs: [messageId],
+        );
 
-    final currentAttempts =
-        result.isNotEmpty ? (result.first['attempt_count'] as int? ?? 0) : 0;
-    final newAttempts = currentAttempts + 1;
+        if (result.isEmpty) return false;
 
-    // Check if should drop (exceeded max retries)
-    if (newAttempts > QueuedMessage.maxRetries) {
-      await dequeue(messageId);
-      return true;
-    }
+        final currentAttempts = result.first['attempt_count'] as int? ?? 0;
+        final newAttempts = currentAttempts + 1;
 
-    // Exponential backoff: base * 2^min(retryCount, 10)
-    // Caps at ~30s * 1024 ≈ 8.5 hours max delay
-    final backoffMs = QueuedMessage.baseRetryInterval *
-        (1 <<
-            (newAttempts < QueueLimits.backoffExponentCap
-                ? newAttempts
-                : QueueLimits.backoffExponentCap));
-    final nextRetryTime = now + backoffMs;
+        // Check if should drop (exceeded max retries)
+        if (newAttempts > QueuedMessage.maxRetries) {
+          await txn.delete(
+            'message_queue',
+            where: 'message_id = ?',
+            whereArgs: [messageId],
+          );
+          return true;
+        }
 
-    await database.rawUpdate('''
-      UPDATE message_queue
-      SET attempt_count = ?,
-          last_attempt_timestamp = ?,
-          next_retry_time = ?
-      WHERE message_id = ?
-    ''', [newAttempts, now, nextRetryTime, messageId]);
-    return false;
-  }
+        // Exponential backoff: base * 2^min(retryCount, 10)
+        final backoffMs = QueuedMessage.baseRetryInterval *
+            (1 <<
+                (newAttempts < QueueLimits.backoffExponentCap
+                    ? newAttempts
+                    : QueueLimits.backoffExponentCap));
+        final nextRetryTime = now + backoffMs;
 
-  /// Enforce per-destination queue limit. Drops oldest messages for a peer
-  /// when they exceed maxMessagesPerPeer.
-  Future<void> _enforcePerPeerLimit(String peerId) async {
-    final database = await _db.db;
-    final count = Sqflite.firstIntValue(
-          await database.rawQuery(
-            'SELECT COUNT(*) FROM message_queue WHERE next_hop_peer_id = ?',
-            [peerId],
-          ),
-        ) ??
-        0;
-
-    if (count > maxMessagesPerPeer) {
-      final excess = count - maxMessagesPerPeer;
-      await database.rawDelete('''
-        DELETE FROM message_queue
-        WHERE message_id IN (
-          SELECT message_id FROM message_queue
-          WHERE next_hop_peer_id = ?
-          ORDER BY priority DESC, queued_timestamp ASC
-          LIMIT ?
-        )
-      ''', [peerId, excess]);
+        await txn.rawUpdate('''
+          UPDATE message_queue
+          SET attempt_count = ?,
+              last_attempt_timestamp = ?,
+              next_retry_time = ?
+          WHERE message_id = ?
+        ''', [newAttempts, now, nextRetryTime, messageId]);
+        return false;
+      });
+    } catch (e) {
+      debugPrint('MessageQueue: Failed to update attempt ($messageId): $e');
+      return false;
     }
   }
 

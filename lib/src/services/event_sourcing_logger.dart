@@ -126,4 +126,29 @@ class EventSourcingLogger {
       orderBy: 'timestamp ASC',
     );
   }
+
+  /// Write an event within an existing transaction to guarantee ACID consistency.
+  Future<void> logEventWithinTransaction(
+    DatabaseExecutor txn, {
+    required String entityId,
+    required String eventType,
+    required Map<String, dynamic> payload,
+    String? correlationId,
+  }) async {
+    final eventId = _uuid.v4();
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final effectiveCorrelationId = correlationId ?? entityId;
+
+    final eventRecord = {
+      'event_id': eventId,
+      'timestamp': now,
+      'entity_id': entityId,
+      'event_type': eventType,
+      'payload': jsonEncode(payload),
+      'correlation_id': effectiveCorrelationId,
+    };
+
+    await txn.insert('event_log', eventRecord,
+        conflictAlgorithm: ConflictAlgorithm.replace);
+  }
 }

@@ -185,6 +185,17 @@ class DeviceSystemService {
       return false;
     }
   }
+
+  /// Returns the source path of the current app's APK (Android only).
+  Future<String?> getSelfApkPath() async {
+    if (!Platform.isAndroid) return null;
+    try {
+      return await _channel.invokeMethod<String>('getSelfApkPath');
+    } catch (e) {
+      debugPrint('Error getting self APK path: $e');
+      return null;
+    }
+  }
 }
 
 class MediaAsset {

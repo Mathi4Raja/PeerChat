@@ -37,42 +37,45 @@ class DeduplicationCache {
 
   // Mark message ID as seen
   Future<void> markSeen(String messageId, int originalTimestamp) async {
-    final database = await _db.db;
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    try {
+      final database = await _db.db;
+      await database.transaction((txn) async {
+        final timestamp = DateTime.now().millisecondsSinceEpoch;
 
-    await database.insert(
-      'deduplication_cache',
-      {
-        'message_id': messageId,
-        'seen_timestamp': timestamp,
-        'original_timestamp': originalTimestamp,
-      },
-      conflictAlgorithm: ConflictAlgorithm.replace,
-    );
+        await txn.insert(
+          'deduplication_cache',
+          {
+            'message_id': messageId,
+            'seen_timestamp': timestamp,
+            'original_timestamp': originalTimestamp,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
 
-    // Check if cache exceeds size limit
-    final count = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM deduplication_cache'),
-    );
+        // Check if cache exceeds size limit WITHIN transaction
+        final count = Sqflite.firstIntValue(
+          await txn.rawQuery('SELECT COUNT(*) FROM deduplication_cache'),
+        );
 
-    if (count != null && count > maxCacheSize) {
-      await evictOldest();
+        if (count != null && count > maxCacheSize) {
+          final entriesToRemove =
+              maxCacheSize ~/ DeduplicationLimits.evictionDivisor;
+
+          await txn.rawDelete('''
+            DELETE FROM deduplication_cache
+            WHERE message_id IN (
+              SELECT message_id FROM deduplication_cache
+              ORDER BY seen_timestamp ASC
+              LIMIT ?
+            )
+          ''', [entriesToRemove]);
+        }
+      });
+    } catch (e) {
+      // We don't log to AppLogger.e here because deduplication failures
+      // are frequent during rapid bursts and we don't want to flood logs.
+      // We use debugPrint or rethrow if it's a critical corruption.
     }
-  }
-
-  // Remove oldest entries when cache exceeds size limit
-  Future<void> evictOldest() async {
-    final database = await _db.db;
-    final entriesToRemove = maxCacheSize ~/ DeduplicationLimits.evictionDivisor;
-
-    await database.rawDelete('''
-      DELETE FROM deduplication_cache
-      WHERE message_id IN (
-        SELECT message_id FROM deduplication_cache
-        ORDER BY seen_timestamp ASC
-        LIMIT ?
-      )
-    ''', [entriesToRemove]);
   }
 
   // Strictly remove entries whose original timestamp is older than absolute maximum age

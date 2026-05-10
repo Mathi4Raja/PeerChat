@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
@@ -17,8 +19,7 @@ class ShareAppScreen extends StatefulWidget {
 }
 
 class _ShareAppScreenState extends State<ShareAppScreen> {
-  static const String _downloadUrl =
-      'https://github.com/Mathi4Raja/P2P-app/releases/download/v1.0.0/PeerChat.apk';
+  static const String _downloadUrl = 'https://peerchat1.vercel.app';
   static const String _shareText =
       'Try PeerChat — serverless, encrypted P2P messaging. No account needed.\n$_downloadUrl';
 
@@ -56,6 +57,24 @@ class _ShareAppScreenState extends State<ShareAppScreen> {
     setState(() => _isStartingWebShare = true);
     try {
       if (!webShareService.isRunning) {
+        // Automatically add current app APK to shared files
+        try {
+          final apkPath = await appState.deviceService.getSelfApkPath();
+          if (apkPath != null) {
+            final file = File(apkPath);
+            if (await file.exists()) {
+              final apkFile = PlatformFile(
+                path: apkPath,
+                name: 'PeerChat.apk',
+                size: await file.length(),
+              );
+              webShareService.addFiles([apkFile]);
+            }
+          }
+        } catch (e) {
+          debugPrint('Could not auto-add APK to Web Share: $e');
+        }
+
         await appState.setWebShareIsolation(true);
         try {
           await webShareService.start();

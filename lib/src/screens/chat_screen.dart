@@ -452,12 +452,12 @@ class _ChatScreenState extends State<ChatScreen> {
     if (mounted) {
       await _applyStatusUpdate(messageId);
 
-      if (result == SendResult.routed) {
+      if (mounted && result == SendResult.routed) {
         final soundEnabled =
             Provider.of<MenuSettingsController>(context, listen: false)
                 .notifications
                 .sound;
-        if (soundEnabled && mounted) {
+        if (soundEnabled) {
           unawaited(_notificationSoundService.playSentTick());
         }
       }

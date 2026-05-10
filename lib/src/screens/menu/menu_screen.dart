@@ -75,7 +75,7 @@ class MenuScreen extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'Version 1.0.0 (Secure Mesh)',
+                        'Version 1.0.1 (Secure Mesh)',
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           color: Colors.white.withValues(alpha: 0.8),

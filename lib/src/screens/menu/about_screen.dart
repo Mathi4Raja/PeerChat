@@ -6,7 +6,7 @@ import '../../theme.dart';
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  static const String _appVersion = '1.0.0';
+  static const String _appVersion = '1.0.1';
   static const String _baseUrl = 'https://peerchat.mathi.live';
   static const String _changelogUrl = '$_baseUrl/changelog';
   static const String _tosUrl = '$_baseUrl/tos';

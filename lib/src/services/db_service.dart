@@ -9,6 +9,7 @@ import '../config/timer_config.dart';
 import '../config/limits_config.dart';
 import '../utils/app_logger.dart';
 import '../utils/state_guard.dart';
+import 'event_sourcing_logger.dart';
 
 class DBService {
   static final DBService _instance = DBService._internal();
@@ -606,49 +607,75 @@ class DBService {
 
   Future<void> updatePeerName(String id, String name) async {
     final d = await db;
-    await d.update(
-      'peers',
-      {'displayName': name},
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    try {
+      await d.update(
+        'peers',
+        {'displayName': name},
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    } catch (e) {
+      AppLogger.e('DBService: Failed to update peer name ($id): $e');
+    }
   }
 
   Future<void> upsertPeer(Peer p) async {
     final d = await db;
+    try {
+      await d.transaction((txn) async {
+        // Check if peer already exists to merge discovery flags
+        final List<Map<String, dynamic>> existing = await txn.query(
+          'peers',
+          where: 'id = ?',
+          whereArgs: [p.id],
+        );
 
-    // Check if peer already exists to merge discovery flags
-    final List<Map<String, dynamic>> existing = await d.query(
-      'peers',
-      where: 'id = ?',
-      whereArgs: [p.id],
-    );
+        Peer mergedPeer;
+        if (existing.isNotEmpty) {
+          final oldPeer = Peer.fromMap(existing.first);
+          // Merge flags: if either was true, it remains true
+          mergedPeer = Peer(
+            id: p.id,
+            displayName: p.displayName != 'Unknown Device'
+                ? p.displayName
+                : oldPeer.displayName,
+            address: p.address,
+            lastSeen: p.lastSeen,
+            hasApp: p.hasApp || oldPeer.hasApp,
+            isWiFi: p.isWiFi || oldPeer.isWiFi,
+            isBluetooth: p.isBluetooth || oldPeer.isBluetooth,
+          );
+        } else {
+          mergedPeer = p;
+        }
 
-    if (existing.isNotEmpty) {
-      final oldPeer = Peer.fromMap(existing.first);
-      // Merge flags: if either was true, it remains true
-      final mergedPeer = Peer(
-        id: p.id,
-        displayName: p.displayName != 'Unknown Device'
-            ? p.displayName
-            : oldPeer.displayName,
-        address: p.address,
-        lastSeen: p.lastSeen,
-        hasApp: p.hasApp || oldPeer.hasApp,
-        isWiFi: p.isWiFi || oldPeer.isWiFi,
-        isBluetooth: p.isBluetooth || oldPeer.isBluetooth,
-      );
-      await d.insert('peers', mergedPeer.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
-    } else {
-      await d.insert('peers', p.toMap(),
-          conflictAlgorithm: ConflictAlgorithm.replace);
+        await txn.insert('peers', mergedPeer.toMap(),
+            conflictAlgorithm: ConflictAlgorithm.replace);
+
+        await EventSourcingLogger().logEventWithinTransaction(
+          txn,
+          entityId: p.id,
+          eventType: 'PEER_UPSERT',
+          payload: {
+            'displayName': mergedPeer.displayName,
+            'isWiFi': mergedPeer.isWiFi,
+            'isBluetooth': mergedPeer.isBluetooth,
+          },
+        );
+      });
+    } catch (e) {
+      AppLogger.e('DBService: Failed to upsert peer (${p.id}): $e');
+      rethrow;
     }
   }
 
   Future<void> deletePeer(String peerId) async {
     final d = await db;
-    await d.delete('peers', where: 'id = ?', whereArgs: [peerId]);
+    try {
+      await d.delete('peers', where: 'id = ?', whereArgs: [peerId]);
+    } catch (e) {
+      AppLogger.e('DBService: Failed to delete peer ($peerId): $e');
+    }
   }
 
   Future<List<Peer>> allPeers() async {
@@ -673,8 +700,12 @@ class DBService {
   // Chat message operations
   Future<void> insertChatMessage(ChatMessage message) async {
     final d = await db;
-    await d.insert('chat_messages', message.toMap(),
-        conflictAlgorithm: ConflictAlgorithm.replace);
+    try {
+      await d.insert('chat_messages', message.toMap(),
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    } catch (e) {
+      AppLogger.e('DBService: Failed to insert chat message (${message.id}): $e');
+    }
   }
 
   Future<List<ChatMessage>> getChatMessages(String peerId) async {
@@ -726,30 +757,58 @@ class DBService {
     String? correlationId,
   }) async {
     final d = await db;
-    // Check current state for strict transition
-    final currentRows = await d.query('chat_messages',
-        columns: ['status'], where: 'id = ?', whereArgs: [messageId]);
-    if (currentRows.isNotEmpty) {
-      final currentStatusIndex = currentRows.first['status'] as int;
-      final currentStatus = MessageStatus.values[currentStatusIndex];
-      StateGuard.transitionMessage(messageId, currentStatus, status,
-          correlationId: correlationId);
-    }
+    try {
+      await d.transaction((txn) async {
+        // 1. Query current state WITHIN transaction
+        final currentRows = await txn.query('chat_messages',
+            columns: ['status'], where: 'id = ?', whereArgs: [messageId]);
 
-    final values = <String, Object?>{
-      'status': status.index,
-    };
-    if (hopCount != null) {
-      values['hopCount'] = hopCount;
-    } else if (clearHopCount) {
-      values['hopCount'] = null;
+        if (currentRows.isNotEmpty) {
+          final currentStatusIndex = currentRows.first['status'] as int;
+          final currentStatus = MessageStatus.values[currentStatusIndex];
+
+          // 2. Validate transition (throws if invalid)
+          StateGuard.transitionMessage(messageId, currentStatus, status,
+              correlationId: correlationId);
+
+          // 3. Log event WITHIN transaction
+          await EventSourcingLogger().logEventWithinTransaction(
+            txn,
+            entityId: messageId,
+            eventType: 'MESSAGE_STATUS_UPDATE',
+            payload: {
+              'from': currentStatus.name,
+              'to': status.name,
+              'hopCount': hopCount,
+            },
+            correlationId: correlationId,
+          );
+        }
+
+        // 4. Perform update
+        final values = <String, Object?>{
+          'status': status.index,
+        };
+        if (hopCount != null) {
+          values['hopCount'] = hopCount;
+        } else if (clearHopCount) {
+          values['hopCount'] = null;
+        }
+
+        await txn.update(
+          'chat_messages',
+          values,
+          where: 'id = ?',
+          whereArgs: [messageId],
+        );
+      });
+    } catch (e) {
+      if (e is InvalidStateTransitionException) {
+        rethrow;
+      }
+      AppLogger.e('DBService: Failed to update message status ($messageId): $e');
+      rethrow;
     }
-    await d.update(
-      'chat_messages',
-      values,
-      where: 'id = ?',
-      whereArgs: [messageId],
-    );
   }
 
   // Peer public key operations
@@ -839,12 +898,16 @@ class DBService {
 
   Future<void> markMessagesAsRead(String peerId) async {
     final d = await db;
-    await d.update(
-      'chat_messages',
-      {'isRead': 1},
-      where: 'peerId = ? AND isRead = 0',
-      whereArgs: [peerId],
-    );
+    try {
+      await d.update(
+        'chat_messages',
+        {'isRead': 1},
+        where: 'peerId = ? AND isRead = 0',
+        whereArgs: [peerId],
+      );
+    } catch (e) {
+      AppLogger.e('DBService: Failed to mark messages as read ($peerId): $e');
+    }
   }
 
   /// Returns one row per peer with the most recent chat message.
@@ -1010,82 +1073,107 @@ class DBService {
     List<String> preservePeerIds = const [],
   }) async {
     final d = await db;
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final peerCutoff = now - stalePeerAge.inMilliseconds;
-    final routeCutoff = now - staleRouteAge.inMilliseconds;
-    final endpointCutoff = now - staleEndpointAge.inMilliseconds;
+    try {
+      return await d.transaction((txn) async {
+        final now = DateTime.now().millisecondsSinceEpoch;
+        final peerCutoff = now - stalePeerAge.inMilliseconds;
+        final routeCutoff = now - staleRouteAge.inMilliseconds;
+        final endpointCutoff = now - staleEndpointAge.inMilliseconds;
 
-    String stalePeerWhere = 'lastSeen < ?';
-    final stalePeerArgs = <Object?>[peerCutoff];
-    if (preservePeerIds.isNotEmpty) {
-      final placeholders = List.filled(preservePeerIds.length, '?').join(',');
-      stalePeerWhere += ' AND id NOT IN ($placeholders)';
-      stalePeerArgs.addAll(preservePeerIds);
+        String stalePeerWhere = 'lastSeen < ?';
+        final stalePeerArgs = <Object?>[peerCutoff];
+        if (preservePeerIds.isNotEmpty) {
+          final placeholders =
+              List.filled(preservePeerIds.length, '?').join(',');
+          stalePeerWhere += ' AND id NOT IN ($placeholders)';
+          stalePeerArgs.addAll(preservePeerIds);
+        }
+
+        final stalePeerRows = await txn.query(
+          'peers',
+          columns: ['id'],
+          where: stalePeerWhere,
+          whereArgs: stalePeerArgs,
+        );
+        final stalePeerIds = stalePeerRows
+            .map((row) => row['id'] as String?)
+            .whereType<String>()
+            .toList();
+
+        int removedRoutesViaStalePeers = 0;
+        int removedQueueViaStalePeers = 0;
+        if (stalePeerIds.isNotEmpty) {
+          final placeholders = List.filled(stalePeerIds.length, '?').join(',');
+
+          removedRoutesViaStalePeers = await txn.rawDelete(
+            '''
+            DELETE FROM routes
+            WHERE destination_peer_id IN ($placeholders)
+               OR next_hop_peer_id IN ($placeholders)
+            ''',
+            [...stalePeerIds, ...stalePeerIds],
+          );
+
+          removedQueueViaStalePeers = await txn.rawDelete(
+            'DELETE FROM message_queue WHERE next_hop_peer_id IN ($placeholders)',
+            stalePeerIds,
+          );
+        }
+
+        final removedPeers = await txn.delete(
+          'peers',
+          where: stalePeerWhere,
+          whereArgs: stalePeerArgs,
+        );
+
+        final removedRoutesByAge = await txn.delete(
+          'routes',
+          where: 'last_updated_timestamp < ? AND last_used_timestamp < ?',
+          whereArgs: [routeCutoff, routeCutoff],
+        );
+
+        // Fallback: purge identity updates older than 24 hours from the queue
+        final identityCutoff = now - (24 * 60 * 60 * 1000);
+        final removedIdentityUpdates = await txn.delete(
+          'message_queue',
+          where: "message_id LIKE 'id_%' AND queued_timestamp < ?",
+          whereArgs: [identityCutoff],
+        );
+
+        final removedEndpoints = await txn.delete(
+          'known_wifi_endpoints',
+          where: 'last_connected_timestamp < ?',
+          whereArgs: [endpointCutoff],
+        );
+
+        final result = {
+          'removed_peers': removedPeers,
+          'removed_routes_by_age': removedRoutesByAge,
+          'removed_routes_via_stale_peers': removedRoutesViaStalePeers,
+          'removed_queue_via_stale_peers': removedQueueViaStalePeers,
+          'removed_known_endpoints': removedEndpoints,
+          'removed_identity_updates': removedIdentityUpdates,
+        };
+
+        await EventSourcingLogger().logEventWithinTransaction(
+          txn,
+          entityId: 'SYSTEM_CLEANUP',
+          eventType: 'STALE_DATA_PURGE',
+          payload: result,
+        );
+
+        return result;
+      });
+    } catch (e) {
+      AppLogger.e('DBService: Stale network data cleanup failed: $e');
+      return {
+        'removed_peers': 0,
+        'removed_routes_by_age': 0,
+        'removed_routes_via_stale_peers': 0,
+        'removed_queue_via_stale_peers': 0,
+        'removed_known_endpoints': 0,
+        'removed_identity_updates': 0,
+      };
     }
-
-    final stalePeerRows = await d.query(
-      'peers',
-      columns: ['id'],
-      where: stalePeerWhere,
-      whereArgs: stalePeerArgs,
-    );
-    final stalePeerIds = stalePeerRows
-        .map((row) => row['id'] as String?)
-        .whereType<String>()
-        .toList();
-
-    int removedRoutesViaStalePeers = 0;
-    int removedQueueViaStalePeers = 0;
-    if (stalePeerIds.isNotEmpty) {
-      final placeholders = List.filled(stalePeerIds.length, '?').join(',');
-
-      removedRoutesViaStalePeers = await d.rawDelete(
-        '''
-        DELETE FROM routes
-        WHERE destination_peer_id IN ($placeholders)
-           OR next_hop_peer_id IN ($placeholders)
-        ''',
-        [...stalePeerIds, ...stalePeerIds],
-      );
-
-      removedQueueViaStalePeers = await d.rawDelete(
-        'DELETE FROM message_queue WHERE next_hop_peer_id IN ($placeholders)',
-        stalePeerIds,
-      );
-    }
-
-    final removedPeers = await d.delete(
-      'peers',
-      where: stalePeerWhere,
-      whereArgs: stalePeerArgs,
-    );
-
-    final removedRoutesByAge = await d.delete(
-      'routes',
-      where: 'last_updated_timestamp < ? AND last_used_timestamp < ?',
-      whereArgs: [routeCutoff, routeCutoff],
-    );
-
-    // Fallback: purge identity updates older than 24 hours from the queue
-    final identityCutoff = now - (24 * 60 * 60 * 1000);
-    await d.delete(
-      'message_queue',
-      where: "message_id LIKE 'id_%' AND queued_timestamp < ?",
-      whereArgs: [identityCutoff],
-    );
-
-    final removedEndpoints = await d.delete(
-      'known_wifi_endpoints',
-      where: 'last_connected_timestamp < ?',
-      whereArgs: [endpointCutoff],
-    );
-
-    return {
-      'removed_peers': removedPeers,
-      'removed_routes_by_age': removedRoutesByAge,
-      'removed_routes_via_stale_peers': removedRoutesViaStalePeers,
-      'removed_queue_via_stale_peers': removedQueueViaStalePeers,
-      'removed_known_endpoints': removedEndpoints,
-    };
   }
 }

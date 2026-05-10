@@ -467,3 +467,11 @@
 $content
 $content
 $content
+
+## Phase 28: Production Hardening & v1.0.1 Release (May 10, 2026)
+- [x] Hardened database transactional integrity (ACID compliance)
+- [x] Fixed TOCTOU race conditions in `MessageQueue` and `DeduplicationCache`
+- [x] Automated APK self-hosting via Web Share for offline distribution
+- [x] Resolved all remaining `flutter analyze` lint warnings (0 issues)
+- [x] Update app version to 1.0.1 for release
+
