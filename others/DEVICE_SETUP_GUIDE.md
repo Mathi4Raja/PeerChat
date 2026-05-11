@@ -299,7 +299,7 @@ flutter run -d all
 
 ## Ready to Test!
 
-Once all devices show each other in the Peers list, you're ready to follow the TESTING_GUIDE.md for detailed test scenarios.
+Once all devices show each other in the Peers list, you're ready to test basic messaging and mesh routing.
 
 Good luck! 🚀
 
