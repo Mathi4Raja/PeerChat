@@ -8,6 +8,15 @@ $pubspec = Get-Content "pubspec.yaml" -Raw
 if ($pubspec -match "version:\s*([0-9.]+)") {
     $version = $Matches[1]
     Write-Host "Detected version: $version" -ForegroundColor Green
+
+    # Sync version to Dart utility
+    $versionFile = "lib/src/utils/app_version.dart"
+    if (Test-Path $versionFile) {
+        $content = Get-Content $versionFile -Raw
+        $newContent = $content -replace "static const String version = '.*';", "static const String version = '$version';"
+        $newContent | Set-Content $versionFile -NoNewline
+        Write-Host "Synced version to $versionFile" -ForegroundColor Green
+    }
 } else {
     Write-Host "Could not detect version from pubspec.yaml. Using 'unknown'." -ForegroundColor Yellow
     $version = "unknown"

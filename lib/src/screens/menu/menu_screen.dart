@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:peerchat_secure/src/utils/app_version.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import '../../theme.dart';
 import 'about_screen.dart';
@@ -75,7 +76,7 @@ class MenuScreen extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        'Version 1.0.1 (Secure Mesh)',
+                        AppVersion.displayVersion,
                         style: GoogleFonts.inter(
                           fontSize: 12,
                           color: Colors.white.withValues(alpha: 0.8),

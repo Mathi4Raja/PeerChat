@@ -1,6 +1,6 @@
 PeerChat - System Architecture (Current)
 
-Last updated: February 25, 2026
+Last updated: May 11, 2026
 Source of truth: current implementation in lib/src/** and Android host glue.
 
 This document uses the original style: plain text and ASCII flow diagrams.

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:peerchat_secure/src/utils/app_version.dart';
 import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../theme.dart';
@@ -6,7 +7,7 @@ import '../../theme.dart';
 class AboutScreen extends StatelessWidget {
   const AboutScreen({super.key});
 
-  static const String _appVersion = '1.0.1';
+  static const String _appVersion = AppVersion.version;
   static const String _baseUrl = 'https://peerchat.mathi.live';
   static const String _changelogUrl = '$_baseUrl/changelog';
   static const String _tosUrl = '$_baseUrl/tos';

@@ -194,6 +194,15 @@ class _LocationMapScreenState extends State<LocationMapScreen> {
                     radiusKm: _settings.radiusKm.toDouble(),
                   ),
                 ),
+                RichAttributionWidget(
+                  alignment: AttributionAlignment.bottomLeft,
+                  attributions: [
+                    TextSourceAttribution(
+                      'OpenStreetMap contributors',
+                      onTap: () => launchUrl(Uri.parse('https://openstreetmap.org/copyright')),
+                    ),
+                  ],
+                ),
                 MarkerLayer(
                   markers: [
                     Marker(
