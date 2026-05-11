@@ -11,7 +11,7 @@ We only provide security updates for the latest version of PeerChat.
 ## Reporting a Vulnerability
 We take the security of PeerChat very seriously. If you find a security vulnerability, please **do not open a public issue**. Instead, follow these steps:
 
-1. **Email us**: Send a detailed report to `mathiraja@mathi.live`.
+1. **Email us**: Send a detailed report to `mathi.raja.333@gmail.com`.
 2. **Include Details**: Describe the vulnerability, how to reproduce it, and the potential impact.
 3. **Wait for Response**: We will acknowledge your report within 48 hours and provide a timeline for a fix.
 

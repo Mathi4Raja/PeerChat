@@ -12,4 +12,7 @@
   - Added spans to `MeshRouterService` and `MessageManager` for end-to-end debugging of mesh network packets without breaking binary backward compatibility.
 - **Audits**: Validated `DiscoveryService` and other isolated modules.
 
-*No known blockers.*
+
+## Phase: Documentation & Maintenance (Ongoing)
+- **Security Policy**: Updated reporting contact email to `mathi.raja.333@gmail.com` for centralized vulnerability management.
+- **README Cleanup**: Removed the "Built with ❤️" footer and associated social links for a cleaner, more professional landing page.

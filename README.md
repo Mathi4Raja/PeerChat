@@ -63,5 +63,3 @@ PeerChat is licensed under the **GNU General Public License v3.0**.
 
 *Protecting the decentralized future—commercial use requires a separate license.*
 
----
-Built with ❤️ for the decentralized web. [Star us on GitHub](https://github.com/Mathi4Raja/P2P-app) if you believe in privacy.
