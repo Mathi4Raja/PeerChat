@@ -1,8 +1,11 @@
 import 'dart:typed_data';
 import 'dart:convert';
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:sodium/sodium.dart';
+import 'package:device_info_plus/device_info_plus.dart';
+import 'package:crypto/crypto.dart' as crypto;
 
 class CryptoService {
   final Sodium _sodium;
@@ -50,8 +53,9 @@ class CryptoService {
       }
     }
 
-    // Generate new encryption keypair
-    final keypair = _sodium.crypto.box.keyPair();
+    // Generate new encryption keypair from stable hardware seed
+    final seed = await _getStableSeed('encryption');
+    final keypair = _sodium.crypto.box.seedKeyPair(SecureKey.fromList(_sodium, seed));
     final pkBytes = keypair.publicKey;
     final skBytes = keypair.secretKey.extractBytes();
     await _secureStorage.write(
@@ -77,8 +81,9 @@ class CryptoService {
       }
     }
 
-    // Generate new signing keypair
-    final keypair = _sodium.crypto.sign.keyPair();
+    // Generate new signing keypair from stable hardware seed
+    final seed = await _getStableSeed('signing');
+    final keypair = _sodium.crypto.sign.seedKeyPair(SecureKey.fromList(_sodium, seed));
     final pkBytes = keypair.publicKey;
     final skBytes = keypair.secretKey.extractBytes();
     await _secureStorage.write(
@@ -86,6 +91,38 @@ class CryptoService {
       value: '${base64Encode(skBytes)}|${base64Encode(pkBytes)}',
     );
     _signingKeyPair = keypair;
+  }
+
+  Future<Uint8List> _getStableSeed(String purpose) async {
+    final deviceInfo = DeviceInfoPlugin();
+    String hardwareId = '';
+
+    try {
+      if (Platform.isAndroid) {
+        final androidInfo = await deviceInfo.androidInfo;
+        hardwareId = androidInfo.id; // stable androidId
+      } else if (Platform.isIOS) {
+        final iosInfo = await deviceInfo.iosInfo;
+        hardwareId = iosInfo.identifierForVendor ?? '';
+      } else if (Platform.isWindows) {
+        final windowsInfo = await deviceInfo.windowsInfo;
+        hardwareId = windowsInfo.deviceId;
+      }
+    } catch (e) {
+      // Fallback if hardware ID fetch fails
+      hardwareId = '';
+    }
+
+    if (hardwareId.isEmpty) {
+      // Fallback to random if no hardware ID available
+      return _sodium.randombytes.buf(32);
+    }
+
+    // Hash the hardware ID with a purpose-specific salt to get a deterministic 32-byte seed
+    final hash = crypto.sha256.convert(
+      utf8.encode('PeerChat_${purpose}_v1_$hardwareId'),
+    );
+    return Uint8List.fromList(hash.bytes);
   }
 
   // Encrypt message content using recipient's public key

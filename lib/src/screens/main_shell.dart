@@ -11,6 +11,8 @@ import '../services/menu_settings_service.dart';
 import '../services/local_notification_service.dart';
 import '../services/notification_sound_service.dart';
 import '../theme.dart';
+import '../models/peer.dart';
+import '../config/identity_ui_config.dart';
 import '../utils/name_generator.dart';
 import 'chat_screen.dart';
 import 'chats_list_screen.dart';
@@ -72,7 +74,18 @@ class _MainShellState extends State<MainShell> {
       final settings = Provider.of<MenuSettingsController>(context, listen: false)
           .notifications;
       if (settings.chatMessages) {
-        final senderLabel = NameGenerator.generateShortName(chatMessage.peerId);
+        final appState = Provider.of<AppState>(context, listen: false);
+        final peer = appState.peers.cast<Peer?>().firstWhere(
+              (p) => p?.id == chatMessage.peerId,
+              orElse: () => null,
+            );
+        final cleaned = peer != null ? NameGenerator.cleanName(peer.displayName) : '';
+        final senderLabel = (cleaned.isEmpty ||
+                cleaned == IdentityUiConfig.defaultDisplayName ||
+                (cleaned.length > 40 && cleaned == chatMessage.peerId))
+            ? NameGenerator.generateName(chatMessage.peerId)
+            : cleaned;
+
         unawaited(
           _localNotificationService.showChatMessage(
             peerId: chatMessage.peerId,
@@ -106,7 +119,8 @@ class _MainShellState extends State<MainShell> {
             content: content,
             localPeerId: localPeerId,
           )) {
-        final senderLabel = NameGenerator.generateShortName(senderId);
+        // Keep broadcast notifications as before (generated name)
+        final senderLabel = NameGenerator.generateName(senderId);
         final body = _extractBroadcastBody(content);
         unawaited(
           _localNotificationService.showBroadcastMention(
@@ -195,7 +209,7 @@ class _MainShellState extends State<MainShell> {
     final targetLabel = header.substring(0, colonIndex).trim().toLowerCase();
     if (targetLabel.isEmpty) return false;
 
-    final localShort = NameGenerator.generateShortName(localPeerId).toLowerCase();
+    final localShort = NameGenerator.generateName(localPeerId).toLowerCase();
     final localFull = NameGenerator.generateName(localPeerId).toLowerCase();
     return targetLabel == localShort || targetLabel == localFull;
   }

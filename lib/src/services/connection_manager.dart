@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'db_service.dart';
 import 'crypto_service.dart';
 import '../models/peer.dart';
+import '../models/chat_message.dart';
 import '../models/handshake_message.dart';
 import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
@@ -190,6 +191,10 @@ class ConnectionManager extends ChangeNotifier {
       // Delete old peer entry with transport ID (if exists)
       await _db.deletePeer(transportId);
 
+      // Check for name change to notify user
+      final existingPeer = await _db.getPeer(handshake.peerId);
+      final String? oldName = existingPeer?.displayName;
+
       // Save peer to database with crypto ID and public key
       final peer = Peer(
         id: handshake.peerId, // Use crypto ID as primary ID
@@ -200,6 +205,23 @@ class ConnectionManager extends ChangeNotifier {
       );
 
       await _db.upsertPeer(peer);
+
+      // If name changed meaningfully, insert a system message
+      if (oldName != null &&
+          oldName != handshake.displayName &&
+          oldName != 'Unknown Device' &&
+          handshake.displayName != 'Unknown Device') {
+        final systemMsg = ChatMessage(
+          id: 'sys_${DateTime.now().millisecondsSinceEpoch}_${handshake.peerId.hashCode}',
+          peerId: handshake.peerId,
+          content: 'Identity updated: $oldName is now ${handshake.displayName}',
+          timestamp: DateTime.now().millisecondsSinceEpoch,
+          isSentByMe: false,
+          status: MessageStatus.sent,
+          isSystem: true,
+        );
+        await _db.insertChatMessage(systemMsg);
+      }
 
       // Save both public keys
       await _db.savePeerKeys(

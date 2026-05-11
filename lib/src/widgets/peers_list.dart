@@ -157,12 +157,12 @@ class PeersList extends StatelessWidget {
 
   Widget _buildPeerTile(BuildContext context, Peer peer, bool isConnected) {
     final bool isVerified = peer.hasApp;
-    String displayName = peer.displayName;
+    String displayName = NameGenerator.cleanName(peer.displayName);
     if (displayName == IdentityUiConfig.defaultDisplayName ||
         (displayName.length > 40 && displayName == peer.id)) {
-      displayName = NameGenerator.generateShortName(peer.id);
+      displayName = NameGenerator.generateName(peer.id);
     }
-    final initials = NameGenerator.generateInitials(peer.id);
+    final initials = NameGenerator.generateInitials(peer.id, displayName: displayName);
 
     final bool isWiFi = peer.address.contains('.') || peer.address == 'mDNS';
     final bool isBT =

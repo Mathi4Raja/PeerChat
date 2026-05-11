@@ -138,8 +138,6 @@ class NameGenerator {
     'Enchanter',
   ];
 
-  /// Generate a deterministic human-readable name from a base64-encoded key
-  /// Same key always produces the same name
   static String generateName(String base64Key) {
     try {
       // Decode base64 to bytes
@@ -163,6 +161,12 @@ class NameGenerator {
     }
   }
 
+  /// Strips transport suffixes like " (A1B2)" from a name
+  static String cleanName(String name) {
+    final suffixPattern = RegExp(r'(\s\([A-Z0-9]{4}\)|_[A-Z0-9]{4})$');
+    return name.replaceFirst(suffixPattern, '').trim();
+  }
+
   /// Generate a short version (without number) for compact display
   static String generateShortName(String base64Key) {
     try {
@@ -178,14 +182,29 @@ class NameGenerator {
   }
 
   /// Get initials from generated name (e.g., "Swift Phoenix" -> "SP")
-  static String generateInitials(String base64Key) {
+  /// Generate initials for a peer, preferably from their display name.
+  static String generateInitials(String peerId, {String? displayName}) {
+    if (displayName != null &&
+        displayName.isNotEmpty &&
+        displayName != IdentityUiConfig.defaultDisplayName &&
+        displayName != peerId) {
+      final parts = displayName.trim().split(RegExp(r'\s+'));
+      if (parts.length >= 2) {
+        return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+      }
+      return displayName
+          .substring(0, displayName.length >= 2 ? 2 : 1)
+          .toUpperCase();
+    }
+
     try {
-      final bytes = base64.decode(base64Key);
+      final bytes = base64.decode(peerId);
       if (bytes.length < 8) return 'U';
       final adjectiveIndex =
           _bytesToInt(bytes.sublist(0, 4)) % adjectives.length;
       final nounIndex = _bytesToInt(bytes.sublist(4, 8)) % nouns.length;
-      return '${adjectives[adjectiveIndex][0]}${nouns[nounIndex][0]}';
+      return '${adjectives[adjectiveIndex][0]}${nouns[nounIndex][0]}'
+          .toUpperCase();
     } catch (e) {
       return 'U';
     }

@@ -9,6 +9,7 @@ import '../models/runtime_profile.dart';
 import '../config/timer_config.dart';
 import '../config/network_config.dart';
 import '../config/protocol_config.dart';
+import '../utils/name_generator.dart';
 
 class DiscoveryService {
   final BluetoothClassic _bluetooth = BluetoothClassic();
@@ -260,7 +261,7 @@ class DiscoveryService {
 
     final peer = Peer(
       id: endpointId,
-      displayName: endpointName,
+      displayName: NameGenerator.cleanName(endpointName),
       address: endpointId,
       lastSeen: DateTime.now().millisecondsSinceEpoch,
       hasApp: true,

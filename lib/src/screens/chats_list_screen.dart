@@ -21,8 +21,10 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   Future<List<Map<String, Object?>>>? _rowsFuture;
   int _lastUnreadSignature = -1;
   StreamSubscription<String>? _statusChangeSubscription;
+  StreamSubscription<ChatMessage>? _incomingMessageSubscription;
   bool _statusListenerInitialized = false;
   Timer? _statusRefreshDebounce;
+  Timer? _relativeTimeRefreshTimer;
 
   int _computeUnreadSignature(Map<String, int> unreadCounts) {
     final entries = unreadCounts.entries.toList()
@@ -45,18 +47,27 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
       _statusListenerInitialized = true;
       final router = Provider.of<AppState>(context, listen: false).meshRouter;
       _statusChangeSubscription =
-          router.onMessageStatusChanged.listen((_) {
-        if (!mounted) return;
-        _statusRefreshDebounce?.cancel();
-        _statusRefreshDebounce = Timer(
-          const Duration(milliseconds: 120),
-          () {
-            if (!mounted) return;
-            unawaited(_reloadRows());
-          },
-        );
+          router.onMessageStatusChanged.listen((_) => _requestReload());
+      _incomingMessageSubscription =
+          router.onMessageReceived.listen((_) => _requestReload());
+      
+      _relativeTimeRefreshTimer?.cancel();
+      _relativeTimeRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        if (mounted) setState(() {});
       });
     }
+  }
+
+  void _requestReload() {
+    if (!mounted) return;
+    _statusRefreshDebounce?.cancel();
+    _statusRefreshDebounce = Timer(
+      const Duration(milliseconds: 120),
+      () {
+        if (!mounted) return;
+        unawaited(_reloadRows());
+      },
+    );
   }
 
   Future<void> _reloadRows() async {
@@ -70,7 +81,9 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
   @override
   void dispose() {
     _statusRefreshDebounce?.cancel();
+    _relativeTimeRefreshTimer?.cancel();
     _statusChangeSubscription?.cancel();
+    _incomingMessageSubscription?.cancel();
     super.dispose();
   }
 
@@ -258,17 +271,17 @@ class _ChatsListScreenState extends State<ChatsListScreen> {
           final isConnected = connectedPeerIds.contains(peerId);
 
           final rawDisplayName = (row['display_name'] as String?) ?? '';
-          String displayName = rawDisplayName.trim();
+          String displayName = NameGenerator.cleanName(rawDisplayName.trim());
           if (displayName.isEmpty ||
               displayName == IdentityUiConfig.defaultDisplayName ||
               (displayName.length > 40 && displayName == peerId)) {
-            displayName = NameGenerator.generateShortName(peerId);
+            displayName = NameGenerator.generateName(peerId);
           }
 
           final lastContent = (row['last_content'] as String?) ?? '';
           final lastTimestamp = (row['last_timestamp'] as int?) ?? 0;
           final isSentByMe = (row['is_sent_by_me'] as int?) == 1;
-          final initials = NameGenerator.generateInitials(peerId);
+          final initials = NameGenerator.generateInitials(peerId, displayName: displayName);
           final avatarHue = (peerId.hashCode % 360).abs().toDouble();
           final avatarColor =
               HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();

@@ -154,7 +154,7 @@ class AppState extends ChangeNotifier with WidgetsBindingObserver {
     }
     final key = publicKey;
     if (key == null) return 'Unknown';
-    return NameGenerator.generateShortName(key);
+    return NameGenerator.generateName(key);
   }
 
   // Get initials — from custom username if set.

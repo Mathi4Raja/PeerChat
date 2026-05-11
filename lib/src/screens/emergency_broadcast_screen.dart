@@ -341,7 +341,7 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
     final isMe = localPeerId.isNotEmpty && senderId == localPeerId;
     if (isMe) return 'You';
     if (senderId.isEmpty) return 'Unknown';
-    return NameGenerator.generateShortName(senderId);
+    return NameGenerator.generateName(senderId);
   }
 
   String _baseContentForRow(Map<String, Object?> row) {
@@ -690,7 +690,7 @@ class _EmergencyBroadcastScreenState extends State<EmergencyBroadcastScreen> {
                                   ? 'You'
                                   : (senderId.isEmpty
                                       ? 'Unknown'
-                                      : NameGenerator.generateShortName(
+                                      : NameGenerator.generateName(
                                           senderId,
                                         ));
 

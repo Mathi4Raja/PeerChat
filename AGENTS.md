@@ -65,3 +65,21 @@ Never implement a pattern without defining the tradeoff matrix:
 ## 10. Summary Standards & Tools
 - **Summary Standards**: Summaries must be technical and granular. Include: [Files Changed], [Logic Altered], [Verification Method], [Residual Risks] (if no residual risks then say none).
 - **Tools**: Prefer built-in tools (grep, read_file, etc.) over manual workflows. Check tool availability before use.
+
+## 11. Protocol & Flow Documentation (flow.md)
+- **Definitive Source of Truth**: The `others/flow.md` file is the **absolute** source of truth for the system's operational logic. If it does not exist, you MUST create it before documenting architectural invariants. It takes precedence over general architecture documents as it must reflect the **exact, current state** of the implementation, regardless of high-level theoretical designs.
+- **Comprehensive Scope**: The `flow.md` must document:
+  - **Operational Flows**: Precise, step-by-step logic for message propagation, discovery intervals, and priority queuing.
+  - **Design Justifications & Tradeoffs**: The specific rationale behind every non-trivial design choice, including the tradeoff matrix (Memory vs. CPU vs. Storage vs. Latency).
+  - **Edge Case Handling**: Explicit documentation of failure modes, network recovery, and exception-handling logic.
+  - **Numerical Invariants**: All timing constants, retry intervals, buffer limits, and protocol bounds (e.g., `TimerConfig` values).
+- **Mandatory Maintenance**: You MUST update `others/flow.md` immediately whenever you modify core system parameters, timing constants, or critical state transitions. It must be a "living document" that perfectly reflects the app's current state at all times.
+- **Deep Discovery Requirement**: Before documenting any PeerChat flow, you MUST audit the following core service interactions:
+  - `MeshRouterService`: For socket lifecycle and routing.
+  - `DiscoveryService`: For radio state and mDNS/Bluetooth intervals.
+  - `WebShareService`: For HTTP bridge and radio isolation hooks.
+  - `AppState`: For service suspension/resume orchestration and battery-aware profile switching.
+  - `DBService`: For persistent state cleanup and causal ordering invariants.
+- **Verification**: Ensure that code implementations strictly match the numeric limits and logic defined in `others/flow.md`. If a deviation is required, you must first justify the change in `others/flow.md` before updating the code.
+- **Strict Recheck**: NEVER document a flow, constant, or invariant in `others/flow.md` based on memory or "intended" logic. You MUST perform a direct code audit (verifying `TimerConfig`, `LimitsConfig`, and service state machines) immediately before writing to `others/flow.md` to ensure it reflects the ACTUAL, current behavior of the PeerChat mesh.
+

@@ -3,6 +3,7 @@ import 'package:peerchat_secure/src/utils/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../app_state.dart';
 import '../models/peer.dart';
+import '../config/identity_ui_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'add_peer_screen.dart';
@@ -32,11 +33,8 @@ class PeersScreen extends StatelessWidget {
         ),
         body: Consumer<AppState>(
           builder: (context, appState, _) {
-            final connectedIds = appState.meshRouter.getConnectedPeerIds();
-            final allActive = appState.activePeers;
-
-            final connected = allActive.where((p) => connectedIds.contains(p.id)).toList();
-            final unconnected = allActive.where((p) => !connectedIds.contains(p.id)).toList();
+            final connected = appState.connectedPeers;
+            final unconnected = appState.discoveredPeers;
 
             return TabBarView(
               children: [
@@ -241,10 +239,14 @@ class _PeerTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool isVerified = peer.hasApp;
-    final String displayName = peer.id.length > 40
-        ? NameGenerator.generateShortName(peer.id)
-        : peer.displayName;
-    final String initials = NameGenerator.generateInitials(peer.id);
+    final String cleanedDisplayName = NameGenerator.cleanName(peer.displayName);
+    final String displayName = (cleanedDisplayName.isEmpty ||
+            cleanedDisplayName == IdentityUiConfig.defaultDisplayName ||
+            (cleanedDisplayName.length > 40 && cleanedDisplayName == peer.id))
+        ? NameGenerator.generateName(peer.id)
+        : cleanedDisplayName;
+    final String initials =
+        NameGenerator.generateInitials(peer.id, displayName: displayName);
 
     final bool isWiFi = peer.isWiFi || peer.address.contains('.') || peer.address == 'mDNS';
     final bool isBT = peer.isBluetooth || peer.address.contains(':') || peer.address.startsWith('00:');

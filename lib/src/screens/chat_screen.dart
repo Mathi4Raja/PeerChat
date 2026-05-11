@@ -14,6 +14,7 @@ import '../models/location_payload.dart';
 import '../models/peer.dart';
 import '../config/timer_config.dart';
 import '../config/limits_config.dart';
+import '../config/identity_ui_config.dart';
 import '../theme.dart';
 import '../utils/name_generator.dart';
 import 'location_map_screen.dart';
@@ -167,10 +168,10 @@ class _ChatScreenState extends State<ChatScreen> {
     final peer = _findPeerById(appState, selectedPeerId);
     if (peer == null ||
         peer.id.length > 40 ||
-        peer.displayName.trim().isEmpty) {
-      return NameGenerator.generateShortName(selectedPeerId);
+        NameGenerator.cleanName(peer.displayName).trim().isEmpty) {
+      return NameGenerator.generateName(selectedPeerId);
     }
-    return peer.displayName;
+    return NameGenerator.cleanName(peer.displayName);
   }
 
   void _startReply(ChatMessage message) {
@@ -284,10 +285,10 @@ class _ChatScreenState extends State<ChatScreen> {
       return _selectedPeerDisplayName(appState);
     }
     final peer = _findPeerById(appState, replyPeerId);
-    if (peer != null && peer.displayName.trim().isNotEmpty) {
-      return peer.displayName;
+    if (peer != null && NameGenerator.cleanName(peer.displayName).trim().isNotEmpty) {
+      return NameGenerator.cleanName(peer.displayName);
     }
-    return NameGenerator.generateShortName(replyPeerId);
+    return NameGenerator.generateName(replyPeerId);
   }
 
   Future<void> _loadMessages() async {
@@ -473,15 +474,17 @@ class _ChatScreenState extends State<ChatScreen> {
     if (_selectedPeerId != null) {
       final selectedPeerId = _selectedPeerId!;
       final peer = _findPeerById(appState, selectedPeerId);
+      final cleanedDisplayName = peer != null ? NameGenerator.cleanName(peer.displayName) : '';
 
       if (peer == null ||
-          peer.id.length > 40 ||
-          peer.displayName.trim().isEmpty) {
-        peerName = NameGenerator.generateShortName(selectedPeerId);
+          cleanedDisplayName.isEmpty ||
+          cleanedDisplayName == IdentityUiConfig.defaultDisplayName ||
+          (cleanedDisplayName.length > 40 && cleanedDisplayName == selectedPeerId)) {
+        peerName = NameGenerator.generateName(selectedPeerId);
       } else {
-        peerName = peer.displayName;
+        peerName = cleanedDisplayName;
       }
-      peerInitials = NameGenerator.generateInitials(selectedPeerId);
+      peerInitials = NameGenerator.generateInitials(selectedPeerId, displayName: peerName);
     }
 
     final isConnected = _selectedPeerId != null &&
@@ -1439,10 +1442,13 @@ class _ChatScreenState extends State<ChatScreen> {
                 )
               else
                 ...peers.map((peer) {
-                  final name = peer.id.length > 40
-                      ? NameGenerator.generateShortName(peer.id)
-                      : peer.displayName;
-                  final peerInitials = NameGenerator.generateInitials(peer.id);
+                  final String cleanedDisplayName = NameGenerator.cleanName(peer.displayName);
+                  final name = (cleanedDisplayName.isEmpty ||
+                          cleanedDisplayName == IdentityUiConfig.defaultDisplayName ||
+                          (cleanedDisplayName.length > 40 && cleanedDisplayName == peer.id))
+                      ? NameGenerator.generateName(peer.id)
+                      : cleanedDisplayName;
+                  final peerInitials = NameGenerator.generateInitials(peer.id, displayName: name);
                   final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
                   final avatarColor =
                       HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();
