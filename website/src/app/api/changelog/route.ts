@@ -66,7 +66,7 @@ export async function GET() {
                     // Web Keywords
                     const webKeywords = ['website', 'ui polish', 'css', 'layout', 'responsive', 'seo', 'meta', 'footer', 'header', 'nav', 'hero', 'animation', 'section', 'browser'];
                     // App Keywords
-                    const appKeywords = ['apk', 'app', 'mesh', 'ble', 'bluetooth', 'wifi', 'hotspot', 'transfer', 'encryption', 'p2p', 'mobile', 'android', 'notification'];
+                    const appKeywords = ['apk', 'app', 'mesh', 'ble', 'bluetooth', 'wifi', 'hotspot', 'transfer', 'protocol', 'encryption', 'p2p', 'mobile', 'android', 'notification'];
 
                     if (webKeywords.some(k => lowerText.includes(k))) category = "Web";
                     else if (appKeywords.some(k => lowerText.includes(k))) category = "App";

@@ -22,11 +22,24 @@ changelog:
       labels:
         - enhancement
         - feature
+      patterns:
+        - 'feat:.*'
+        - 'feature:.*'
     - title: '🐛 Bug Fixes'
       labels:
         - bug
         - fix
+      patterns:
+        - 'fix:.*'
+        - 'bug:.*'
     - title: '🔧 Maintenance'
       labels:
         - chore
         - dependencies
+      patterns:
+        - 'chore:.*'
+        - 'docs:.*'
+        - 'style:.*'
+        - 'refactor:.*'
+        - 'perf:.*'
+        - 'test:.*'

@@ -71,7 +71,17 @@ function ReleaseRow({ release, isFirst, isLast }: { release: any; isFirst: boole
                         <div className={`mt-2 w-1 h-1 rounded-full shrink-0 ${
                           cat === 'Web' ? 'bg-[var(--color-gold)]/40' : 'bg-[var(--color-ember)]/40'
                         }`} />
-                        <span className="opacity-80 group-hover:opacity-100 transition-opacity">{change.text}</span>
+                        <span className="opacity-80 group-hover:opacity-100 transition-opacity">
+                          {change.text.split(/(\*\*.*?\*\*|\*.*?\*)/g).map((part: string, i: number) => {
+                            if (part.startsWith('**') && part.endsWith('**')) {
+                              return <strong key={i} className="font-bold text-[var(--color-ivory)]">{part.slice(2, -2)}</strong>;
+                            }
+                            if (part.startsWith('*') && part.endsWith('*')) {
+                              return <em key={i} className="italic text-[var(--color-ash)]">{part.slice(1, -1)}</em>;
+                            }
+                            return part;
+                          })}
+                        </span>
                       </motion.li>
                     ))}
                   </ul>
