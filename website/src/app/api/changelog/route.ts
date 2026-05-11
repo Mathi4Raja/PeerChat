@@ -64,7 +64,7 @@ export async function GET() {
                     const lowerText = text.toLowerCase();
                     
                     // Web Keywords
-                    const webKeywords = ['website', 'ui polish', 'css', 'layout', 'responsive', 'seo', 'meta', 'footer', 'header', 'nav', 'hero', 'animation', 'section', 'browser'];
+                    const webKeywords = ['website', 'ui polish', 'css', 'layout', 'responsive', 'seo', 'meta tag', 'footer', 'header', 'nav', 'hero', 'animation', 'section', 'browser'];
                     // App Keywords
                     const appKeywords = ['apk', 'app', 'mesh', 'ble', 'bluetooth', 'wifi', 'hotspot', 'transfer', 'protocol', 'encryption', 'p2p', 'mobile', 'android', 'notification'];
 
