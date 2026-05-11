@@ -1329,27 +1329,21 @@ class _ChatScreenState extends State<ChatScreen> {
             color: AppTheme.bgCard,
             borderRadius: BorderRadius.circular(28),
           ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
+          child: Wrap(
+            spacing: 24,
+            runSpacing: 20,
+            alignment: WrapAlignment.center,
             children: [
-              GridView.count(
-                shrinkWrap: true,
-                crossAxisCount: 1,
-                mainAxisSpacing: 16,
-                crossAxisSpacing: 8,
-                physics: const NeverScrollableScrollPhysics(),
-                children: [
-                  _buildAttachmentItem(
-                    icon: Icons.location_on_rounded,
-                    label: 'Location',
-                    color: const Color(0xFF2EBD59),
-                    onTap: () {
-                      Navigator.pop(context);
-                      _sendCurrentLocation();
-                    },
-                  ),
-                ],
+              _buildAttachmentItem(
+                icon: Icons.location_on_rounded,
+                label: 'Location',
+                color: const Color(0xFF2EBD59),
+                onTap: () {
+                  Navigator.pop(context);
+                  _sendCurrentLocation();
+                },
               ),
+              // Future attachment items will automatically wrap here
             ],
           ),
         );
@@ -1441,60 +1435,66 @@ class _ChatScreenState extends State<ChatScreen> {
                   ),
                 )
               else
-                ...peers.map((peer) {
-                  final String cleanedDisplayName = NameGenerator.cleanName(peer.displayName);
-                  final name = (cleanedDisplayName.isEmpty ||
-                          cleanedDisplayName == IdentityUiConfig.defaultDisplayName ||
-                          (cleanedDisplayName.length > 40 && cleanedDisplayName == peer.id))
-                      ? NameGenerator.generateName(peer.id)
-                      : cleanedDisplayName;
-                  final peerInitials = NameGenerator.generateInitials(peer.id, displayName: name);
-                  final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
-                  final avatarColor =
-                      HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();
+                Flexible(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: EdgeInsets.zero,
+                  children: peers.map((peer) {
+                    final String cleanedDisplayName = NameGenerator.cleanName(peer.displayName);
+                    final name = (cleanedDisplayName.isEmpty ||
+                            cleanedDisplayName == IdentityUiConfig.defaultDisplayName ||
+                            (cleanedDisplayName.length > 40 && cleanedDisplayName == peer.id))
+                        ? NameGenerator.generateName(peer.id)
+                        : cleanedDisplayName;
+                    final peerInitials = NameGenerator.generateInitials(peer.id, displayName: name);
+                    final avatarHue = (peer.id.hashCode % 360).abs().toDouble();
+                    final avatarColor =
+                        HSLColor.fromAHSL(1, avatarHue, 0.6, 0.45).toColor();
 
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: ListTile(
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      leading: CircleAvatar(
-                        backgroundColor: avatarColor.withValues(alpha: 0.15),
-                        child: Text(
-                          peerInitials,
-                          style: GoogleFonts.inter(
-                            fontSize: 13,
-                            fontWeight: FontWeight.w700,
-                            color: avatarColor,
+                    return Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        leading: CircleAvatar(
+                          backgroundColor: avatarColor.withValues(alpha: 0.15),
+                          child: Text(
+                            peerInitials,
+                            style: GoogleFonts.inter(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: avatarColor,
+                            ),
                           ),
                         ),
-                      ),
-                      title: Text(
-                        name,
-                        style: GoogleFonts.inter(
-                          fontWeight: FontWeight.w500,
-                          color: AppTheme.textPrimary,
+                        title: Text(
+                          name,
+                          style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w500,
+                            color: AppTheme.textPrimary,
+                          ),
                         ),
-                      ),
-                      subtitle: Text(
-                        peer.address,
-                        style: GoogleFonts.inter(
-                          fontSize: 12,
-                          color: AppTheme.textSecondary,
+                        subtitle: Text(
+                          peer.address,
+                          style: GoogleFonts.inter(
+                            fontSize: 12,
+                            color: AppTheme.textSecondary,
+                          ),
                         ),
+                        onTap: () {
+                          setState(() {
+                            _selectedPeerId = peer.id;
+                            _replyingTo = null;
+                          });
+                          Navigator.pop(context);
+                          _loadMessages();
+                        },
                       ),
-                      onTap: () {
-                        setState(() {
-                          _selectedPeerId = peer.id;
-                          _replyingTo = null;
-                        });
-                        Navigator.pop(context);
-                        _loadMessages();
-                      },
-                    ),
-                  );
-                }),
+                    );
+                  }).toList(),
+                ),
+              ),
             ],
           ),
         );

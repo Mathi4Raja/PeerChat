@@ -101,21 +101,82 @@ The system thresholds are governed by the OS battery state:
 
 ---
 
-## 6. System Resilience & Numerical Invariants
+## 6. Offline Map Flow
+
+PeerChat uses a custom, MIT-licensed tile caching system to provide location context without internet.
+
+### A. Connectivity-Aware UI (The "Blind" State)
+- **Invariant**: The map screen performs a 3s DNS lookup on entry.
+- **Blind State**: If `No Internet` AND `No Offline Cache` for the current area, the UI MUST display an explicit **"Map Unavailable"** overlay with a retry option.
+- **Justification**: Prevents the "Blank Map" failure mode, ensuring the user understands exactly why the map is not rendering.
+
+### B. Storage Hard Limit (250 MiB)
+- **The Rule**: The `TileCacheService` **blocks new tile saves** once the local cache hits **250 MiB**.
+- **Justification**: Protects device storage from being filled by background map browsing while still allowing live viewing (RAM-only) if internet is available.
+
+---
+
+## 7. Durable State Trace (Event Sourcing)
+
+PeerChat uses an ACID-compliant event log to reconstruct system state and provide an audit trail.
+
+### A. Non-Blocking Persistence
+- **Write Buffer**: Events are held in a **1000-event** queue to prevent UI jank.
+- **Flush Policy**: The buffer flushes to SQLite every **500ms** or at **50 events**.
+- **Retention**: Log is capped at **10,000 events** via asynchronous pruning.
+
+---
+
+## 8. Runtime Profiles & Battery Orchestration
+
+### A. Profile Side Effects
+- **Emergency Battery**: Triggered at **20% battery**. Disables "Fast Bursts" and doubles heartbeats.
+- **Web Share Isolation**: Suspends Bluetooth and Nearby Connections. Toggles hardware Bluetooth off to prevent radio hangs.
+
+---
+
+## 9. App Lifecycle & Recovery
+
+### A. The "Resume Kick"
+- **Cooldown**: 12 seconds.
+- **Logic**: On resume with 0 peers, forces **`restartWiFiDirect()`** and **`startFastDiscoveryBurst()`**.
+
+---
+
+## 10. Memory & Cache Invariants
+
+- **App Icon Cache**: **50-item** LRU cap.
+- **Peer Visibility Window**: **5-minute** TTL for "Discovered" peers without a signal.
+
+---
+
+## 11. System Resilience & Numerical Invariants
 
 | Constant | Value | Reason |
 | :--- | :--- | :--- |
 | **Mesh Depth** | 16 Hops | Absolute cutoff to prevent infinite loops. |
-| **WiFi Peer Cap**| 50 Peers | Hardware limitation of standard mobile WiFi chips. |
-| **Message Limit**| 48 KiB | Stability threshold for Bluetooth MTU and RAM. |
-| **Heartbeat** | 15s | Interval for background keep-alives on active sockets. |
-| **Route Stale** | 30m | Routes are purged if not seen for this duration. |
-| **Resume Kick** | 12s Cooldown| Hard restart of WiFi Direct stack on app resume if 0 peers. |
+| **WiFi Peer Cap**| 50 Peers | Hardware limitation of WiFi chips. |
+| **Message Limit**| 48 KiB | Stability threshold for Bluetooth/RAM. |
+| **Heartbeat** | 15s | Background keep-alive interval. |
+| **Resume Kick** | 12s Cooldown| Hard restart of WiFi stack on resume. |
+| **Discovery Window**| 5 Minutes | Activity window for "discovered" peers. |
+| **Event Buffer** | 1000 Events | RAM budget for non-blocking logging. |
+| **Log Retention**| 10k Events | Storage cap for audit trail. |
+| **Icon Cache** | 50 Items | Memory cap for app assets. |
+| **Map Radius** | 10-50km | Safety range for offline context. |
+| **Map Storage** | 250 MiB | **Hard Limit** to prevent disk overflow. |
+| **Internet Timeout**| 3s | Threshold for map connectivity check. |
 
 ---
 
-## 7. UI Visibility Policies
+## 12. UI Visibility Policies
 
-1.  **Sticky Peers**: Any peer with a live transport socket remains in the "Connected" tab regardless of activity.
-2.  **Discovery Pruning**: Peers in the "Discovered" tab are hidden after **5 minutes** of zero signal.
-3.  **Heartbeat Sync**: 15s heartbeats refresh the `lastSeen` timestamp, preventing active neighbors from "Ghosting" out of the UI.
+1.  **Sticky Peers**: Active sockets keep peers in "Connected" indefinitely.
+2.  **Discovery Pruning**: Ghost peers removed after **5 minutes**.
+3.  **Battery Awareness**: Intervals doubled and bursts disabled < **20%**.
+4.  **Blind State Invariant**: Explicit UI error if Internet=Off and Cache=Off. Coordinate acquisition remains priority.
+5.  **Identity Trace**: Sequence numbers (AUTOINCREMENT) in `event_log` are used to reconstruct peer history.
+6.  **Orientation Safety**: 
+    - Full-screen maps must reposition overlays (badges/cards) in Landscape mode.
+    - All bottom sheets must use `Flexible` scrollable lists to prevent "Bottom Overflow" on small viewports.
+7.  **Tactical Compass**: Real-time North tracking with tap-to-reset (0°) functionality.

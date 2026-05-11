@@ -56,6 +56,13 @@ class TileCacheService {
 
     if (await file.exists()) return;
 
+    // Hard Limit Check: Prevent caching if we exceed the 250 MiB safety threshold
+    final currentSize = await getCacheSizeMiB();
+    if (currentSize >= 250) {
+      debugPrint('TileCacheService: 250MB limit reached. Skipping tile save.');
+      return;
+    }
+
     await file.parent.create(recursive: true);
 
     final url = '$_tileBaseUrl/$z/$x/$y.png';

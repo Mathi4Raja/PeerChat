@@ -80,6 +80,7 @@ Never implement a pattern without defining the tradeoff matrix:
   - `WebShareService`: For HTTP bridge and radio isolation hooks.
   - `AppState`: For service suspension/resume orchestration and battery-aware profile switching.
   - `DBService`: For persistent state cleanup and causal ordering invariants.
+- **Anti-Tunnel Vision**: Never assume a feature is isolated. PeerChat is a multi-subsystem machine (Mesh, GIS, EventLog, WebShare). You MUST audit all secondary impacts—especially how a network change affects battery logic or how a UI change affects hardware recovery hooks.
 - **Verification**: Ensure that code implementations strictly match the numeric limits and logic defined in `others/flow.md`. If a deviation is required, you must first justify the change in `others/flow.md` before updating the code.
 - **Strict Recheck**: NEVER document a flow, constant, or invariant in `others/flow.md` based on memory or "intended" logic. You MUST perform a direct code audit (verifying `TimerConfig`, `LimitsConfig`, and service state machines) immediately before writing to `others/flow.md` to ensure it reflects the ACTUAL, current behavior of the PeerChat mesh.
 
